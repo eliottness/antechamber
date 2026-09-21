@@ -4,8 +4,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { PiRpcClient } from "./pi-rpc.js";
+import { getAgentName } from "./agent-name.js";
+import { ocIdFor, piSessionDir, scanPiSessions, SessionStore, type ScannedSession } from "./session-store.js";
 import type {
   OCAssistantMessage,
   OCEvent,
@@ -36,10 +39,13 @@ interface StreamingState {
 
 export interface ManagedSession {
   info: OCSession;
-  pi: PiRpcClient;
-  messages: OCMessageWithParts[];
+  /** undefined while dormant (restored from disk, no pi process spawned yet). */
+  pi: PiRpcClient | undefined;
+  /** undefined for dormant sessions until history is parsed from the JSONL. */
+  messages: OCMessageWithParts[] | undefined;
   status: OCSessionStatus;
-  model: OCModelRef;
+  /** undefined while dormant; resolved via get_state on create/revive. */
+  model: OCModelRef | undefined;
   streaming: StreamingState | undefined;
   /**
    * toolCallId → tool part for the current agent run. pi streams tool calls
@@ -47,6 +53,11 @@ export interface ManagedSession {
    * *result* later, in turn_end.toolResults — matched by toolCallId.
    */
   toolByCallId: Map<string, OCToolPart>;
+  /** pi's own session id + file — the bridge to persistence/restore. */
+  piSessionId?: string;
+  piPath?: string;
+  /** Set while dormant: revive() spawns pi with `--session <piPath>`. */
+  restored?: { piSessionId: string; piPath: string };
 }
 
 type EventSink = (directory: string, event: OCEvent) => void;
@@ -60,13 +71,23 @@ interface PiModel {
 interface PiState {
   model: PiModel;
   sessionId: string;
+  sessionFile?: string;
   isStreaming: boolean;
 }
 
 export class SessionManager {
   private sessions = new Map<string, ManagedSession>();
+  private readonly store: SessionStore;
+  /** directory → last scan freshness (pi dir mtime + wall clock). */
+  private scanCache = new Map<string, { mtimeMs: number; at: number }>();
 
-  constructor(private emit: EventSink) {}
+  constructor(
+    private emit: EventSink,
+    store?: SessionStore,
+    private defaultDirectory?: string,
+  ) {
+    this.store = store ?? new SessionStore();
+  }
 
   async create(directory: string, title?: string, parentID?: string): Promise<OCSession> {
     const pi = new PiRpcClient({ cwd: directory });
@@ -77,8 +98,11 @@ export class SessionManager {
     }
 
     const now = Date.now();
+    // Deterministic id derived from pi's session id, so a session keeps the
+    // same OpenChamber id across adapter restarts (create once, restore later).
+    const piSessionId = typeof state.data.sessionId === "string" && state.data.sessionId !== "" ? state.data.sessionId : undefined;
     const info: OCSession = {
-      id: id("ses"),
+      id: piSessionId !== undefined ? ocIdFor(piSessionId) : id("ses"),
       projectID: directory,
       directory,
       title: title ?? "New session",
@@ -95,76 +119,136 @@ export class SessionManager {
       model: { providerID: state.data.model.provider, modelID: state.data.model.id },
       streaming: undefined,
       toolByCallId: new Map(),
+      ...(piSessionId !== undefined ? { piSessionId } : {}),
     };
     this.sessions.set(info.id, managed);
+    this.wirePi(managed, pi);
 
-    pi.onEvent((payload) => this.onPiEvent(managed, payload));
+    this.emit(directory, { type: "session.created", properties: { info } });
+
+    // Bind pi's session file so the session survives adapter restarts. pi
+    // reports the path directly; fall back to a background scan for older pi
+    // versions, and re-bind after the first prompt (pi persists lazily).
+    if (typeof state.data.sessionFile === "string" && state.data.sessionFile !== "") {
+      managed.piPath = state.data.sessionFile;
+      this.persistMeta(managed);
+    } else if (piSessionId !== undefined) {
+      void this.resolvePiFile(directory, piSessionId).then((piPath) => {
+        if (piPath !== undefined && managed.piPath === undefined) {
+          managed.piPath = piPath;
+          this.persistMeta(managed);
+        }
+      });
+    }
+
+    return info;
+  }
+
+  private wirePi(s: ManagedSession, pi: PiRpcClient): void {
+    pi.onEvent((payload) => this.onPiEvent(s, payload));
     pi.onExit((code) => {
-      this.setStatus(managed, { type: "idle" });
-      this.emit(directory, {
+      this.setStatus(s, { type: "idle" });
+      this.emit(s.info.directory, {
         type: "session.error",
         properties: {
-          sessionID: info.id,
+          sessionID: s.info.id,
           error: { name: "UnknownError", data: { message: `pi process exited (code=${code})` } },
         },
       });
     });
+  }
 
-    this.emit(directory, { type: "session.created", properties: { info } });
-    return info;
+  /** pi writes `<ts>_<sessionId>.jsonl` at startup — poll briefly for it. */
+  private async resolvePiFile(directory: string, piSessionId: string): Promise<string | undefined> {
+    const dir = piSessionDir(directory);
+    const suffix = `_${piSessionId}.jsonl`;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        for (const name of readdirSync(dir)) {
+          if (name.endsWith(suffix)) return join(dir, name);
+        }
+      } catch {
+        /* session dir may not exist until pi writes the first entry */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return undefined;
   }
 
   list(directory?: string): OCSession[] {
-    const all = [...this.sessions.values()].map((s) => s.info);
-    return directory === undefined ? all : all.filter((s) => s.directory === directory);
+    if (directory !== undefined) {
+      this.ensureScanned(directory);
+      return [...this.sessions.values()].map((s) => s.info).filter((s) => s.directory === directory);
+    }
+    // Unfiltered: keep the old semantics — live sessions only.
+    return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => s.info);
   }
 
   get(sessionId: string): ManagedSession | undefined {
-    return this.sessions.get(sessionId);
+    const live = this.sessions.get(sessionId);
+    if (live !== undefined) return live;
+    return this.resolveRestored(sessionId);
   }
 
   async remove(sessionId: string): Promise<boolean> {
-    const s = this.sessions.get(sessionId);
+    const s = this.get(sessionId);
     if (!s) return false;
     this.sessions.delete(sessionId);
     this.emit(s.info.directory, { type: "session.deleted", properties: { info: s.info } });
-    await s.pi.dispose();
+    if (s.pi !== undefined) await s.pi.dispose();
+    const piPath = s.piPath ?? s.restored?.piPath;
+    if (piPath !== undefined) {
+      try {
+        unlinkSync(piPath);
+      } catch {
+        /* file already gone — deleting the registry entry is enough */
+      }
+    }
+    this.store.remove(sessionId);
     return true;
   }
 
   rename(sessionId: string, title: string): OCSession | undefined {
-    const s = this.sessions.get(sessionId);
+    const s = this.get(sessionId);
     if (!s) return undefined;
     s.info.title = title;
     s.info.time.updated = Date.now();
-    void s.pi.command({ type: "set_session_name", name: title }).catch(() => undefined);
+    this.persistMeta(s);
+    if (s.pi !== undefined) void s.pi.command({ type: "set_session_name", name: title }).catch(() => undefined);
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     return s.info;
   }
 
   messages(sessionId: string): OCMessageWithParts[] | undefined {
-    return this.sessions.get(sessionId)?.messages;
+    const s = this.get(sessionId);
+    if (!s) return undefined;
+    return this.ensureMessages(s);
   }
 
   statuses(): Record<string, OCSessionStatus> {
     const out: Record<string, OCSessionStatus> = {};
-    for (const s of this.sessions.values()) out[s.info.id] = s.status;
+    for (const s of this.sessions.values()) out[s.info.id] = s.status; // dormant sessions are idle
     return out;
   }
 
   async abort(sessionId: string): Promise<boolean> {
-    const s = this.sessions.get(sessionId);
+    const s = this.get(sessionId);
     if (!s) return false;
+    if (s.pi === undefined) return true; // dormant sessions are idle by definition
     await s.pi.command({ type: "abort" }).catch(() => undefined);
     return true;
   }
 
   async prompt(sessionId: string, text: string, model?: OCModelRef, noReply = false, messageID?: string): Promise<void> {
-    const s = this.sessions.get(sessionId);
+    const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
+    if (s.pi === undefined) await this.revive(s);
+    const pi = s.pi;
+    if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
+    this.ensureMessages(s);
 
-    if (model && (model.providerID !== s.model.providerID || model.modelID !== s.model.modelID)) {
-      const res = await s.pi
+    if (model && (s.model === undefined || model.providerID !== s.model.providerID || model.modelID !== s.model.modelID)) {
+      const res = await pi
         .command({ type: "set_model", provider: model.providerID, modelId: model.modelID })
         .catch(() => undefined);
       if (res?.success) s.model = model;
@@ -179,13 +263,13 @@ export class SessionManager {
       sessionID: s.info.id,
       role: "user",
       time: { created: Date.now() },
-      agent: "build",
-      model: s.model,
+      agent: getAgentName(),
+      model: s.model ?? model ?? { providerID: "unknown", modelID: "unknown" },
     };
     const parts: OCPart[] = [
       { id: id("prt"), sessionID: s.info.id, messageID: userMsg.id, type: "text", text },
     ];
-    s.messages.push({ info: userMsg, parts });
+    s.messages?.push({ info: userMsg, parts });
     s.info.time.updated = Date.now();
     if (s.info.title === "New session") {
       s.info.title = text.slice(0, 60);
@@ -202,7 +286,7 @@ export class SessionManager {
     s.toolByCallId = new Map(); // results for this run arrive by toolCallId
 
     // pi streams asynchronously after accepting the prompt.
-    const res = await s.pi.command({ type: "prompt", message: text });
+    const res = await pi.command({ type: "prompt", message: text });
     if (!res.success) {
       this.emit(s.info.directory, {
         type: "session.error",
@@ -211,12 +295,138 @@ export class SessionManager {
           error: { name: "UnknownError", data: { message: res.error ?? "prompt rejected" } },
         },
       });
+      return;
+    }
+
+    // First message makes pi write the session file — bind it now so the
+    // session (and its current title) survives an adapter restart.
+    if (s.piPath === undefined && s.piSessionId !== undefined) {
+      const piPath = await this.resolvePiFile(s.info.directory, s.piSessionId);
+      if (piPath !== undefined) {
+        s.piPath = piPath;
+        this.persistMeta(s);
+      }
     }
   }
 
   async disposeAll(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map((s) => s.pi.dispose()));
+    await Promise.all(
+      [...this.sessions.values()].map((s) => (s.pi !== undefined ? s.pi.dispose() : Promise.resolve())),
+    );
     this.sessions.clear();
+  }
+
+  // ------------------------------------------------------------------
+  // restore: dormant sessions backed by pi's JSONL files
+  // ------------------------------------------------------------------
+
+  /** Spawn pi against the session's JSONL file and adopt it as live. */
+  private async revive(s: ManagedSession): Promise<void> {
+    const restored = s.restored;
+    if (restored === undefined) throw new Error(`session is not restorable: ${s.info.id}`);
+    if (!existsSync(restored.piPath)) throw new Error(`pi session file is gone: ${restored.piPath}`);
+    const pi = new PiRpcClient({ cwd: s.info.directory, args: ["--session", restored.piPath] });
+    const state = await pi.command<PiState>({ type: "get_state" });
+    if (!state.success || !state.data) {
+      await pi.dispose();
+      throw new Error(`pi get_state failed on resume: ${state.error ?? "no data"}`);
+    }
+    s.pi = pi;
+    s.piPath = restored.piPath;
+    s.piSessionId = restored.piSessionId;
+    delete s.restored;
+    s.model = { providerID: state.data.model.provider, modelID: state.data.model.id };
+    this.ensureMessages(s);
+    this.wirePi(s, pi);
+    this.persistMeta(s);
+  }
+
+  private ensureMessages(s: ManagedSession): OCMessageWithParts[] {
+    if (s.messages === undefined) s.messages = parsePiSessionFile(s, getAgentName());
+    return s.messages;
+  }
+
+  /** Adopt dormant sessions for pi files in `directory` not tracked yet. */
+  private ensureScanned(directory: string): void {
+    const dirPath = piSessionDir(directory);
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(dirPath).mtimeMs;
+    } catch {
+      return; // no sessions recorded for this directory yet
+    }
+    const cached = this.scanCache.get(directory);
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < 5_000) return;
+    this.scanCache.set(directory, { mtimeMs, at: Date.now() });
+
+    const knownPaths = new Set<string>();
+    const knownPiIds = new Set<string>();
+    for (const s of this.sessions.values()) {
+      const p = s.piPath ?? s.restored?.piPath;
+      if (p !== undefined) knownPaths.add(p);
+      if (s.piSessionId !== undefined) knownPiIds.add(s.piSessionId);
+      if (s.restored !== undefined) knownPiIds.add(s.restored.piSessionId);
+    }
+    for (const sc of scanPiSessions(directory)) {
+      if (knownPaths.has(sc.piPath) || knownPiIds.has(sc.piSessionId)) continue;
+      this.adopt(sc);
+    }
+  }
+
+  private adopt(sc: ScannedSession): ManagedSession {
+    const ocId = ocIdFor(sc.piSessionId);
+    const reg = this.store.get(ocId);
+    const info: OCSession = {
+      id: ocId,
+      projectID: sc.directory,
+      directory: sc.directory,
+      title: reg?.title ?? sc.title,
+      version: ADAPTER_VERSION,
+      time: { created: sc.created, updated: Math.max(sc.updated, reg?.updated ?? 0) },
+    };
+    const managed: ManagedSession = {
+      info,
+      pi: undefined,
+      messages: undefined,
+      status: { type: "idle" },
+      model: undefined,
+      streaming: undefined,
+      toolByCallId: new Map(),
+      restored: { piSessionId: sc.piSessionId, piPath: sc.piPath },
+    };
+    this.sessions.set(ocId, managed);
+    return managed;
+  }
+
+  /** Resolve a bare session id (e.g. deep link after restart) via known directories. */
+  private resolveRestored(sessionId: string): ManagedSession | undefined {
+    const dirs = new Set<string>([
+      ...this.store.directories(),
+      ...[...this.sessions.values()].map((s) => s.info.directory),
+    ]);
+    if (this.defaultDirectory !== undefined) dirs.add(this.defaultDirectory);
+    for (const dir of dirs) {
+      this.ensureScanned(dir);
+      const hit = this.sessions.get(sessionId);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  }
+
+  /** Registry write for adapter-owned metadata (title override, pi path). */
+  private persistMeta(s: ManagedSession): void {
+    const piPath = s.piPath ?? s.restored?.piPath;
+    const piSessionId = s.piSessionId ?? s.restored?.piSessionId;
+    if (piPath === undefined || piSessionId === undefined) return;
+    this.store.set(s.info.id, {
+      piSessionId,
+      piPath,
+      directory: s.info.directory,
+      // "New session" is a placeholder — let the scan-derived title win.
+      ...(s.info.title !== "New session" ? { title: s.info.title } : {}),
+      created: s.info.time.created,
+      updated: s.info.time.updated,
+    });
   }
 
   // ------------------------------------------------------------------
@@ -256,6 +466,7 @@ export class SessionManager {
         this.finishStreaming(s);
         this.setStatus(s, { type: "idle" });
         this.emit(dir, { type: "session.idle", properties: { sessionID: s.info.id } });
+        if (s.piPath !== undefined) this.store.update(s.info.id, { updated: Date.now() });
         break;
       }
 
@@ -269,22 +480,22 @@ export class SessionManager {
       case "message_start": {
         const msg = ev.message as { role?: string } | undefined;
         if (msg?.role !== "assistant") break; // user message already recorded at prompt()
-        const parent = [...s.messages].reverse().find((m) => m.info.role === "user");
+        const parent = [...(s.messages ?? [])].reverse().find((m) => m.info.role === "user");
         const assistant: OCAssistantMessage = {
           id: id("msg"),
           sessionID: s.info.id,
           role: "assistant",
           time: { created: Date.now() },
           parentID: parent?.info.id ?? "",
-          modelID: s.model.modelID,
-          providerID: s.model.providerID,
-          mode: "build",
+          modelID: s.model?.modelID ?? "unknown",
+          providerID: s.model?.providerID ?? "unknown",
+          mode: getAgentName(),
           path: { cwd: s.info.directory, root: s.info.directory },
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         };
         s.streaming = { message: assistant, parts: new Map() };
-        s.messages.push({ info: assistant, parts: [] });
+        s.messages?.push({ info: assistant, parts: [] });
         this.emit(dir, { type: "message.updated", properties: { info: assistant } });
         break;
       }
@@ -359,7 +570,7 @@ export class SessionManager {
     if (!part) {
       part = this.newPart(kind, s.info.id, streaming.message.id);
       streaming.parts.set(ame.contentIndex, part);
-      const record = s.messages.find((m) => m.info.id === streaming.message.id);
+      const record = s.messages?.find((m) => m.info.id === streaming.message.id);
       record?.parts.push(part);
       this.emitPart(s, part);
     }
@@ -407,7 +618,7 @@ export class SessionManager {
         state: { status: "pending", input: {}, raw: "" },
       };
       streaming.parts.set(contentIndex, part);
-      const record = s.messages.find((m) => m.info.id === streaming.message.id);
+      const record = s.messages?.find((m) => m.info.id === streaming.message.id);
       record?.parts.push(part);
     }
 
@@ -483,7 +694,7 @@ export class SessionManager {
         };
       }
       this.emitPart(s, part);
-      const owner = s.messages.find((m) => m.info.id === part.messageID);
+      const owner = s.messages?.find((m) => m.info.id === part.messageID);
       if (owner) this.emit(s.info.directory, { type: "message.updated", properties: { info: owner.info } });
     }
   }
@@ -556,4 +767,212 @@ function resultText(content: unknown): string | undefined {
     .map((b) => (b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : ""))
     .join("");
   return text === "" ? undefined : text;
+}
+
+// ----------------------------------------------------------------------
+// Restored-session history: pi JSONL file → OpenCode messages + parts
+// ----------------------------------------------------------------------
+
+interface PiFileEntry {
+  type?: string;
+  id?: string;
+  parentId?: string | null;
+  timestamp?: string | number;
+  provider?: string;
+  modelId?: string;
+  message?: PiFileMessage;
+}
+
+interface PiFileMessage {
+  role?: string;
+  content?: Array<Record<string, unknown>>;
+  usage?: PiUsage;
+  provider?: string;
+  model?: string;
+  stopReason?: string;
+  timestamp?: number;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+}
+
+function entryTime(e: PiFileEntry): number {
+  if (typeof e.timestamp === "number") return e.timestamp;
+  if (typeof e.timestamp === "string") {
+    const t = Date.parse(e.timestamp);
+    if (!Number.isNaN(t)) return t;
+  }
+  if (typeof e.message?.timestamp === "number") return e.message.timestamp;
+  return 0;
+}
+
+function textOf(content: Array<Record<string, unknown>> | undefined): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : ""))
+    .join("");
+}
+
+/**
+ * Rebuild OpenCode messages from a pi session file for a dormant session.
+ * pi entries form a tree (id/parentId); the active branch is the walk from
+ * the newest message entry up to the root. Part ids are deterministic
+ * (`prt_r<entry>_<block>`) so re-parsing reconciles in the UI instead of
+ * duplicating. Never throws: unreadable/corrupt input degrades to [].
+ */
+function parsePiSessionFile(s: ManagedSession, agentName: string): OCMessageWithParts[] {
+  const piPath = s.piPath ?? s.restored?.piPath;
+  if (piPath === undefined) return [];
+  const sessionID = s.info.id;
+  const directory = s.info.directory;
+  let raw: string;
+  try {
+    raw = readFileSync(piPath, "utf8");
+  } catch {
+    return [];
+  }
+
+  const entries: PiFileEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.length === 0) continue;
+    try {
+      entries.push(JSON.parse(line) as PiFileEntry);
+    } catch {
+      /* torn trailing write — ignore */
+    }
+  }
+
+  const indexOf = new Map<PiFileEntry, number>();
+  entries.forEach((e, i) => indexOf.set(e, i));
+  const byId = new Map<string, PiFileEntry>();
+  for (const e of entries) if (typeof e.id === "string") byId.set(e.id, e);
+
+  let leaf: PiFileEntry | undefined;
+  for (const e of entries) {
+    if (e.type !== "message") continue;
+    if (leaf === undefined || entryTime(e) >= entryTime(leaf)) leaf = e;
+  }
+  const chain: PiFileEntry[] = [];
+  const seen = new Set<PiFileEntry>();
+  for (let cur = leaf; cur !== undefined && !seen.has(cur); ) {
+    seen.add(cur);
+    chain.push(cur);
+    cur = typeof cur.parentId === "string" ? byId.get(cur.parentId) : undefined;
+  }
+  chain.reverse();
+
+  const out: OCMessageWithParts[] = [];
+  const toolParts = new Map<string, OCToolPart>();
+  let currentModel: OCModelRef = { providerID: "unknown", modelID: "unknown" };
+  let lastUserId = "";
+
+  for (const e of chain) {
+    if (e.type === "model_change" && typeof e.provider === "string" && typeof e.modelId === "string") {
+      currentModel = { providerID: e.provider, modelID: e.modelId };
+      continue;
+    }
+    if (e.type !== "message") continue;
+    const m = e.message;
+    if (m === undefined) continue;
+    const idx = indexOf.get(e) ?? 0;
+    const created = entryTime(e);
+
+    if (m.role === "user") {
+      const text = textOf(m.content);
+      if (text === "") continue;
+      const msgId = `msg_r${idx}`;
+      lastUserId = msgId;
+      const info: OCUserMessage = {
+        id: msgId,
+        sessionID,
+        role: "user",
+        time: { created },
+        agent: agentName,
+        model: currentModel,
+      };
+      const parts: OCPart[] = [
+        { id: `prt_r${idx}_0`, sessionID, messageID: msgId, type: "text", text, time: { start: created, end: created } },
+      ];
+      out.push({ info, parts });
+      continue;
+    }
+
+    if (m.role === "assistant") {
+      if (typeof m.provider === "string" && typeof m.model === "string") {
+        currentModel = { providerID: m.provider, modelID: m.model };
+      }
+      const msgId = `msg_r${idx}`;
+      const info: OCAssistantMessage = {
+        id: msgId,
+        sessionID,
+        role: "assistant",
+        time: { created, completed: created },
+        parentID: lastUserId,
+        modelID: currentModel.modelID,
+        providerID: currentModel.providerID,
+        mode: agentName,
+        path: { cwd: directory, root: directory },
+        cost: m.usage?.cost?.total ?? 0,
+        tokens: {
+          input: m.usage?.input ?? 0,
+          output: m.usage?.output ?? 0,
+          reasoning: m.usage?.reasoning ?? 0,
+          cache: { read: m.usage?.cacheRead ?? 0, write: m.usage?.cacheWrite ?? 0 },
+        },
+        ...(typeof m.stopReason === "string" ? { finish: m.stopReason } : {}),
+      };
+      const parts: OCPart[] = [];
+      const blocks = Array.isArray(m.content) ? m.content : [];
+      blocks.forEach((block, b) => {
+        const partId = `prt_r${idx}_${b}`;
+        const kind = block?.type;
+        if (kind === "text" && typeof block.text === "string") {
+          parts.push({ id: partId, sessionID, messageID: msgId, type: "text", text: block.text, time: { start: created, end: created } });
+        } else if (kind === "thinking" && typeof block.thinking === "string") {
+          parts.push({ id: partId, sessionID, messageID: msgId, type: "reasoning", text: block.thinking, time: { start: created, end: created } });
+        } else if (kind === "toolCall") {
+          const callID = typeof block.id === "string" ? block.id : `call_r${idx}_${b}`;
+          const tool = typeof block.name === "string" ? block.name : "unknown";
+          const args = block.arguments;
+          const input = args !== null && typeof args === "object" ? (args as Record<string, unknown>) : {};
+          const part: OCToolPart = {
+            id: partId,
+            sessionID,
+            messageID: msgId,
+            type: "tool",
+            callID,
+            tool,
+            state: { status: "running", input, title: toolTitle(tool, input), time: { start: created } },
+          };
+          toolParts.set(callID, part);
+          parts.push(part);
+        }
+      });
+      out.push({ info, parts });
+      continue;
+    }
+
+    if (m.role === "toolResult") {
+      const callID = typeof m.toolCallId === "string" ? m.toolCallId : undefined;
+      const part = callID !== undefined ? toolParts.get(callID) : undefined;
+      if (part === undefined) continue; // result without a visible call (abandoned branch)
+      const text = resultText(m.content) ?? "";
+      const startedAt = part.state.status !== "pending" ? part.state.time.start : created;
+      const input = part.state.input ?? {};
+      part.state =
+        m.isError === true
+          ? { status: "error", input, error: text !== "" ? text : `tool ${part.tool} failed`, time: { start: startedAt, end: created } }
+          : {
+              status: "completed",
+              input,
+              output: text,
+              title: toolTitle(part.tool, input),
+              metadata: {},
+              time: { start: startedAt, end: created },
+            };
+      continue;
+    }
+    // system / custom entries are not rendered
+  }
+  return out;
 }

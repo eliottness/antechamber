@@ -7,6 +7,7 @@ import { appendFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { SessionManager } from "./sessions.js";
+import { getAgentName } from "./agent-name.js";
 import { loadCatalog, type Catalog } from "./catalog.js";
 import type { OCEvent, OCPromptBody } from "./types.js";
 
@@ -34,7 +35,7 @@ export class AdapterServer {
   private actualPort: number | undefined;
 
   constructor(private options: AdapterServerOptions) {
-    this.sessions = new SessionManager((directory, event) => this.broadcast(directory, event));
+    this.sessions = new SessionManager((directory, event) => this.broadcast(directory, event), undefined, options.defaultDirectory);
     this.server = createServer((req, res) => void this.route(req, res));
   }
 
@@ -265,7 +266,7 @@ export class AdapterServer {
     }
     if (path === "/agent" && method === "GET") {
       this.json(res, 200, [
-        { name: "build", description: "pi coding agent (via openchamber-pi-connector)", mode: "primary", hidden: false, options: {} },
+        { name: getAgentName(), description: `${getAgentName()} (pi coding agent via openchamber-pi-connector)`, mode: "primary", hidden: false, options: {} },
       ]);
       return;
     }
