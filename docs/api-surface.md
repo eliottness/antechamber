@@ -17,7 +17,7 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `session.list` | session list per directory | scan pi `--session-dir` JSONL files |
 | `session.create` | new session | spawn `pi --mode rpc` (fresh session) |
 | `session.get` | session detail | RPC `get_state` |
-| `session.update` | rename/metadata | RPC `set_session_name` |
+| `session.update` | rename/archive/metadata | adapter-side title + `time.archived` (persisted in the registry; `archived=true/false` list filtering honored on `/session` and `/experimental/session`) |
 | `session.delete` | delete session | kill process + remove session file |
 | `session.messages` | load message history | RPC `get_messages` |
 | `session.promptAsync` | send prompt (async) | RPC `prompt`. **Echo contract** (verified against OpenChamber's event-reducer): reuse the client's optimistic `messageID` from the body for the user message and emit `message.updated` + `message.part.updated` (user text part) so the optimistic insert reconciles in place instead of rendering twice. |
@@ -46,7 +46,7 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `config.get` / `config.update` | adapter config (pi flags, session dirs) |
 | `config.providers` | RPC `get_available_models` (translated) |
 | `command.list` | RPC `get_commands` |
-| `app.agents` | static pi agent descriptor |
+| `app.agents` | static pi agent descriptors — `build` plus pi's own agent name |
 | `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
 | `auth.set`, `provider.oauth`, `mcp.connect/disconnect` | stub or proxy to pi config |
 
@@ -125,7 +125,7 @@ send ("provider or model not selected"):
 | `GET /experimental/session` | `Session[]` (all directories) |
 | `GET /path` | `{home, state, config, worktree, directory}` |
 | `GET /vcs` | `{}` or `{branch}` |
-| `GET /agent` | at least one primary agent |
+| `GET /agent` | primary agents: `build` + pi's own name (aliases for the same pi agent, so OpenChamber's `build` default resolves and the picker has options) |
 | `GET /global/health` | any 200 JSON |
 
 Gotcha: OpenChamber's model picker ignores `default` when it can't match it

@@ -59,7 +59,8 @@ implements.
 with pi as the backend — session create, prompt, live text/reasoning
 streaming over SSE, **tool call parts** (bash/write/edit… rendered in
 OpenChamber with arguments, results and completed/error states, mapped to
-the SDK v2 `ToolState` union), abort, rename, delete, model catalog from pi.
+the SDK v2 `ToolState` union), abort, rename, archive (`time.archived` + list
+filtering), delete, model catalog from pi.
 See [docs/architecture.md](docs/architecture.md) for the design and
 [docs/api-surface.md](docs/api-surface.md) for the endpoint compatibility
 list.

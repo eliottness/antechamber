@@ -20,6 +20,8 @@ export interface OCSession {
     created: number;
     updated: number;
     compacting?: number;
+    /** Epoch ms — presence marks the session archived (SDK v2 session.update). */
+    archived?: number;
   };
 }
 
@@ -140,7 +142,14 @@ export type OCEvent =
   | { type: "session.idle"; properties: { sessionID: string } }
   | { type: "session.error"; properties: { sessionID?: string; error?: { name: string; data: { message: string } } } }
   | { type: "message.updated"; properties: { info: OCMessage } }
-  | { type: "message.part.updated"; properties: { part: OCPart; delta?: string } };
+  | { type: "message.part.updated"; properties: { part: OCPart; delta?: string } }
+  /**
+   * The model pi is actually running changed — either the UI asked for it or pi
+   * changed it on its own side. v2.ts maps this to `session.model.selected`,
+   * the only channel OpenChamber has for learning the truth from the server;
+   * its picker is otherwise client-local state that happily drifts.
+   */
+  | { type: "model.changed"; properties: { sessionID: string; model: OCModelRef; previous?: OCModelRef } };
 
 export interface OCProject {
   id: string;

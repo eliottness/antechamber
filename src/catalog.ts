@@ -50,6 +50,13 @@ export interface Catalog {
   providers: OCv2Provider[];
   /** providerID → default modelID */
   defaults: Record<string, string>;
+  /**
+   * The model pi reported as *active*. Separate from `defaults` because the
+   * client pins its picker to /api/model/default and then validates it against
+   * the catalog — an arbitrary pick here silently becomes the model the UI
+   * believes is running.
+   */
+  default?: { providerID: string; modelID: string };
 }
 
 function toOCModel(m: PiModelInfo): OCv2Model {
@@ -82,9 +89,9 @@ function toOCModel(m: PiModelInfo): OCv2Model {
 export async function loadCatalog(directory: string): Promise<Catalog> {
   const pi = new PiRpcClient({ cwd: directory });
   try {
-    const [modelsRes, stateRes] = await Promise.all([
+    const [modelsRes, firstState] = await Promise.all([
       pi.command<{ models: PiModelInfo[] }>({ type: "get_available_models" }),
-      pi.command<{ model: PiModelInfo }>({ type: "get_state" }),
+      pi.command<{ model: PiModelInfo | null }>({ type: "get_state" }),
     ]);
 
     const providers = new Map<string, OCv2Provider>();
@@ -99,9 +106,31 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
       }
     }
 
+    // get_state occasionally races pi's own startup. One retry beats resolving
+    // no active model, which is precisely what leaves the UI picker guessing.
+    let active = firstState.success ? firstState.data?.model ?? null : null;
+    if (active === null) {
+      const retry = await pi.command<{ model: PiModelInfo | null }>({ type: "get_state" });
+      active = retry.success ? retry.data?.model ?? null : null;
+    }
+    if (active === null) {
+      console.error("[catalog] warning: pi reported no active model — /api/model/default will be null and the UI picker falls back to its own default");
+    }
+
     const defaults: Record<string, string> = {};
-    if (stateRes.success && stateRes.data?.model) {
-      defaults[stateRes.data.model.provider] = stateRes.data.model.id;
+    let resolvedDefault: { providerID: string; modelID: string } | undefined;
+    if (active !== null) {
+      defaults[active.provider] = active.id;
+      resolvedDefault = { providerID: active.provider, modelID: active.id };
+      // The client drops any selection it cannot find in this catalog and picks
+      // something else instead, so a model get_available_models omitted still
+      // has to be listed here — otherwise the active model is unselectable.
+      let p = providers.get(active.provider);
+      if (p === undefined) {
+        p = { id: active.provider, name: active.provider, source: "config", env: [], options: {}, models: {} };
+        providers.set(active.provider, p);
+      }
+      if (p.models[active.id] === undefined) p.models[active.id] = toOCModel(active);
     }
 
     // OpenChamber's picker defaults to the first listed provider/model — put pi's active config there.
@@ -117,7 +146,8 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
       p.models = Object.fromEntries(entries);
     }
 
-    return { providers: sorted, defaults };
+    // exactOptionalPropertyTypes: omit `default` rather than set it undefined.
+    return resolvedDefault !== undefined ? { providers: sorted, defaults, default: resolvedDefault } : { providers: sorted, defaults };
   } finally {
     await pi.dispose();
   }

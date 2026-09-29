@@ -7,5 +7,8 @@ if [ "$1" = "serve" ]; then
   shift
   exec "$PKG_DIR/node_modules/.bin/tsx" "$PKG_DIR/src/cli.ts" serve "$@"
 fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+  exec "$PKG_DIR/node_modules/.bin/tsx" "$PKG_DIR/src/cli.ts" --version
+fi
 echo "opencode-pi wrapper: unsupported command '$1' (only 'serve' is implemented)" >&2
 exit 1

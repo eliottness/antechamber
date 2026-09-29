@@ -24,6 +24,13 @@ function arg(name: string, fallback: string): string {
   return fallback;
 }
 
+// OpenChamber >= 2.0.4 probes `<binary> --version` and requires opencode
+// >= 2.0.15 (major 2); advertise the v2 API contract this adapter implements.
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+  console.log("opencode v2.0.18");
+  process.exit(0);
+}
+
 const serveMode = process.argv[2] === "serve";
 
 const port = Number(arg("port", "4096"));

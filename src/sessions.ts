@@ -8,7 +8,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, unlink
 import { join } from "node:path";
 import { PiRpcClient } from "./pi-rpc.js";
 import { getAgentName } from "./agent-name.js";
-import { ocIdFor, piSessionDir, scanPiSessions, SessionStore, type ScannedSession } from "./session-store.js";
+import { ocIdFor, piSessionDir, piSessionsRootMtime, scanAllPiSessions, scanPiSessions, SessionStore, type ScannedSession } from "./session-store.js";
 import type {
   OCAssistantMessage,
   OCEvent,
@@ -69,10 +69,19 @@ interface PiModel {
 }
 
 interface PiState {
-  model: PiModel;
+  /** pi reports `null` before a model is resolved. */
+  model: PiModel | null;
   sessionId: string;
   sessionFile?: string;
   isStreaming: boolean;
+}
+
+/**
+ * pi reports the requested `model` and, once the provider has answered, the
+ * concrete `responseModel` it actually served. The latter is the truth.
+ */
+function piModelId(responseModel: unknown, model: unknown): unknown {
+  return typeof responseModel === "string" && responseModel !== "" ? responseModel : model;
 }
 
 export class SessionManager {
@@ -80,6 +89,8 @@ export class SessionManager {
   private readonly store: SessionStore;
   /** directory → last scan freshness (pi dir mtime + wall clock). */
   private scanCache = new Map<string, { mtimeMs: number; at: number }>();
+  /** freshness of the all-directories scan (see listAll). */
+  private scanAllCache: { mtimeMs: number; at: number } | undefined;
 
   constructor(
     private emit: EventSink,
@@ -116,7 +127,7 @@ export class SessionManager {
       pi,
       messages: [],
       status: { type: "idle" },
-      model: { providerID: state.data.model.provider, modelID: state.data.model.id },
+      model: undefined,
       streaming: undefined,
       toolByCallId: new Map(),
       ...(piSessionId !== undefined ? { piSessionId } : {}),
@@ -125,6 +136,9 @@ export class SessionManager {
     this.wirePi(managed, pi);
 
     this.emit(directory, { type: "session.created", properties: { info } });
+    // Announce pi's real model *after* session.created, so the client already
+    // knows the session when the switch marker lands in its transcript.
+    this.applyPiModel(managed, state.data.model?.provider, state.data.model?.id);
 
     // Bind pi's session file so the session survives adapter restarts. pi
     // reports the path directly; fall back to a background scan for older pi
@@ -184,6 +198,16 @@ export class SessionManager {
     return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => s.info);
   }
 
+  /**
+   * Every restorable session on disk (all directories) plus live ones. Backs the
+   * directory-less `/experimental/session` list OpenChamber reads for its
+   * global/recent view; `list(directory)` stays the per-project source of truth.
+   */
+  listAll(): OCSession[] {
+    this.ensureAllScanned();
+    return [...this.sessions.values()].map((s) => s.info);
+  }
+
   get(sessionId: string): ManagedSession | undefined {
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return live;
@@ -208,13 +232,25 @@ export class SessionManager {
     return true;
   }
 
-  rename(sessionId: string, title: string): OCSession | undefined {
+  /**
+   * PATCH /session/{id} — rename and/or archive. OpenChamber archives with
+   * `{ time: { archived: Date.now() } }` and unarchives with `archived: 0`
+   * (SDK v2 session.update); `title` is only touched when actually sent,
+   * otherwise an archive-only PATCH would blank the title.
+   */
+  update(sessionId: string, patch: { title?: string | undefined; archived?: number | undefined }): OCSession | undefined {
     const s = this.get(sessionId);
     if (!s) return undefined;
-    s.info.title = title;
+    if (typeof patch.title === "string" && patch.title !== "") s.info.title = patch.title;
+    if (patch.archived !== undefined) {
+      if (patch.archived > 0) s.info.time.archived = patch.archived;
+      else delete s.info.time.archived; // 0 = unarchive
+    }
     s.info.time.updated = Date.now();
     this.persistMeta(s);
-    if (s.pi !== undefined) void s.pi.command({ type: "set_session_name", name: title }).catch(() => undefined);
+    if (typeof patch.title === "string" && patch.title !== "" && s.pi !== undefined) {
+      void s.pi.command({ type: "set_session_name", name: patch.title }).catch(() => undefined);
+    }
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     return s.info;
   }
@@ -239,6 +275,64 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * POST /api/session/{id}/model — OpenChamber awaits this before every prompt
+   * (its `applySendSelection` calls switchModel first), so it is the only path
+   * from the bottom-right picker to pi. Errors are deliberately not swallowed:
+   * a silent no-op is exactly what let the UI and pi disagree about the model.
+   */
+  async setModel(sessionId: string, ref: OCModelRef): Promise<OCModelRef> {
+    const s = this.get(sessionId);
+    if (s === undefined) throw new Error(`unknown session: ${sessionId}`);
+    if (s.pi === undefined) await this.revive(s);
+    const pi = s.pi;
+    if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
+    // The client re-sends its selection on every send; an unchanged model must
+    // not cost a round-trip nor emit a phantom "model switched" marker.
+    if (s.model !== undefined && s.model.providerID === ref.providerID && s.model.modelID === ref.modelID) {
+      return s.model;
+    }
+    const res = await pi.command<{ provider?: string; id?: string; responseModel?: string }>({
+      type: "set_model",
+      provider: ref.providerID,
+      modelId: ref.modelID,
+    });
+    if (!res.success) throw new Error(res.error ?? `pi refused model ${ref.providerID}/${ref.modelID}`);
+    // pi's response is the authority, not the request: it echoes the resolved
+    // Model, including `responseModel` when the provider named a concrete one.
+    const data = res.data;
+    const resolved: OCModelRef = {
+      providerID: typeof data?.provider === "string" && data.provider !== "" ? data.provider : ref.providerID,
+      modelID:
+        typeof data?.responseModel === "string" && data.responseModel !== ""
+          ? data.responseModel
+          : typeof data?.id === "string" && data.id !== ""
+            ? data.id
+            : ref.modelID,
+    };
+    this.applyPiModel(s, resolved.providerID, resolved.modelID);
+    return resolved;
+  }
+
+  /**
+   * Single funnel for "pi is now running this model": adopt it, persist it for
+   * the next cold start, and tell the UI. Returns whether anything changed.
+   */
+  private applyPiModel(s: ManagedSession, provider: unknown, modelId: unknown): boolean {
+    if (typeof provider !== "string" || provider === "") return false;
+    if (typeof modelId !== "string" || modelId === "") return false;
+    const previous = s.model;
+    if (previous !== undefined && previous.providerID === provider && previous.modelID === modelId) return false;
+    const model: OCModelRef = { providerID: provider, modelID: modelId };
+    s.model = model;
+    this.persistMeta(s);
+    this.emit(s.info.directory, {
+      type: "model.changed",
+      properties: { sessionID: s.info.id, model, ...(previous !== undefined ? { previous } : {}) },
+    });
+    return true;
+  }
+
   async prompt(sessionId: string, text: string, model?: OCModelRef, noReply = false, messageID?: string): Promise<void> {
     const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
@@ -247,11 +341,22 @@ export class SessionManager {
     if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
     this.ensureMessages(s);
 
-    if (model && (s.model === undefined || model.providerID !== s.model.providerID || model.modelID !== s.model.modelID)) {
-      const res = await pi
-        .command({ type: "set_model", provider: model.providerID, modelId: model.modelID })
-        .catch(() => undefined);
-      if (res?.success) s.model = model;
+    // Same funnel as POST /api/session/{id}/model. Failing loudly matters: the
+    // previous code swallowed pi's refusal and then reported the *requested*
+    // model as though the switch had happened.
+    if (model !== undefined) {
+      try {
+        await this.setModel(sessionId, model);
+      } catch (err) {
+        this.emit(s.info.directory, {
+          type: "session.error",
+          properties: {
+            sessionID: s.info.id,
+            error: { name: "UnknownError", data: { message: err instanceof Error ? err.message : String(err) } },
+          },
+        });
+        throw err;
+      }
     }
 
     // OpenChamber sends a client-generated messageID with its optimistic
@@ -335,7 +440,9 @@ export class SessionManager {
     s.piPath = restored.piPath;
     s.piSessionId = restored.piSessionId;
     delete s.restored;
-    s.model = { providerID: state.data.model.provider, modelID: state.data.model.id };
+    // A restored session pushes pi's real model to the UI rather than leaving
+    // the picker on whatever it last showed for this directory.
+    this.applyPiModel(s, state.data.model?.provider, state.data.model?.id);
     this.ensureMessages(s);
     this.wirePi(s, pi);
     this.persistMeta(s);
@@ -344,6 +451,19 @@ export class SessionManager {
   private ensureMessages(s: ManagedSession): OCMessageWithParts[] {
     if (s.messages === undefined) s.messages = parsePiSessionFile(s, getAgentName());
     return s.messages;
+  }
+
+  /** pi paths/ids already represented in memory — shared by both scans. */
+  private knownSessionKeys(): { paths: Set<string>; piIds: Set<string> } {
+    const paths = new Set<string>();
+    const piIds = new Set<string>();
+    for (const s of this.sessions.values()) {
+      const p = s.piPath ?? s.restored?.piPath;
+      if (p !== undefined) paths.add(p);
+      if (s.piSessionId !== undefined) piIds.add(s.piSessionId);
+      if (s.restored !== undefined) piIds.add(s.restored.piSessionId);
+    }
+    return { paths, piIds };
   }
 
   /** Adopt dormant sessions for pi files in `directory` not tracked yet. */
@@ -359,16 +479,24 @@ export class SessionManager {
     if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < 5_000) return;
     this.scanCache.set(directory, { mtimeMs, at: Date.now() });
 
-    const knownPaths = new Set<string>();
-    const knownPiIds = new Set<string>();
-    for (const s of this.sessions.values()) {
-      const p = s.piPath ?? s.restored?.piPath;
-      if (p !== undefined) knownPaths.add(p);
-      if (s.piSessionId !== undefined) knownPiIds.add(s.piSessionId);
-      if (s.restored !== undefined) knownPiIds.add(s.restored.piSessionId);
-    }
+    const { paths, piIds } = this.knownSessionKeys();
     for (const sc of scanPiSessions(directory)) {
-      if (knownPaths.has(sc.piPath) || knownPiIds.has(sc.piSessionId)) continue;
+      if (paths.has(sc.piPath) || piIds.has(sc.piSessionId)) continue;
+      this.adopt(sc);
+    }
+  }
+
+  /** Adopt every restorable pi session on disk, regardless of directory. */
+  private ensureAllScanned(): void {
+    const mtimeMs = piSessionsRootMtime();
+    if (mtimeMs === undefined) return; // no sessions recorded yet
+    const cached = this.scanAllCache;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < 5_000) return;
+    this.scanAllCache = { mtimeMs, at: Date.now() };
+
+    const { paths, piIds } = this.knownSessionKeys();
+    for (const sc of scanAllPiSessions()) {
+      if (paths.has(sc.piPath) || piIds.has(sc.piSessionId)) continue;
       this.adopt(sc);
     }
   }
@@ -382,14 +510,18 @@ export class SessionManager {
       directory: sc.directory,
       title: reg?.title ?? sc.title,
       version: ADAPTER_VERSION,
-      time: { created: sc.created, updated: Math.max(sc.updated, reg?.updated ?? 0) },
+      time: {
+        created: sc.created,
+        updated: Math.max(sc.updated, reg?.updated ?? 0),
+        ...(reg?.archived ? { archived: reg.archived } : {}),
+      },
     };
     const managed: ManagedSession = {
       info,
       pi: undefined,
       messages: undefined,
       status: { type: "idle" },
-      model: undefined,
+      model: reg?.model !== undefined ? { providerID: reg.model.providerID, modelID: reg.model.modelID } : undefined,
       streaming: undefined,
       toolByCallId: new Map(),
       restored: { piSessionId: sc.piSessionId, piPath: sc.piPath },
@@ -424,6 +556,8 @@ export class SessionManager {
       directory: s.info.directory,
       // "New session" is a placeholder — let the scan-derived title win.
       ...(s.info.title !== "New session" ? { title: s.info.title } : {}),
+      ...(s.info.time.archived !== undefined ? { archived: s.info.time.archived } : {}),
+      ...(s.model !== undefined ? { model: { providerID: s.model.providerID, modelID: s.model.modelID } } : {}),
       created: s.info.time.created,
       updated: s.info.time.updated,
     });
@@ -478,8 +612,12 @@ export class SessionManager {
       }
 
       case "message_start": {
-        const msg = ev.message as { role?: string } | undefined;
+        const msg = ev.message as { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown } | undefined;
         if (msg?.role !== "assistant") break; // user message already recorded at prompt()
+        // pi stamps the assistant message with the model really serving it.
+        // Trust that over our snapshot, which goes stale whenever pi switches on
+        // its own side (subagent routing, an in-session /model, a resumed file).
+        this.applyPiModel(s, msg.provider, piModelId(msg.responseModel, msg.model));
         const parent = [...(s.messages ?? [])].reverse().find((m) => m.info.role === "user");
         const assistant: OCAssistantMessage = {
           id: id("msg"),
@@ -505,8 +643,14 @@ export class SessionManager {
         break;
 
       case "message_end": {
-        const ended = ev.message as { role?: string; usage?: PiUsage } | undefined;
+        const ended = ev.message as { role?: string; usage?: PiUsage; provider?: unknown; model?: unknown; responseModel?: unknown } | undefined;
         if (ended?.role === "assistant" && s.streaming) {
+          // Last chance to correct attribution: some providers only reveal the
+          // concrete model once the stream has closed.
+          if (this.applyPiModel(s, ended.provider, piModelId(ended.responseModel, ended.model)) && s.model !== undefined) {
+            s.streaming.message.providerID = s.model.providerID;
+            s.streaming.message.modelID = s.model.modelID;
+          }
           this.applyUsage(s.streaming.message, ended.usage);
           s.streaming.message.time.completed = Date.now();
           this.emit(dir, { type: "message.updated", properties: { info: s.streaming.message } });

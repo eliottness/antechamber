@@ -57,6 +57,14 @@ export interface SessionRegistryEntry {
   piPath: string;
   directory: string;
   title?: string;
+  /** Archive timestamp (absent/0 = live) — OpenChamber's archive toggle. */
+  archived?: number;
+  /**
+   * Last model pi was known to run. pi's JSONL header does not carry it, so
+   * without this a dormant session would advertise no model at all until it is
+   * revived — and the UI picker would fall back to its own default.
+   */
+  model?: { providerID: string; modelID: string };
   created: number;
   updated: number;
 }
@@ -105,8 +113,7 @@ function titleFromHead(head: string, piSessionId: string): string {
   return `pi session ${piSessionId.slice(0, 8)}`;
 }
 
-function scanOne(piPath: string, directory: string): ScannedSession | undefined {
-  const head = readHead(piPath);
+function parseSessionHeader(head: string): SessionHeader | undefined {
   const firstLine = head.split("\n", 1)[0] ?? "";
   let header: SessionHeader;
   try {
@@ -116,8 +123,11 @@ function scanOne(piPath: string, directory: string): ScannedSession | undefined 
   }
   if (header.type !== "session") return undefined;
   if (typeof header.id !== "string" || header.id === "") return undefined;
-  // The directory-name sanitization is lossy; the header cwd is authoritative.
-  if (typeof header.cwd === "string" && header.cwd !== directory) return undefined;
+  return header;
+}
+
+function buildScanned(piPath: string, directory: string, head: string, header: SessionHeader): ScannedSession {
+  const piSessionId = header.id as string;
   const created = typeof header.timestamp === "string" ? Date.parse(header.timestamp) : NaN;
   let updated = created;
   try {
@@ -126,13 +136,100 @@ function scanOne(piPath: string, directory: string): ScannedSession | undefined 
     /* fall back to created */
   }
   return {
-    piSessionId: header.id,
+    piSessionId,
     piPath,
     directory,
-    title: titleFromHead(head, header.id),
+    title: titleFromHead(head, piSessionId),
     created: Number.isNaN(created) ? Math.floor(updated) : created,
     updated: Math.floor(updated),
   };
+}
+
+function scanOne(piPath: string, directory: string): ScannedSession | undefined {
+  const head = readHead(piPath);
+  const header = parseSessionHeader(head);
+  if (header === undefined) return undefined;
+  // The directory-name sanitization is lossy; the header cwd is authoritative.
+  if (typeof header.cwd === "string" && header.cwd !== directory) return undefined;
+  return buildScanned(piPath, directory, head, header);
+}
+
+/** Like scanOne, but the true cwd comes from the file header (global enumeration). */
+function scanOneAnyDirectory(piPath: string): ScannedSession | undefined {
+  const head = readHead(piPath);
+  const header = parseSessionHeader(head);
+  if (header === undefined) return undefined;
+  if (typeof header.cwd !== "string" || header.cwd === "") return undefined;
+  return buildScanned(piPath, header.cwd, head, header);
+}
+
+/** Root of pi's session storage: one subdirectory per cwd. */
+function piSessionsRoot(): string {
+  return join(homedir(), ".pi", "agent", "sessions");
+}
+
+/**
+ * Newest mtime across the sessions root and its per-cwd subdirectories. Cache
+ * key for {@link scanAllPiSessions}: a new session file bumps its own cwd
+ * subdirectory, not the root, so the root alone is not enough.
+ */
+export function piSessionsRootMtime(): number | undefined {
+  const root = piSessionsRoot();
+  let newest: number;
+  try {
+    newest = statSync(root).mtimeMs;
+  } catch {
+    return undefined; // no sessions recorded yet
+  }
+  try {
+    for (const name of readdirSync(root)) {
+      try {
+        newest = Math.max(newest, statSync(join(root, name)).mtimeMs);
+      } catch {
+        /* entry vanished mid-scan — keep the previous max */
+      }
+    }
+  } catch {
+    /* unreadable root listing — the root mtime still gives us a cache key */
+  }
+  return newest;
+}
+
+/**
+ * Every restorable pi session on disk, regardless of directory. Used for the
+ * global (directory-less) session list. A file is only trusted when its
+ * header carries an authoritative `cwd`, since the directory-name
+ * sanitization is lossy and cannot be reversed.
+ */
+export function scanAllPiSessions(): ScannedSession[] {
+  const root = piSessionsRoot();
+  if (!existsSync(root)) return [];
+  const out: ScannedSession[] = [];
+  let dirs: string[];
+  try {
+    dirs = readdirSync(root);
+  } catch {
+    return [];
+  }
+  for (const dirName of dirs) {
+    let names: string[];
+    try {
+      names = readdirSync(join(root, dirName));
+    } catch {
+      continue; // not a directory we can read
+    }
+    for (const name of names) {
+      if (!name.endsWith(".jsonl")) continue;
+      try {
+        const scanned = scanOneAnyDirectory(join(root, dirName, name));
+        if (scanned !== undefined) out.push(scanned);
+      } catch {
+        /* unreadable file — skip it, never take the server down */
+      }
+    }
+  }
+  out.sort((a, b) => b.updated - a.updated);
+  return out;
 }
 
 /** All restorable pi sessions recorded for `directory`. Corrupt files are skipped. */
@@ -172,7 +269,14 @@ export class SessionStore {
     try {
       const raw = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, SessionRegistryEntry>;
       for (const [k, v] of Object.entries(raw)) {
-        if (v && typeof v.piPath === "string" && typeof v.piSessionId === "string") this.entries.set(k, v);
+        if (v && typeof v.piPath === "string" && typeof v.piSessionId === "string") {
+          // A hand-edited or partially written registry must not be able to
+          // poison the model a dormant session advertises.
+          if (v.model !== undefined && (typeof v.model.providerID !== "string" || typeof v.model.modelID !== "string")) {
+            delete v.model;
+          }
+          this.entries.set(k, v);
+        }
       }
     } catch {
       /* missing or corrupt — start empty */

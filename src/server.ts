@@ -3,21 +3,60 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { SessionManager } from "./sessions.js";
-import { getAgentName } from "./agent-name.js";
+import { getAgentName, getExposedAgentNames } from "./agent-name.js";
 import { loadCatalog, type Catalog } from "./catalog.js";
-import type { OCEvent, OCPromptBody } from "./types.js";
+import {
+  defaultV2Model,
+  flattenModels,
+  toV2Message,
+  toV2Session,
+  V2EventTranslator,
+  type V2Session,
+} from "./v2.js";
+import type { OCEvent, OCModelRef, OCPromptBody, OCSession } from "./types.js";
 
 const DEBUG_LOG = process.env.OCPI_DEBUG_LOG ?? "/tmp/openchamber-pi-debug.log";
 
-// OpenChamber reads /global/health's version as the opencode version and nags about updates.
-const OPENCODE_COMPAT_VERSION = "1.18.31";
+// This connector is not opencode — it only implements an OpenCode API subset.
+// OpenChamber reads /global/health's `version` as the installed opencode version
+// and offers an update when it trails the latest release. Advertising the SDK
+// contract version (1.18.31) made every adapter profile look permanently
+// outdated, and the resulting "update" then failed with "Unknown installation
+// method". Report no version so upgrade-status returns available:null and the UI
+// shows no prompt. Set OCPI_OPENCODE_COMPAT_VERSION to advertise one on purpose.
+const OPENCODE_COMPAT_VERSION = process.env.OCPI_OPENCODE_COMPAT_VERSION?.trim() || null;
+
+/**
+ * `archived` list filter per SDK v2 (`boolean | "true" | "false"`):
+ * "true" keeps only archived sessions, "false" only live ones, absent = all.
+ */
+function applyArchivedFilter(sessions: OCSession[], archived: string | null) {
+  if (archived === "true") return sessions.filter((s) => s.time.archived !== undefined);
+  if (archived === "false") return sessions.filter((s) => s.time.archived === undefined);
+  return sessions;
+}
 
 function debugLog(line: string): void {
   if (process.env.OCPI_DEBUG) appendFileSync(DEBUG_LOG, line + "\n");
+}
+
+function numberParam(value: string | null): number | undefined {
+  if (value === null || value === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** v2 prompt bodies carry `model:{providerID, id|modelID}`; adapt to OCModelRef. */
+function modelRefFromBody(model: { providerID?: string; id?: string; modelID?: string } | undefined): OCModelRef | undefined {
+  if (!model || typeof model.providerID !== "string") return undefined;
+  const modelID = typeof model.id === "string" ? model.id : typeof model.modelID === "string" ? model.modelID : undefined;
+  if (modelID === undefined) return undefined;
+  return { providerID: model.providerID, modelID };
 }
 
 export interface AdapterServerOptions {
@@ -30,7 +69,9 @@ export interface AdapterServerOptions {
 export class AdapterServer {
   private server: Server;
   private sessions: SessionManager;
-  private sseClients = new Set<ServerResponse>();
+  /** SSE subscribers tagged by protocol flavor: v1 (`/event`) or v2 (`/api/event`). */
+  private sseClients = new Map<ServerResponse, "v1" | "v2">();
+  private v2events = new V2EventTranslator();
   private catalogPromise: Promise<Catalog> | undefined;
   private actualPort: number | undefined;
 
@@ -62,7 +103,7 @@ export class AdapterServer {
   }
 
   async stop(): Promise<void> {
-    for (const res of this.sseClients) res.end();
+    for (const res of this.sseClients.keys()) res.end();
     await this.sessions.disposeAll();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
@@ -72,21 +113,41 @@ export class AdapterServer {
   // ---------------------------------------------------------------
 
   private broadcast(_directory: string, event: OCEvent): void {
-    const frame = `data: ${JSON.stringify(event)}\n\n`;
-    for (const res of this.sseClients) res.write(frame);
+    const v1Frame = `data: ${JSON.stringify(event)}\n\n`;
+    const v2Frames = this.v2events.translate(_directory, event).map((frame) => `data: ${JSON.stringify(frame)}\n\n`);
+    for (const [res, flavor] of this.sseClients) {
+      if (flavor === "v2") {
+        for (const frame of v2Frames) res.write(frame);
+      } else {
+        res.write(v1Frame);
+      }
+    }
   }
 
-  private handleSSE(res: ServerResponse): void {
+  private handleSSE(res: ServerResponse, flavor: "v1" | "v2"): void {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
       "Access-Control-Allow-Origin": "*",
     });
-    this.sseClients.add(res);
-    res.on("close", () => this.sseClients.delete(res));
+    this.sseClients.set(res, flavor);
+    // OpenChamber's SSE proxy aborts an upstream that is silent for 20s, so
+    // mirror real opencode's `: heartbeat` comment keepalive.
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": heartbeat\n\n");
+    }, 10_000);
+    heartbeat.unref?.();
+    res.on("close", () => {
+      clearInterval(heartbeat);
+      this.sseClients.delete(res);
+    });
     // OpenCode emits server.connected on subscribe; OpenChamber waits for it.
-    res.write(`data: ${JSON.stringify({ type: "server.connected", properties: {} })}\n\n`);
+    const connected =
+      flavor === "v2"
+        ? { id: `evt_${Date.now()}`, created: Date.now(), type: "server.connected", location: { directory: this.options.defaultDirectory }, data: {} }
+        : { type: "server.connected", properties: {} };
+    res.write(`data: ${JSON.stringify(connected)}\n\n`);
   }
 
   // ---------------------------------------------------------------
@@ -117,17 +178,42 @@ export class AdapterServer {
     const method = req.method ?? "GET";
     const directory =
       url.searchParams.get("directory") ??
+      url.searchParams.get("location[directory]") ??
+      url.searchParams.get("location") ??
       req.headers["x-opencode-directory"] as string | undefined ??
       this.options.defaultDirectory;
 
-    // SSE stream
+    // SSE stream (v2 clients subscribe at /api/event; v1 at /event)
     if (method === "GET" && (path === "/event" || path === "/global/event")) {
-      this.handleSSE(res);
+      this.handleSSE(res, "v1");
+      return;
+    }
+    if (method === "GET" && path === "/api/event") {
+      this.handleSSE(res, "v2");
+      return;
+    }
+
+    // --- opencode v2 API surface (OpenChamber 2.0.4 web UI) ---
+    if (path === "/api" || path.startsWith("/api/")) {
+      await this.handleV2(req, res, url, path, method, directory);
       return;
     }
 
     if (method === "GET" && path === "/global/health") {
-      this.json(res, 200, { healthy: true, version: OPENCODE_COMPAT_VERSION });
+      this.json(res, 200, OPENCODE_COMPAT_VERSION === null
+        ? { healthy: true }
+        : { healthy: true, version: OPENCODE_COMPAT_VERSION });
+      return;
+    }
+
+    // There is no opencode install behind this endpoint to upgrade: the adapter
+    // speaks the OpenCode API itself. Answer instead of 404 so a direct upgrade
+    // call gets a clear reason rather than a bare HTTP status.
+    if ((method === "POST" || method === "GET") && path === "/global/upgrade") {
+      this.json(res, 409, {
+        success: false,
+        error: "This endpoint is served by the pi adapter (openchamber-pi-connector), not a real opencode install — there is nothing to upgrade.",
+      });
       return;
     }
 
@@ -138,7 +224,10 @@ export class AdapterServer {
       return;
     }
     if (path === "/session" && method === "GET") {
-      this.json(res, 200, this.sessions.list(url.searchParams.get("directory") ?? undefined));
+      const dir = url.searchParams.get("directory") ?? undefined;
+      let sessions = this.sessions.list(dir);
+      sessions = applyArchivedFilter(sessions, url.searchParams.get("archived"));
+      this.json(res, 200, sessions);
       return;
     }
     if (path === "/session/status" && method === "GET") {
@@ -158,8 +247,8 @@ export class AdapterServer {
           this.json(res, 200, this.sessions.get(sessionId!)!.info);
           return;
         case "PATCH ": {
-          const body = (await this.body(req)) as { title?: string };
-          this.json(res, 200, this.sessions.rename(sessionId!, body.title ?? ""));
+          const body = (await this.body(req)) as { title?: string; time?: { archived?: number } };
+          this.json(res, 200, this.sessions.update(sessionId!, { title: body.title, archived: body.time?.archived }));
           return;
         }
         case "DELETE ":
@@ -226,7 +315,22 @@ export class AdapterServer {
 
     // --- bootstrap probes OpenChamber expects to exist ---
     if (path === "/experimental/session" && method === "GET") {
-      this.json(res, 200, this.sessions.list());
+      // OpenChamber page-loads the sidebar through this route (not /session) with
+      // ?directory=…&archived=…&roots=…&limit=…. Honor directory/roots/archived:
+      // ignoring them left the sidebar with only live sessions, so restored
+      // history never appeared after a restart; ignoring `archived` broke the
+      // archive tab (it must show only time.archived sessions, while the normal
+      // sidebar's archived=false must exclude them).
+      const directoryParam =
+        url.searchParams.get("directory") ?? (req.headers["x-opencode-directory"] as string | undefined);
+      const rootsOnly = url.searchParams.get("roots") === "true";
+      let sessions =
+        directoryParam !== undefined && directoryParam !== ""
+          ? this.sessions.list(directoryParam)
+          : this.sessions.listAll();
+      if (rootsOnly) sessions = sessions.filter((s) => s.parentID === undefined);
+      sessions = applyArchivedFilter(sessions, url.searchParams.get("archived"));
+      this.json(res, 200, sessions);
       return;
     }
     if (path === "/question" && method === "GET") {
@@ -265,10 +369,388 @@ export class AdapterServer {
       return;
     }
     if (path === "/agent" && method === "GET") {
-      this.json(res, 200, [
-        { name: getAgentName(), description: `${getAgentName()} (pi coding agent via openchamber-pi-connector)`, mode: "primary", hidden: false, options: {} },
-      ]);
+      // pi has one agent; publish OpenChamber's conventional `build` primary
+      // agent next to pi's own name so the picker — and its default resolution,
+      // which looks for `build` — has a real option. Both names run the same
+      // pi agent (see getExposedAgentNames).
+      const piName = getAgentName();
+      this.json(res, 200, getExposedAgentNames().map((name) => ({
+        name,
+        description:
+          name === piName
+            ? `${piName} (pi coding agent via openchamber-pi-connector)`
+            : `${name} — ${piName} (pi coding agent via openchamber-pi-connector)`,
+        mode: "primary",
+        hidden: false,
+        options: {},
+      })));
       return;
+    }
+
+    this.json(res, 404, { name: "NotFoundError", data: { message: `no route: ${method} ${path}` } });
+  }
+
+  // ---------------------------------------------------------------
+  // opencode v2 API surface (OpenChamber 2.0.4 web UI)
+  // ---------------------------------------------------------------
+
+  private v2Agents(): Array<{ id: string; name: string; description: string; mode: string; hidden: boolean; options: Record<string, unknown> }> {
+    const piName = getAgentName();
+    return getExposedAgentNames().map((name) => ({
+      id: name,
+      name,
+      description:
+        name === piName
+          ? `${piName} (pi coding agent via openchamber-pi-connector)`
+          : `${name} — ${piName} (pi coding agent via openchamber-pi-connector)`,
+      mode: "primary",
+      hidden: false,
+      options: {},
+    }));
+  }
+
+  private v2Session(info: OCSession): V2Session {
+    const managed = this.sessions.get(info.id);
+    return toV2Session(info, { model: managed?.model, agent: getAgentName() });
+  }
+
+  /** v2 `/api/project` list: the adapter has no project registry, so expose the
+   * directories it knows about (the default plus every restorable session). */
+  private v2Projects(): Array<Record<string, unknown>> {
+    const dirs = new Set<string>([this.options.defaultDirectory]);
+    for (const s of this.sessions.listAll()) dirs.add(s.directory);
+    const now = Date.now();
+    return [...dirs].map((dir) => ({
+      id: dir,
+      canonical: dir,
+      time: { created: now, updated: now },
+      sandboxes: [],
+    }));
+  }
+
+  private async handleV2(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    path: string,
+    method: string,
+    directory: string,
+  ): Promise<void> {
+    const location = { directory };
+    const withLocation = (data: unknown) => ({ location, data });
+
+    // --- bootstrap ---
+    if (path === "/api/info" && method === "GET") {
+      this.json(res, 200, {
+        version: OPENCODE_COMPAT_VERSION ?? "2.0.18",
+        pid: process.pid,
+        urls: [this.url],
+        paths: { tmp: tmpdir() },
+      });
+      return;
+    }
+    if (path === "/api/location" && method === "GET") {
+      this.json(res, 200, { directory, project: { id: directory, directory, canonical: directory } });
+      return;
+    }
+    if (path === "/api/config" && method === "GET") {
+      this.json(res, 200, []);
+      return;
+    }
+    if (path === "/api/provider" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, withLocation(cat.providers.map((p) => ({ ...p, activation: "enabled" }))));
+      return;
+    }
+    if (path === "/api/model" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, withLocation(flattenModels(cat)));
+      return;
+    }
+    if (path === "/api/model/default" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, withLocation(defaultV2Model(cat) ?? null));
+      return;
+    }
+    if (path === "/api/agent" && method === "GET") {
+      this.json(res, 200, withLocation(this.v2Agents()));
+      return;
+    }
+    const agentMatch = path.match(/^\/api\/agent\/([^/]+)$/);
+    if (agentMatch && method === "GET") {
+      const agentId = decodeURIComponent(agentMatch[1]!);
+      const agent = this.v2Agents().find((a) => a.id === agentId);
+      if (!agent) {
+        this.json(res, 404, { name: "NotFoundError", data: { message: `agent not found: ${agentId}` } });
+        return;
+      }
+      this.json(res, 200, withLocation(agent));
+      return;
+    }
+    if (path === "/api/command" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/skill" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+
+    // --- project / vcs / permission / form (2.0.4 bootstrap) ---
+    if (path === "/api/project" && method === "GET") {
+      this.json(res, 200, this.v2Projects());
+      return;
+    }
+    const projectMatch = path.match(/^\/api\/project\/([^/]+)$/);
+    if (projectMatch && method === "PATCH") {
+      const projectId = decodeURIComponent(projectMatch[1]!);
+      const body = (await this.body(req)) as { canonical?: string };
+      this.json(res, 200, {
+        id: projectId,
+        canonical: body.canonical ?? projectId,
+        time: { created: 0, updated: Date.now() },
+        sandboxes: [],
+      });
+      return;
+    }
+    if (path === "/api/permission/request" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/permission/saved" && method === "GET") {
+      this.json(res, 200, { data: [] });
+      return;
+    }
+    if (path.match(/^\/api\/permission\/saved\/[^/]+$/) && method === "DELETE") {
+      res.writeHead(204).end();
+      return;
+    }
+    if (path === "/api/form" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/vcs" && method === "GET") {
+      this.json(res, 200, withLocation({ branch: {} }));
+      return;
+    }
+    if (path === "/api/vcs/base" && method === "GET") {
+      this.json(res, 200, withLocation(null));
+      return;
+    }
+    if (path === "/api/vcs/status" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/vcs/branch" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/vcs/diff" && method === "GET") {
+      this.json(res, 200, withLocation(""));
+      return;
+    }
+
+    // --- sessions ---
+    if (path === "/api/session" && method === "GET") {
+      const dir = url.searchParams.get("directory") ?? url.searchParams.get("location");
+      const search = url.searchParams.get("search");
+      const limit = numberParam(url.searchParams.get("limit"));
+      let infos = dir !== null && dir !== "" ? this.sessions.list(dir) : this.sessions.listAll();
+      if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
+      const sessions = infos.map((info) => this.v2Session(info));
+      sessions.sort((a, b) => b.time.updated - a.time.updated);
+      const page = limit !== undefined ? sessions.slice(0, limit) : sessions;
+      // The 2.0.4 UI reads `cursor.previous` unconditionally — a list body
+      // without a cursor throws "Cannot read properties of undefined".
+      this.json(res, 200, { data: page, cursor: { previous: null, next: null } });
+      return;
+    }
+    if (path === "/api/session" && method === "POST") {
+      const body = (await this.body(req)) as {
+        title?: string;
+        parentID?: string;
+        location?: { directory?: string };
+      };
+      const dir = body.location?.directory ?? directory;
+      const info = await this.sessions.create(dir, body.title, body.parentID);
+      this.json(res, 200, { data: this.v2Session(info) });
+      return;
+    }
+    if (path === "/api/session/active" && method === "GET") {
+      const data: Record<string, { type: "running" }> = {};
+      for (const [id, status] of Object.entries(this.sessions.statuses())) {
+        if (status.type !== "idle") data[id] = { type: "running" };
+      }
+      this.json(res, 200, { data });
+      return;
+    }
+
+    const sessionMatch = path.match(/^\/api\/session\/([^/]+)(\/.+)?$/);
+    if (sessionMatch) {
+      const sessionId = decodeURIComponent(sessionMatch[1]!);
+      const sub = sessionMatch[2] ?? "";
+      const managed = this.sessions.get(sessionId);
+      if (!managed) {
+        this.json(res, 404, { name: "NotFoundError", data: { message: `session not found: ${sessionId}` } });
+        return;
+      }
+
+      const messageMatch = sub.match(/^\/message\/([^/]+)$/);
+      if (messageMatch && method === "GET") {
+        const messageId = decodeURIComponent(messageMatch[1]!);
+        const found = (this.sessions.messages(sessionId) ?? []).find((m) => m.info.id === messageId);
+        if (!found) {
+          this.json(res, 404, { name: "MessageNotFoundError", data: { message: `message not found: ${messageId}` } });
+          return;
+        }
+        this.json(res, 200, { data: toV2Message(found) });
+        return;
+      }
+
+      // Forms/permissions have no adapter-side store; answer the lifecycle routes
+      // the 2.0.4 UI polls rather than 404ing the whole panel.
+      const formMatch = sub.match(/^\/form\/([^/]+)(\/reply)?$/);
+      if (formMatch) {
+        const formId = decodeURIComponent(formMatch[1]!);
+        if (formMatch[2] === "/reply" && method === "POST") {
+          await this.body(req);
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "DELETE") {
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "GET") {
+          this.json(res, 404, { name: "FormNotFoundError", data: { message: `form not found: ${formId}` } });
+          return;
+        }
+      }
+      const permissionMatch = sub.match(/^\/permission\/([^/]+)(\/reply)?$/);
+      if (permissionMatch) {
+        const requestId = decodeURIComponent(permissionMatch[1]!);
+        if (permissionMatch[2] === "/reply" && method === "POST") {
+          await this.body(req);
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "GET") {
+          this.json(res, 404, { name: "PermissionNotFoundError", data: { message: `permission not found: ${requestId}` } });
+          return;
+        }
+      }
+
+      switch (`${method} ${sub}`) {
+        case "GET ": {
+          this.json(res, 200, { data: this.v2Session(managed.info) });
+          return;
+        }
+        case "PATCH ": {
+          const body = (await this.body(req)) as { title?: string; time?: { archived?: number } };
+          this.sessions.update(sessionId, { title: body.title, archived: body.time?.archived });
+          res.writeHead(204).end();
+          return;
+        }
+        case "DELETE ": {
+          await this.sessions.remove(sessionId);
+          res.writeHead(204).end();
+          return;
+        }
+        case "GET /message": {
+          const order = url.searchParams.get("order");
+          const limit = numberParam(url.searchParams.get("limit"));
+          let messages = (this.sessions.messages(sessionId) ?? []).map((m) => toV2Message(m));
+          if (order !== "asc") messages = messages.reverse(); // v2 default is newest-first
+          if (limit !== undefined) messages = messages.slice(0, limit);
+          this.json(res, 200, { data: messages, cursor: { previous: null, next: null } });
+          return;
+        }
+        case "POST /prompt": {
+          const body = (await this.body(req)) as {
+            id?: string;
+            text?: string;
+            model?: { providerID?: string; id?: string; modelID?: string };
+            delivery?: string;
+          };
+          const text = typeof body.text === "string" ? body.text : "";
+          const messageID = typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
+          const model = modelRefFromBody(body.model);
+          void this.sessions.prompt(sessionId, text, model, false, messageID).catch((err) => {
+            console.error(`[prompt] session ${sessionId} failed:`, err);
+          });
+          const delivery = typeof body.delivery === "string" ? body.delivery : "steer";
+          this.json(res, 200, {
+            data: {
+              id: messageID,
+              sessionID: sessionId,
+              time: { created: Date.now() },
+              type: "user",
+              text,
+              payload: { text },
+              delivery,
+            },
+          });
+          return;
+        }
+        case "POST /interrupt": {
+          await this.sessions.abort(sessionId);
+          this.json(res, 200, { data: true });
+          return;
+        }
+        case "POST /agent": {
+          await this.body(req); // agent is fixed per connector — acknowledge and ignore
+          res.writeHead(204).end();
+          return;
+        }
+        case "POST /model": {
+          // The UI awaits this before every prompt (applySendSelection →
+          // switchModel), so it is the only route from the bottom-right picker
+          // to pi. Dropping the body used to leave the UI showing a model pi
+          // never ran. 204 empty is the contract; 400/404 are the statuses the
+          // client declares, and a loud failure beats a silent drift.
+          const body = (await this.body(req)) as { model?: { providerID?: string; id?: string; modelID?: string } };
+          const ref = modelRefFromBody(body.model);
+          if (ref === undefined) {
+            this.json(res, 400, { error: "model is required: {providerID, modelID}" });
+            return;
+          }
+          try {
+            const resolved = await this.sessions.setModel(sessionId, ref);
+            if (resolved.modelID !== ref.modelID || resolved.providerID !== ref.providerID) {
+              // pi resolved the request to a different concrete model (alias or
+              // provider-reported id). Not an error, but the reason the UI ends
+              // up showing something other than what was picked.
+              debugLog(`[model] session ${sessionId}: pi resolved ${ref.providerID}/${ref.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
+            }
+            res.writeHead(204).end();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[model] session ${sessionId} → ${ref.providerID}/${ref.modelID} failed:`, message);
+            this.json(res, message.startsWith("unknown session:") ? 404 : 400, { error: message });
+          }
+          return;
+        }
+        case "GET /form": {
+          this.json(res, 200, { data: [] });
+          return;
+        }
+        case "GET /permission": {
+          this.json(res, 200, { data: [] });
+          return;
+        }
+        case "GET /inbox": {
+          this.json(res, 200, { data: [] });
+          return;
+        }
+        case "GET /diff":
+        case "GET /context": {
+          this.json(res, 501, { name: "NotImplemented", data: { message: `${method} ${path} is not implemented by this connector` } });
+          return;
+        }
+        default:
+          this.json(res, 501, { name: "NotImplemented", data: { message: `${method} ${path} not implemented` } });
+          return;
+      }
     }
 
     this.json(res, 404, { name: "NotFoundError", data: { message: `no route: ${method} ${path}` } });
