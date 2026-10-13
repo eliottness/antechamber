@@ -27,19 +27,28 @@ export function flattenTodos(sessionID: string, data: unknown): Todo[] {
       if (typeof task.content !== "string") return [];
       let status: Todo["status"];
       switch (task.status) {
-        case "in_progress": status = "in_progress"; break;
-        case "completed": status = "completed"; break;
+        case "in_progress":
+          status = "in_progress";
+          break;
+        case "completed":
+          status = "completed";
+          break;
         case "abandoned":
         case "dropped":
-        case "cancelled": status = "cancelled"; break;
-        default: status = "pending";
+        case "cancelled":
+          status = "cancelled";
+          break;
+        default:
+          status = "pending";
       }
-      return [{
-        id: createHash("md5").update(`${sessionID}|${phase.name}|${task.content}`).digest("hex").slice(0, 16),
-        content: phases.length === 1 ? task.content : `${phase.name}: ${task.content}`,
-        status,
-        priority: "medium",
-      }];
+      return [
+        {
+          id: createHash("md5").update(`${sessionID}|${phase.name}|${task.content}`).digest("hex").slice(0, 16),
+          content: phases.length === 1 ? task.content : `${phase.name}: ${task.content}`,
+          status,
+          priority: "medium",
+        },
+      ];
     });
   });
 }

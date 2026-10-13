@@ -1,5 +1,18 @@
 /** OmO task cards and read-only views of their independently persisted sessions. */
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { piAgentDir } from "./agent-dir.js";
 import { ocIdFor, SessionPersistenceError, type SessionStore } from "./session-store.js";
@@ -24,7 +37,9 @@ function active(status: unknown): boolean {
 }
 
 function terminal(status: unknown): boolean {
-  return ["completed", "failed", "error", "cancelled", "canceled", "killed", "lost", "denied", "plan_error"].includes(String(status));
+  return ["completed", "failed", "error", "cancelled", "canceled", "killed", "lost", "denied", "plan_error"].includes(
+    String(status),
+  );
 }
 
 toolMappers.task = (args, result) => {
@@ -35,8 +50,12 @@ toolMappers.task = (args, result) => {
   };
   const details = record(result?.details) ? result.details : {};
   return {
-    tool: "task", input, title: typeof input.description === "string" ? input.description : "task",
-    ...(taskId(details.task_id) ? { metadata: { sessionID: ocIdFor(details.task_id), taskID: details.task_id, task: details } } : {}),
+    tool: "task",
+    input,
+    title: typeof input.description === "string" ? input.description : "task",
+    ...(taskId(details.task_id)
+      ? { metadata: { sessionID: ocIdFor(details.task_id), taskID: details.task_id, task: details } }
+      : {}),
     ...(result !== undefined ? { output: stripTaskSuffix(resultText(result.content)) } : {}),
   };
 };
@@ -47,9 +66,13 @@ export function taskParts(template: OCToolPart, args: Record<string, unknown>): 
   return items.map((item, index) => {
     const mapped = mapTool("task", { ...args, ...(record(item) ? item : {}) });
     return {
-      ...template, id: `prt_task_${template.callID}_${index}`, tool: "task",
+      ...template,
+      id: `prt_task_${template.callID}_${index}`,
+      tool: "task",
       state: {
-        status: "running", input: mapped.input, title: mapped.title,
+        status: "running",
+        input: mapped.input,
+        title: mapped.title,
         time: { start: template.state.status === "pending" ? Date.now() : template.state.time.start },
       },
     };
@@ -66,13 +89,21 @@ export function updateTaskParts(parts: OCToolPart[], result: ToolResult, ended: 
     const item = items?.[index];
     const current = items !== undefined ? (record(item) ? item : {}) : index === 0 ? details : {};
     const data = { ...old, ...current };
-    const output = stripTaskSuffix(typeof data.final_response === "string" ? data.final_response :
-      parts.length === 1 ? resultText(result.content) : typeof data.output === "string" ? data.output : "");
+    const output = stripTaskSuffix(
+      typeof data.final_response === "string"
+        ? data.final_response
+        : parts.length === 1
+          ? resultText(result.content)
+          : typeof data.output === "string"
+            ? data.output
+            : "",
+    );
     const input = part.state.input;
     const title = typeof input.description === "string" ? input.description : "task";
     const start = part.state.status === "pending" ? now : part.state.time.start;
     const metadata = {
-      ...previous, task: data,
+      ...previous,
+      task: data,
       ...(taskId(data.task_id) ? { sessionID: ocIdFor(data.task_id), taskID: data.task_id } : {}),
     };
     // Preserve a final result for the fallback even after the parent JSONL is gone.
@@ -80,7 +111,13 @@ export function updateTaskParts(parts: OCToolPart[], result: ToolResult, ended: 
     if (active(data.status) || (!ended && !terminal(data.status))) {
       part.state = { status: "running", input, title, metadata, time: { start } };
     } else if (result.isError || (terminal(data.status) && data.status !== "completed")) {
-      part.state = { status: "error", input, error: output || String(data.status ?? "task failed"), metadata, time: { start, end: now } };
+      part.state = {
+        status: "error",
+        input,
+        error: output || String(data.status ?? "task failed"),
+        metadata,
+        time: { start, end: now },
+      };
     } else {
       part.state = { status: "completed", input, output, title, metadata, time: { start, end: now } };
     }
@@ -96,9 +133,11 @@ export function taskCompletions(value: unknown): Record<string, unknown>[] {
 }
 
 function optionalFile(path: string): string | undefined {
-  try { return readFileSync(path, "utf8"); }
-  catch (error) {
-    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code))) return undefined;
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
+      return undefined;
     throw error;
   }
 }
@@ -106,14 +145,23 @@ function optionalFile(path: string): string | undefined {
 function jsonObject(path: string): Record<string, unknown> | undefined {
   const raw = optionalFile(path);
   if (raw === undefined) return undefined;
-  try { const value: unknown = JSON.parse(raw); return record(value) ? value : undefined; }
-  catch (error) { if (error instanceof SyntaxError) return undefined; throw error; }
+  try {
+    const value: unknown = JSON.parse(raw);
+    return record(value) ? value : undefined;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
 }
 
 function directories(path: string): string[] {
-  try { return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => join(path, entry.name)); }
-  catch (error) {
-    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code))) return [];
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(path, entry.name));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
+      return [];
     throw error;
   }
 }
@@ -143,15 +191,19 @@ export class JsonlTail {
 
   read(path: string): boolean {
     let fd: number;
-    try { fd = openSync(path, "r"); }
-    catch (error) {
+    try {
+      fd = openSync(path, "r");
+    } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
       throw error;
     }
     try {
       const stat = statSync(path);
       if (stat.ino !== this.inode || stat.size < this.offset) {
-        this.inode = stat.ino; this.offset = 0; this.carry = Buffer.alloc(0); this.text = "";
+        this.inode = stat.ino;
+        this.offset = 0;
+        this.carry = Buffer.alloc(0);
+        this.text = "";
       }
       const buffer = Buffer.alloc(stat.size - this.offset);
       const size = readSync(fd, buffer, 0, buffer.length, this.offset);
@@ -162,7 +214,9 @@ export class JsonlTail {
       this.text += this.carry.subarray(0, end + 1).toString("utf8");
       this.carry = this.carry.subarray(end + 1);
       return true;
-    } finally { closeSync(fd); }
+    } finally {
+      closeSync(fd);
+    }
   }
 }
 
@@ -199,11 +253,15 @@ export class SubagentBridge {
     private readonly parse: ParseHistory,
   ) {}
 
-  private archive(id: string): string { return join(this.store.stateDir, "children", `${id}.jsonl`); }
+  private archive(id: string): string {
+    return join(this.store.stateDir, "children", `${id}.jsonl`);
+  }
 
   wire(parent: ManagedSession): void {
-    parent.hasRunningChildren = () => [...this.children.values()]
-      .some((child) => child.session.info.parentID === parent.info.id && child.session.status.type === "busy");
+    parent.hasRunningChildren = () =>
+      [...this.children.values()].some(
+        (child) => child.session.info.parentID === parent.info.id && child.session.status.type === "busy",
+      );
   }
 
   start(parent: ManagedSession, original: OCToolPart, args: Record<string, unknown>): void {
@@ -239,7 +297,11 @@ export class SubagentBridge {
   }
 
   discover(parent: ManagedSession, messages: OCMessageWithParts[]): void {
-    this.discoverParts(parent, messages.flatMap((message) => message.parts), false);
+    this.discoverParts(
+      parent,
+      messages.flatMap((message) => message.parts),
+      false,
+    );
   }
 
   private discoverParts(parent: ManagedSession, parts: OCMessageWithParts["parts"], live: boolean): void {
@@ -253,12 +315,15 @@ export class SubagentBridge {
       let child = this.children.get(ocIdFor(id));
       if (!child) {
         child = this.create(parent, {
-          id, parentPiId: parent.piSessionId ?? parent.restored?.piSessionId ?? "",
-          input: part.state.input, details,
+          id,
+          parentPiId: parent.piSessionId ?? parent.restored?.piSessionId ?? "",
+          input: part.state.input,
+          details,
         });
       } else {
         // A repeated history read must not overwrite a newer completion wake.
-        if (!terminal(child.task.details.status) || terminal(details.status)) child.task.details = { ...child.task.details, ...details };
+        if (!terminal(child.task.details.status) || terminal(details.status))
+          child.task.details = { ...child.task.details, ...details };
       }
       child.live ||= live;
       if (terminal(details.status) && part.state.status !== "running") child.task.terminalAt = part.state.time.end;
@@ -270,14 +335,35 @@ export class SubagentBridge {
   private create(parent: ManagedSession, task: ChildTask): Child {
     const session: ManagedSession = {
       info: {
-        id: ocIdFor(task.id), parentID: parent.info.id, projectID: parent.info.projectID, directory: parent.info.directory,
+        id: ocIdFor(task.id),
+        parentID: parent.info.id,
+        projectID: parent.info.projectID,
+        directory: parent.info.directory,
         title: typeof task.input.description === "string" ? task.input.description : task.id,
-        version: parent.info.version, time: { ...parent.info.time },
+        version: parent.info.version,
+        time: { ...parent.info.time },
       },
-      pi: undefined, messages: undefined, model: undefined, streaming: undefined, status: { type: "idle" },
-      toolByCallId: new Map(), tree: { messageEntries: {} }, hasPendingInteraction: () => false, hasRunningChildren: () => false,
+      pi: undefined,
+      messages: undefined,
+      model: undefined,
+      streaming: undefined,
+      status: { type: "idle" },
+      toolByCallId: new Map(),
+      tree: { messageEntries: {} },
+      hasPendingInteraction: () => false,
+      hasRunningChildren: () => false,
     };
-    const child: Child = { session, task, parts: new Map(), tail: new JsonlTail(), watchers: new Map(), livePath: undefined, recordPath: undefined, loaded: false, live: false };
+    const child: Child = {
+      session,
+      task,
+      parts: new Map(),
+      tail: new JsonlTail(),
+      watchers: new Map(),
+      livePath: undefined,
+      recordPath: undefined,
+      loaded: false,
+      live: false,
+    };
     this.children.set(session.info.id, child);
     this.sessions.set(session.info.id, session);
     this.wire(session);
@@ -291,18 +377,36 @@ export class SubagentBridge {
     const entry = this.store.get(id);
     if (!entry?.task || !entry.parentID) return undefined;
     const parent: ManagedSession = {
-      info: { id: entry.parentID, projectID: entry.directory, directory: entry.directory, title: "", version: "0.1.0", time: { created: entry.created, updated: entry.updated } },
-      pi: undefined, messages: undefined, model: undefined, streaming: undefined, status: { type: "idle" },
-      toolByCallId: new Map(), tree: { messageEntries: {} }, hasPendingInteraction: () => false, hasRunningChildren: () => false,
+      info: {
+        id: entry.parentID,
+        projectID: entry.directory,
+        directory: entry.directory,
+        title: "",
+        version: "0.1.0",
+        time: { created: entry.created, updated: entry.updated },
+      },
+      pi: undefined,
+      messages: undefined,
+      model: undefined,
+      streaming: undefined,
+      status: { type: "idle" },
+      toolByCallId: new Map(),
+      tree: { messageEntries: {} },
+      hasPendingInteraction: () => false,
+      hasRunningChildren: () => false,
     };
     const child = this.create(parent, entry.task);
     child.session.info.title = entry.title ?? child.session.info.title;
     return child.session;
   }
 
-  restoreAll(): void { for (const id of this.store.childIds()) this.restore(id); }
+  restoreAll(): void {
+    for (const id of this.store.childIds()) this.restore(id);
+  }
 
-  owns(id: string): boolean { return this.children.has(id); }
+  owns(id: string): boolean {
+    return this.children.has(id);
+  }
 
   messages(id: string): OCMessageWithParts[] {
     const child = this.children.get(id);
@@ -315,11 +419,17 @@ export class SubagentBridge {
     const dir = dirname(path);
     if (child.watchers.has(dir) || !existsSync(dir)) return;
     const watcher = watch(dir, { persistent: false }, (_event, name) => {
-      if (name === null || name.toString() === basename(child.livePath ?? "") || name.toString() === basename(child.recordPath ?? "")) this.refresh(child, true);
+      if (
+        name === null ||
+        name.toString() === basename(child.livePath ?? "") ||
+        name.toString() === basename(child.recordPath ?? "")
+      )
+        this.refresh(child, true);
     });
     watcher.on("error", (error) => {
       console.error(`[subagents] watcher ${dir}: ${error.message}`);
-      watcher.close(); child.watchers.delete(dir);
+      watcher.close();
+      child.watchers.delete(dir);
     });
     child.watchers.set(dir, watcher);
   }
@@ -330,9 +440,12 @@ export class SubagentBridge {
     if (found) {
       child.recordPath = found.path;
       const updated = typeof found.data.updated_at === "string" ? Date.parse(found.data.updated_at) : NaN;
-      const retainedTerminal = Math.max(child.task.terminalAt ?? 0, existsSync(archive) ? statSync(archive).mtimeMs : 0);
-      const staleRunning = active(found.data.status) && terminal(child.task.details.status) &&
-        updated <= retainedTerminal;
+      const retainedTerminal = Math.max(
+        child.task.terminalAt ?? 0,
+        existsSync(archive) ? statSync(archive).mtimeMs : 0,
+      );
+      const staleRunning =
+        active(found.data.status) && terminal(child.task.details.status) && updated <= retainedTerminal;
       if (useRecord && !staleRunning) child.task.details = { ...child.task.details, ...found.data };
       const host = found.data.host_session;
       if (record(host) && typeof host.session_path === "string") child.livePath = host.session_path;
@@ -341,11 +454,15 @@ export class SubagentBridge {
         // Match the recorded session, not another retained run in the same directory.
         const sessions = join(dirname(dirname(found.path)), "children", child.task.id, "sessions", child.task.id);
         try {
-          const file = readdirSync(sessions, { withFileTypes: true }).find((entry) =>
-            entry.isFile() && entry.name.endsWith(`_${found.data.child_session_id}.jsonl`));
+          const file = readdirSync(sessions, { withFileTypes: true }).find(
+            (entry) => entry.isFile() && entry.name.endsWith(`_${found.data.child_session_id}.jsonl`),
+          );
           child.livePath = file ? join(sessions, file.name) : undefined;
         } catch (error) {
-          if (!(error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))) throw error;
+          if (
+            !(error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
+          )
+            throw error;
           child.livePath = undefined;
         }
       }
@@ -369,10 +486,13 @@ export class SubagentBridge {
       try {
         const header: unknown = JSON.parse(headerLine ?? "");
         if (record(header) && typeof header.id === "string") child.session.piSessionId = header.id;
-      } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
       child.session.messages = this.parse(child.session, raw);
       this.discover(child.session, child.session.messages);
-      if (!running && terminal(child.task.details.status) && (liveRun || !existsSync(archive))) this.saveArchive(archive, raw);
+      if (!running && terminal(child.task.details.status) && (liveRun || !existsSync(archive)))
+        this.saveArchive(archive, raw);
     } else {
       child.session.messages = this.fallback(child);
     }
@@ -380,10 +500,15 @@ export class SubagentBridge {
     child.session.status = { type: running ? "busy" : "idle" };
     if (!running) this.closeWatchers(child);
     for (const part of child.parts.values()) {
-      updateTaskParts([part], {
-        details: child.task.details,
-        content: [{ type: "text", text: child.task.details.final_response ?? "" }],
-      }, !running, Date.now());
+      updateTaskParts(
+        [part],
+        {
+          details: child.task.details,
+          content: [{ type: "text", text: child.task.details.final_response ?? "" }],
+        },
+        !running,
+        Date.now(),
+      );
       if (publish) this.emitPart(child.session, part);
     }
     this.persist(child);
@@ -395,8 +520,15 @@ export class SubagentBridge {
       for (const part of message.parts) this.emitPart(child.session, part);
     }
     if (previousStatus !== child.session.status.type) {
-      this.emit(child.session.info.directory, { type: "session.status", properties: { sessionID: child.session.info.id, status: child.session.status } });
-      if (!running) this.emit(child.session.info.directory, { type: "session.idle", properties: { sessionID: child.session.info.id } });
+      this.emit(child.session.info.directory, {
+        type: "session.status",
+        properties: { sessionID: child.session.info.id, status: child.session.status },
+      });
+      if (!running)
+        this.emit(child.session.info.directory, {
+          type: "session.idle",
+          properties: { sessionID: child.session.info.id },
+        });
     }
   }
 
@@ -411,25 +543,43 @@ export class SubagentBridge {
     const data = child.task.details;
     const stats = record(data.run_stats) ? data.run_stats : {};
     const resolved = record(data.resolved_model) ? data.resolved_model : {};
-    const model = typeof data.model === "string" ? data.model : `${resolved.provider ?? "unknown"}/${resolved.model_id ?? "unknown"}`;
+    const model =
+      typeof data.model === "string"
+        ? data.model
+        : `${resolved.provider ?? "unknown"}/${resolved.model_id ?? "unknown"}`;
     const text = [
       stripTaskSuffix(typeof data.final_response === "string" ? data.final_response : ""),
       `Model: ${model}\nRuntime: ${stats.runtime_ms ?? data.duration_ms ?? 0} ms\nTokens: ${stats.total_tokens ?? 0}\nCost: $${stats.cost_usd ?? 0}`,
       "Full transcript was not retained by OmO.",
-    ].filter(Boolean).join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     // OpenChamber groups assistant output by a user turn. The original task
     // prompt is retained by the parent even when the child transcript is gone.
     const request = JSON.stringify({
-      type: "message", id: "request", timestamp: child.session.info.time.created,
-      message: { role: "user", content: [{ type: "text", text: child.task.input.prompt ?? child.task.input.description ?? child.task.id }] },
+      type: "message",
+      id: "request",
+      timestamp: child.session.info.time.created,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: child.task.input.prompt ?? child.task.input.description ?? child.task.id }],
+      },
     });
     const response = JSON.stringify({
-      type: "message", id: "result", parentId: "request", timestamp: child.session.info.time.updated,
-      message: { role: "assistant", provider: resolved.provider ?? model.split("/")[0], model: resolved.model_id ?? model.split("/").slice(1).join("/"),
+      type: "message",
+      id: "result",
+      parentId: "request",
+      timestamp: child.session.info.time.updated,
+      message: {
+        role: "assistant",
+        provider: resolved.provider ?? model.split("/")[0],
+        model: resolved.model_id ?? model.split("/").slice(1).join("/"),
         // run_stats tokens are totals across the whole run (every model call),
         // not one request's context, so only the cost is carried as usage; the
         // totals stay in the text above. Token counts here read as context fill.
-        content: [{ type: "text", text }], usage: { cost: { total: stats.cost_usd } } },
+        content: [{ type: "text", text }],
+        usage: { cost: { total: stats.cost_usd } },
+      },
     });
     return this.parse(child.session, `${request}\n${response}\n`);
   }
@@ -438,9 +588,14 @@ export class SubagentBridge {
     const { info } = child.session;
     try {
       this.store.set(info.id, {
-        piSessionId: child.session.piSessionId ?? child.task.id, piPath: this.archive(child.task.id),
-        directory: info.directory, title: info.title, parentID: info.parentID, task: child.task,
-        created: info.time.created, updated: info.time.updated,
+        piSessionId: child.session.piSessionId ?? child.task.id,
+        piPath: this.archive(child.task.id),
+        directory: info.directory,
+        title: info.title,
+        parentID: info.parentID,
+        task: child.task,
+        created: info.time.created,
+        updated: info.time.updated,
       });
     } catch (error) {
       if (!(error instanceof SessionPersistenceError)) throw error;
@@ -466,11 +621,18 @@ export class SubagentBridge {
       const parent = this.sessions.get(parentID);
       for (const part of parts) {
         const childID = part.state.status !== "pending" ? part.state.metadata?.sessionID : undefined;
-        if (!cancelled && typeof childID === "string" && this.children.get(childID)?.session.status.type === "busy") continue;
-        updateTaskParts([part], {
-          isError: true, details: { status: cancelled ? "cancelled" : "failed" },
-          content: [{ type: "text", text: cancelled ? "Task cancelled" : "run ended without a tool result" }],
-        }, true, Date.now());
+        if (!cancelled && typeof childID === "string" && this.children.get(childID)?.session.status.type === "busy")
+          continue;
+        updateTaskParts(
+          [part],
+          {
+            isError: true,
+            details: { status: cancelled ? "cancelled" : "failed" },
+            content: [{ type: "text", text: cancelled ? "Task cancelled" : "run ended without a tool result" }],
+          },
+          true,
+          Date.now(),
+        );
         if (parent) this.emitPart(parent, part);
       }
       this.calls.delete(key);

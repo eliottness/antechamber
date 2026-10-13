@@ -44,7 +44,12 @@ interface V2Envelope {
 /** Minimal SSE client for the v2 envelopes on `/api/event`. */
 class V2Sse {
   private events: V2Envelope[] = [];
-  private waiters: Array<{ type: string; test: (e: V2Envelope) => boolean; resolve: (e: V2Envelope) => void; timer: NodeJS.Timeout }> = [];
+  private waiters: Array<{
+    type: string;
+    test: (e: V2Envelope) => boolean;
+    resolve: (e: V2Envelope) => void;
+    timer: NodeJS.Timeout;
+  }> = [];
   private controller = new AbortController();
 
   constructor(private url: string) {}
@@ -150,54 +155,124 @@ async function main(): Promise<void> {
 
   // 1. bootstrap GETs and envelopes
   console.log("— bootstrap GETs —");
-  const info = await api<{ version: string; pid: number; urls: string[]; paths: Record<string, string> }>(url, "/api/info");
-  ok("GET /api/info envelope", info.status === 200 && typeof info.body.version === "string" && typeof info.body.pid === "number" && Array.isArray(info.body.urls) && typeof info.body.paths === "object");
+  const info = await api<{ version: string; pid: number; urls: string[]; paths: Record<string, string> }>(
+    url,
+    "/api/info",
+  );
+  ok(
+    "GET /api/info envelope",
+    info.status === 200 &&
+      typeof info.body.version === "string" &&
+      typeof info.body.pid === "number" &&
+      Array.isArray(info.body.urls) &&
+      typeof info.body.paths === "object",
+  );
 
-  const location = await api<{ directory: string; project: { id: string; directory: string; canonical: string } }>(url, "/api/location");
-  ok("GET /api/location envelope", location.status === 200 && typeof location.body.directory === "string" && typeof location.body.project?.directory === "string" && typeof location.body.project?.canonical === "string");
+  const location = await api<{ directory: string; project: { id: string; directory: string; canonical: string } }>(
+    url,
+    "/api/location",
+  );
+  ok(
+    "GET /api/location envelope",
+    location.status === 200 &&
+      typeof location.body.directory === "string" &&
+      typeof location.body.project?.directory === "string" &&
+      typeof location.body.project?.canonical === "string",
+  );
 
-  const config = await api<{ location?: { directory?: string }; data?: { default_agent?: string } }>(url, "/api/config");
-  ok("GET /api/config {location,data}", config.status === 200 && typeof config.body.location?.directory === "string" && typeof config.body.data?.default_agent === "string");
+  const config = await api<{ location?: { directory?: string }; data?: { default_agent?: string } }>(
+    url,
+    "/api/config",
+  );
+  ok(
+    "GET /api/config {location,data}",
+    config.status === 200 &&
+      typeof config.body.location?.directory === "string" &&
+      typeof config.body.data?.default_agent === "string",
+  );
 
   for (const listPath of ["/api/provider", "/api/model", "/api/command", "/api/skill"]) {
     const r = await api<{ location?: { directory?: string }; data?: unknown[] }>(url, listPath);
-    ok(`GET ${listPath} {location,data}`, r.status === 200 && typeof r.body.location?.directory === "string" && Array.isArray(r.body.data));
+    ok(
+      `GET ${listPath} {location,data}`,
+      r.status === 200 && typeof r.body.location?.directory === "string" && Array.isArray(r.body.data),
+    );
   }
-  const modelDefault = await api<{ location?: { directory?: string }; data?: { modelID?: string; providerID?: string } | null }>(url, "/api/model/default");
-  ok("GET /api/model/default {location,data:Model}", modelDefault.status === 200 && typeof modelDefault.body.location?.directory === "string" && (modelDefault.body.data === null || typeof modelDefault.body.data?.modelID === "string"));
+  const modelDefault = await api<{
+    location?: { directory?: string };
+    data?: { modelID?: string; providerID?: string } | null;
+  }>(url, "/api/model/default");
+  ok(
+    "GET /api/model/default {location,data:Model}",
+    modelDefault.status === 200 &&
+      typeof modelDefault.body.location?.directory === "string" &&
+      (modelDefault.body.data === null || typeof modelDefault.body.data?.modelID === "string"),
+  );
 
   const agents = await api<{ location?: { directory?: string }; data?: Array<{ id?: string }> }>(url, "/api/agent");
-  ok("GET /api/agent {location,data:[Agent]}", agents.status === 200 && Array.isArray(agents.body.data) && agents.body.data.length > 0);
+  ok(
+    "GET /api/agent {location,data:[Agent]}",
+    agents.status === 200 && Array.isArray(agents.body.data) && agents.body.data.length > 0,
+  );
   const firstAgentId = agents.body.data?.[0]?.id;
   if (firstAgentId) {
     const agent = await api<{ data?: { id?: string } }>(url, `/api/agent/${encodeURIComponent(firstAgentId)}`);
     ok("GET /api/agent/:id {data:Agent}", agent.status === 200 && agent.body.data?.id === firstAgentId);
   }
 
-  const sessionList0 = await api<{ data?: unknown[]; cursor?: { previous: unknown; next: unknown } }>(url, "/api/session");
+  const sessionList0 = await api<{ data?: unknown[]; cursor?: { previous: unknown; next: unknown } }>(
+    url,
+    "/api/session",
+  );
   ok("GET /api/session {data:[Session]}", sessionList0.status === 200 && Array.isArray(sessionList0.body.data));
-  ok("GET /api/session includes cursor", sessionList0.status === 200 && typeof sessionList0.body.cursor === "object" && sessionList0.body.cursor !== null);
+  ok(
+    "GET /api/session includes cursor",
+    sessionList0.status === 200 && typeof sessionList0.body.cursor === "object" && sessionList0.body.cursor !== null,
+  );
 
-  for (const extra of ["/api/project", "/api/vcs", "/api/vcs/base", "/api/vcs/status", "/api/vcs/branch", "/api/permission/request", "/api/permission/saved", "/api/form"]) {
+  for (const extra of [
+    "/api/project",
+    "/api/vcs",
+    "/api/vcs/base",
+    "/api/vcs/status",
+    "/api/vcs/branch",
+    "/api/permission/request",
+    "/api/permission/saved",
+    "/api/form",
+  ]) {
     const r = await api<unknown>(url, extra);
     ok(`GET ${extra} → 200`, r.status === 200, `status ${r.status}`);
   }
 
   const active = await api<{ data?: Record<string, { type: string }> }>(url, "/api/session/active");
-  ok("GET /api/session/active {data:{id:{type}}}", active.status === 200 && typeof active.body.data === "object" && active.body.data !== null);
+  ok(
+    "GET /api/session/active {data:{id:{type}}}",
+    active.status === 200 && typeof active.body.data === "object" && active.body.data !== null,
+  );
 
   // 2. session create / list / get / message
   console.log("— session create / list / get —");
-  const created = await api<{ data?: { id?: string; location?: { directory?: string }; agent?: string } }>(url, "/api/session", {
-    method: "POST",
-    body: JSON.stringify({ title: "v2 smoke" }),
-  });
+  const created = await api<{ data?: { id?: string; location?: { directory?: string }; agent?: string } }>(
+    url,
+    "/api/session",
+    {
+      method: "POST",
+      body: JSON.stringify({ title: "v2 smoke" }),
+    },
+  );
   const sessionId = created.body.data?.id;
-  ok("POST /api/session {data:Session}", created.status === 200 && typeof sessionId === "string" && created.body.data?.location?.directory === WORKSPACE, JSON.stringify(created.body).slice(0, 200));
+  ok(
+    "POST /api/session {data:Session}",
+    created.status === 200 && typeof sessionId === "string" && created.body.data?.location?.directory === WORKSPACE,
+    JSON.stringify(created.body).slice(0, 200),
+  );
   if (!sessionId) throw new Error("no session id");
 
   const listed = await api<{ data?: Array<{ id?: string }> }>(url, "/api/session");
-  ok("GET /api/session lists the new session", listed.status === 200 && (listed.body.data ?? []).some((s) => s.id === sessionId));
+  ok(
+    "GET /api/session lists the new session",
+    listed.status === 200 && (listed.body.data ?? []).some((s) => s.id === sessionId),
+  );
 
   const got = await api<{ data?: { id?: string } }>(url, `/api/session/${encodeURIComponent(sessionId)}`);
   ok("GET /api/session/:id {data:Session}", got.status === 200 && got.body.data?.id === sessionId);
@@ -206,16 +281,27 @@ async function main(): Promise<void> {
   ok("GET /api/session/:id/message {data:[Message]}", messages0.status === 200 && Array.isArray(messages0.body.data));
 
   const form0 = await api<{ data?: unknown[] }>(url, `/api/session/${encodeURIComponent(sessionId)}/form`);
-  ok("GET /api/session/:id/form {data:[]}", form0.status === 200 && Array.isArray(form0.body.data) && form0.body.data.length === 0);
+  ok(
+    "GET /api/session/:id/form {data:[]}",
+    form0.status === 200 && Array.isArray(form0.body.data) && form0.body.data.length === 0,
+  );
 
   // 3. prompt + streaming events
   console.log("— prompt + /api/event streaming —");
   const clientMessageId = `msg_v2smoke${Date.now()}`;
-  const prompt = await api<{ data?: { id?: string; type?: string; sessionID?: string } }>(url, `/api/session/${encodeURIComponent(sessionId)}/prompt`, {
-    method: "POST",
-    body: JSON.stringify({ id: clientMessageId, text: "Reply with exactly: V2-SMOKE-OK", delivery: "steer" }),
-  });
-  ok("POST /api/session/:id/prompt {data:UserMessage}", prompt.status === 200 && prompt.body.data?.id === clientMessageId && prompt.body.data?.type === "user", JSON.stringify(prompt.body).slice(0, 200));
+  const prompt = await api<{ data?: { id?: string; type?: string; sessionID?: string } }>(
+    url,
+    `/api/session/${encodeURIComponent(sessionId)}/prompt`,
+    {
+      method: "POST",
+      body: JSON.stringify({ id: clientMessageId, text: "Reply with exactly: V2-SMOKE-OK", delivery: "steer" }),
+    },
+  );
+  ok(
+    "POST /api/session/:id/prompt {data:UserMessage}",
+    prompt.status === 200 && prompt.body.data?.id === clientMessageId && prompt.body.data?.type === "user",
+    JSON.stringify(prompt.body).slice(0, 200),
+  );
 
   const sid = (e: V2Envelope) => e.data.sessionID === sessionId;
   try {
@@ -225,7 +311,11 @@ async function main(): Promise<void> {
     ok("SSE session.step.started", true, JSON.stringify(step.data).slice(0, 120));
     await sse.waitFor("session.text.started", sid, 120_000);
     ok("SSE session.text.started", true);
-    await sse.waitFor("session.text.delta", (e) => sid(e) && typeof e.data.delta === "string" && e.data.delta !== "", 120_000);
+    await sse.waitFor(
+      "session.text.delta",
+      (e) => sid(e) && typeof e.data.delta === "string" && e.data.delta !== "",
+      120_000,
+    );
     ok("SSE session.text.delta", true);
     await sse.waitFor("session.text.ended", sid, 180_000);
     ok("SSE session.text.ended", true);
@@ -244,9 +334,15 @@ async function main(): Promise<void> {
   const deadline = Date.now() + 90_000;
   let answer = "";
   while (Date.now() < deadline) {
-    const res = await api<{ data?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }>(url, `/api/session/${encodeURIComponent(sessionId)}/message?order=asc`);
+    const res = await api<{ data?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }>(
+      url,
+      `/api/session/${encodeURIComponent(sessionId)}/message?order=asc`,
+    );
     const msgs = res.body.data ?? [];
-    answer = msgs.filter((m) => m.type === "assistant").map((m) => assistantText(m)).join("\n");
+    answer = msgs
+      .filter((m) => m.type === "assistant")
+      .map((m) => assistantText(m))
+      .join("\n");
     if (answer.includes("V2-SMOKE-OK")) break;
     await sleep(1_000);
   }
@@ -254,23 +350,40 @@ async function main(): Promise<void> {
 
   // 5. remaining minimum-viable routes
   console.log("— remaining routes —");
-  const userMsg = await api<{ data?: { id?: string; type?: string } }>(url, `/api/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(clientMessageId)}`);
-  ok("GET /api/session/:id/message/:messageID {data:Message}", userMsg.status === 200 && userMsg.body.data?.type === "user" && userMsg.body.data?.id === clientMessageId);
+  const userMsg = await api<{ data?: { id?: string; type?: string } }>(
+    url,
+    `/api/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(clientMessageId)}`,
+  );
+  ok(
+    "GET /api/session/:id/message/:messageID {data:Message}",
+    userMsg.status === 200 && userMsg.body.data?.type === "user" && userMsg.body.data?.id === clientMessageId,
+  );
 
-  const patched = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}`, { method: "PATCH", body: JSON.stringify({ title: "v2 smoke renamed" }) });
+  const patched = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title: "v2 smoke renamed" }),
+  });
   ok("PATCH /api/session/:id → 204", patched.status === 204 && patched.body === undefined);
   const renamed = await api<{ data?: { title?: string } }>(url, `/api/session/${encodeURIComponent(sessionId)}`);
   ok("PATCH persisted the title", renamed.body.data?.title === "v2 smoke renamed", renamed.body.data?.title);
 
-  const setAgent = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/agent`, { method: "POST", body: JSON.stringify({ agent: firstAgentId ?? "build" }) });
+  const setAgent = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/agent`, {
+    method: "POST",
+    body: JSON.stringify({ agent: firstAgentId ?? "build" }),
+  });
   ok("POST /api/session/:id/agent → 204", setAgent.status === 204);
   // A model pi does not have must be refused, not silently accepted: the UI
   // awaits this call before every prompt, so a fake 204 is how the picker and
   // pi end up disagreeing. contrib/model-consistency.ts covers the happy path.
-  const setModel = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/model`, { method: "POST", body: JSON.stringify({ model: { providerID: "x", id: "y" } }) });
+  const setModel = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/model`, {
+    method: "POST",
+    body: JSON.stringify({ model: { providerID: "x", id: "y" } }),
+  });
   ok("POST /api/session/:id/model with an unknown model → 400", setModel.status === 400, `status ${setModel.status}`);
 
-  const interrupted = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/interrupt`, { method: "POST" });
+  const interrupted = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/interrupt`, {
+    method: "POST",
+  });
   ok("POST /api/session/:id/interrupt → 200", interrupted.status === 200);
 
   const diff = await api<{ data?: unknown[] }>(url, `/api/session/${encodeURIComponent(sessionId)}/diff`);

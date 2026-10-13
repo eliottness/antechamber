@@ -18,8 +18,14 @@ function bounded<T>(promise: Promise<T>, label: string, ms = 5000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label} after ${ms}ms`)), ms);
     promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (error: unknown) => { clearTimeout(timer); reject(error); },
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
     );
   });
 }
@@ -31,8 +37,14 @@ function waitFor<T>(emitter: EventEmitter, event: string, ms = 5000): Promise<T>
       emitter.off(event, onEvent);
       emitter.off("streamError", onError);
     };
-    const onEvent = (value: T) => { cleanup(); resolve(value); };
-    const onError = (error: unknown) => { cleanup(); reject(error); };
+    const onEvent = (value: T) => {
+      cleanup();
+      resolve(value);
+    };
+    const onError = (error: unknown) => {
+      cleanup();
+      reject(error);
+    };
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`Timed out waiting for ${event} after ${ms}ms`));
@@ -49,7 +61,12 @@ function request(url: string, init?: RequestInit): Promise<Response> {
 function harness() {
   const events: ApprovalEvent[] = [];
   const responses: Record<string, unknown>[] = [];
-  const bridge = new ApprovalBridge("ses_test", (event) => events.push(event), (response) => responses.push(response), () => "msg_test");
+  const bridge = new ApprovalBridge(
+    "ses_test",
+    (event) => events.push(event),
+    (response) => responses.push(response),
+    () => "msg_test",
+  );
   const ask = (value: Record<string, unknown>) => {
     const parsed = extensionUiRequestFrom(value);
     assert.ok(parsed);
@@ -60,9 +77,9 @@ function harness() {
 
 test("question metadata and Other chain correlate even without RPC toolCallId", () => {
   const h = harness();
-  h.bridge.noteToolStart("ask-call", "ask_user_question", { questions: [
-    { question: "Pick?", header: "Original", options: [{ label: "A", description: "Detail" }] },
-  ] });
+  h.bridge.noteToolStart("ask-call", "ask_user_question", {
+    questions: [{ question: "Pick?", header: "Original", options: [{ label: "A", description: "Detail" }] }],
+  });
   h.ask({ id: "select", method: "select", title: "Pick?", options: ["A", "Other (type an answer)"] });
   assert.equal(h.responses.length, 0);
   assert.equal(h.bridge.questions()[0]?.questions[0]?.header, "Original");
@@ -108,7 +125,10 @@ test("two pending requests reply out of order without cross-session access", () 
   assert.equal(h.bridge.replyPermission("p", "once", undefined, "different"), false);
   assert.equal(h.bridge.replyPermission("missing", "reject"), false);
   h.bridge.replyPermission("p", "once");
-  assert.deepEqual(h.responses.map((r) => r.id), ["q", "p"]);
+  assert.deepEqual(
+    h.responses.map((r) => r.id),
+    ["q", "p"],
+  );
 });
 
 test("malformed answers and unknown labels never grant a tool", () => {
@@ -120,9 +140,13 @@ test("malformed answers and unknown labels never grant a tool", () => {
   assert.throws(() => h.bridge.replyQuestion("q", []), /one question/);
   assert.equal(h.responses.length, 0);
   assert.equal(h.bridge.permissions().length, 1);
-  assert.deepEqual(parsePermissionTitle("Permission required: eval\r\nTool: eval\r\nPatterns:\r\n - *\r\n - second\r\nExtra:"), {
-    permission: "eval", patterns: ["*", "second"],
-  });
+  assert.deepEqual(
+    parsePermissionTitle("Permission required: eval\r\nTool: eval\r\nPatterns:\r\n - *\r\n - second\r\nExtra:"),
+    {
+      permission: "eval",
+      patterns: ["*", "second"],
+    },
+  );
   for (const method of ["setStatus", "setWidget", "notify", "setTitle", "setEditorText"]) {
     assert.equal(extensionUiRequestFrom({ id: method, method }), undefined);
   }
@@ -142,7 +166,9 @@ test("feedback cannot answer an unrelated tool and abort discards it", () => {
 
 test("turn end clears stale metadata and pending cards without cancelling OmO", () => {
   const h = harness();
-  h.bridge.noteToolStart("call", "ask_user_question", { questions: [{ question: "Pick", header: "Original", options: [] }] });
+  h.bridge.noteToolStart("call", "ask_user_question", {
+    questions: [{ question: "Pick", header: "Original", options: [] }],
+  });
   h.ask({ id: "first", method: "select", title: "Pick", options: [] });
   h.bridge.finishTurn();
   assert.equal(h.events.at(-1)?.type, "question.rejected");
@@ -155,8 +181,12 @@ test("OmO request timeout clears the card on its rejection event", async () => {
   const responses: Record<string, unknown>[] = [];
   const events = new EventEmitter();
   const expired = waitFor(events, "question.rejected");
-  const bridge = new ApprovalBridge("ses_test", (event) => events.emit(event.type, event),
-    (response) => responses.push(response), () => "msg_test");
+  const bridge = new ApprovalBridge(
+    "ses_test",
+    (event) => events.emit(event.type, event),
+    (response) => responses.push(response),
+    () => "msg_test",
+  );
   try {
     const parsed = extensionUiRequestFrom({ id: "timeout", method: "input", title: "Timed", timeout: 1 });
     assert.ok(parsed);
@@ -170,7 +200,13 @@ test("OmO request timeout clears the card on its rejection event", async () => {
 
 test("v2 SSE permission uses native action resources source and event type", () => {
   const h = harness();
-  h.ask({ id: "p", method: "select", title: "Permission required: read\nPatterns:\n - /tmp/x", options, toolCallId: "call" });
+  h.ask({
+    id: "p",
+    method: "select",
+    title: "Permission required: read\nPatterns:\n - /tmp/x",
+    options,
+    toolCallId: "call",
+  });
   const event = h.events[0];
   assert.ok(event);
   const frame = new V2EventTranslator().translate("/tmp", event)[0];
@@ -181,12 +217,18 @@ test("v2 SSE permission uses native action resources source and event type", () 
 });
 
 test("real RPC transport forwards blocking requests without auto-cancellation", { timeout: 20000 }, async (t) => {
-  const pi = new PiRpcClient({ cwd: tmpdir(), piBinary: new URL("./fixtures/approval-rpc.mjs", import.meta.url).pathname });
+  const pi = new PiRpcClient({
+    cwd: tmpdir(),
+    piBinary: new URL("./fixtures/approval-rpc.mjs", import.meta.url).pathname,
+  });
   t.after(() => bounded(pi.dispose(), "RPC process teardown", 10000));
   try {
     const emitted = waitFor<Record<string, unknown>>(pi, "extension_ui_request");
     const [, event] = await Promise.all([
-      pi.command({ type: "emit_ui", request: { id: "blocking", method: "select", title: "Permission required: read", options } }, 5000),
+      pi.command(
+        { type: "emit_ui", request: { id: "blocking", method: "select", title: "Permission required: read", options } },
+        5000,
+      ),
       emitted,
     ]);
     assert.equal(event.id, "blocking");
@@ -216,7 +258,9 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
   });
   try {
     await bounded(server.start(), "HTTP server startup");
-    const session = await (await request(`${server.url}/session`, { method: "POST", body: "{}" })).json() as { id: string };
+    const session = (await (await request(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
+      id: string;
+    };
     const stream = await bounded(fetch(`${server.url}/event`, { signal: signal.signal }), "SSE connection");
     const reader = stream.body?.getReader();
     assert.ok(reader);
@@ -248,35 +292,56 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
     })();
     const asked = waitFor(events, "permission.asked");
     await Promise.all([
-      request(`${server.url}/session/${session.id}/prompt_async`, { method: "POST", body: JSON.stringify({ parts: [{ type: "text", text: "permission" }] }) }),
+      request(`${server.url}/session/${session.id}/prompt_async`, {
+        method: "POST",
+        body: JSON.stringify({ parts: [{ type: "text", text: "permission" }] }),
+      }),
       asked,
     ]);
-    const pending = await (await request(`${server.url}/permission`)).json() as Array<{ id: string }>;
+    const pending = (await (await request(`${server.url}/permission`)).json()) as Array<{ id: string }>;
     assert.equal(pending.length, 1);
-    const v2 = await (await request(`${server.url}/api/permission/request`)).json() as { data: Array<{ action: string; resources: string[] }> };
+    const v2 = (await (await request(`${server.url}/api/permission/request`)).json()) as {
+      data: Array<{ action: string; resources: string[] }>;
+    };
     assert.equal(v2.data[0]?.action, "read");
     assert.deepEqual(v2.data[0]?.resources, ["/tmp/fixture"]);
-    assert.equal((await request(`${server.url}/permission/missing/reply`, { method: "POST", body: '{"reply":"once"}' })).status, 404);
-    assert.equal((await request(`${server.url}/permission/${pending[0]?.id}/reply`, { method: "POST", body: '{"reply":"not-real"}' })).status, 400);
+    assert.equal(
+      (await request(`${server.url}/permission/missing/reply`, { method: "POST", body: '{"reply":"once"}' })).status,
+      404,
+    );
+    assert.equal(
+      (
+        await request(`${server.url}/permission/${pending[0]?.id}/reply`, {
+          method: "POST",
+          body: '{"reply":"not-real"}',
+        })
+      ).status,
+      400,
+    );
     const replied = waitFor(events, "permission.replied");
     const [reply] = await Promise.all([
-      request(`${server.url}/api/session/${session.id}/permission/${pending[0]?.id}/reply`, { method: "POST", body: '{"reply":"once"}' }),
+      request(`${server.url}/api/session/${session.id}/permission/${pending[0]?.id}/reply`, {
+        method: "POST",
+        body: '{"reply":"once"}',
+      }),
       replied,
     ]);
     assert.equal(reply.status, 204);
     assert.deepEqual(await (await request(`${server.url}/permission`)).json(), []);
     const questionAsked = waitFor(events, "question.asked");
     await Promise.all([
-      request(`${server.url}/session/${session.id}/prompt_async`, { method: "POST", body: JSON.stringify({ parts: [{ type: "text", text: "question" }] }) }),
+      request(`${server.url}/session/${session.id}/prompt_async`, {
+        method: "POST",
+        body: JSON.stringify({ parts: [{ type: "text", text: "question" }] }),
+      }),
       questionAsked,
     ]);
-    const questions = await (await request(`${server.url}/api/question/request`)).json() as { data: Array<{ id: string }> };
+    const questions = (await (await request(`${server.url}/api/question/request`)).json()) as {
+      data: Array<{ id: string }>;
+    };
     assert.equal(questions.data.length, 1);
     const rejected = waitFor(events, "question.rejected");
-    await Promise.all([
-      request(`${server.url}/session/${session.id}/abort`, { method: "POST" }),
-      rejected,
-    ]);
+    await Promise.all([request(`${server.url}/session/${session.id}/abort`, { method: "POST" }), rejected]);
     assert.deepEqual(await (await request(`${server.url}/question`)).json(), []);
     assert.equal((await request(`${server.url}/question/missing/reject`, { method: "POST" })).status, 404);
     signal.abort();
@@ -307,7 +372,9 @@ test("real session pending-interaction hook prevents idle reaping until the repl
   process.env.ANTECHAMBER_PI_BINARY = binary;
   let time = 0;
   const manager = new SessionManager(() => undefined, new SessionStore(root), root, {
-    clock: { ...systemClock, now: () => time }, idleTimeoutMs: 100, maxLive: 1,
+    clock: { ...systemClock, now: () => time },
+    idleTimeoutMs: 100,
+    maxLive: 1,
   });
   t.after(() => bounded(manager.disposeAll(), "session process teardown", 10000));
   try {
@@ -317,9 +384,19 @@ test("real session pending-interaction hook prevents idle reaping until the repl
     session.piPath = binary;
     const asked = waitFor(session.pi, "extension_ui_request");
     await Promise.all([
-      session.pi.command({ type: "emit_ui", request: {
-        id: "reap-pending", method: "select", title: "Permission required: read", options, toolCallId: "call",
-      } }, 5000),
+      session.pi.command(
+        {
+          type: "emit_ui",
+          request: {
+            id: "reap-pending",
+            method: "select",
+            title: "Permission required: read",
+            options,
+            toolCallId: "call",
+          },
+        },
+        5000,
+      ),
       asked,
     ]);
     assert.equal(session.status.type, "idle");

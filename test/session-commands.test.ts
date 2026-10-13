@@ -14,15 +14,17 @@ test("command discovery shares concurrent calls, caches briefly, and expires", {
   const release = Promise.withResolvers<void>();
   const original = PiRpcClient.prototype.command;
   let calls = 0;
-  const discovery = t.mock.method(PiRpcClient.prototype, "command", async function (
-    this: PiRpcClient, ...args: Parameters<PiRpcClient["command"]>
-  ) {
-    calls++;
-    const response = await original.apply(this, args);
-    entered.resolve();
-    await release.promise;
-    return response;
-  });
+  const discovery = t.mock.method(
+    PiRpcClient.prototype,
+    "command",
+    async function (this: PiRpcClient, ...args: Parameters<PiRpcClient["command"]>) {
+      calls++;
+      const response = await original.apply(this, args);
+      entered.resolve();
+      await release.promise;
+      return response;
+    },
+  );
   t.after(() => {
     release.resolve();
     if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
@@ -54,15 +56,17 @@ test("failed command discovery is not cached", { timeout: 30_000 }, async (t) =>
   process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/fake-omo-endpoints.mjs");
   const original = PiRpcClient.prototype.command;
   let failed = false;
-  const discovery = t.mock.method(PiRpcClient.prototype, "command", function (
-    this: PiRpcClient, ...args: Parameters<PiRpcClient["command"]>
-  ) {
-    if (!failed) {
-      failed = true;
-      return Promise.reject(new Error("discovery failed"));
-    }
-    return original.apply(this, args);
-  });
+  const discovery = t.mock.method(
+    PiRpcClient.prototype,
+    "command",
+    function (this: PiRpcClient, ...args: Parameters<PiRpcClient["command"]>) {
+      if (!failed) {
+        failed = true;
+        return Promise.reject(new Error("discovery failed"));
+      }
+      return original.apply(this, args);
+    },
+  );
   t.after(() => {
     if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
     else process.env.ANTECHAMBER_PI_BINARY = previous;

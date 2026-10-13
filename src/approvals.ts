@@ -1,13 +1,18 @@
 import type {
-  PermissionRequest, PermissionV2Request, QuestionInfo, QuestionRequest,
-  EventPermissionAsked, EventPermissionReplied, EventQuestionAsked,
-  EventQuestionReplied, EventQuestionRejected,
+  PermissionRequest,
+  PermissionV2Request,
+  QuestionInfo,
+  QuestionRequest,
+  EventPermissionAsked,
+  EventPermissionReplied,
+  EventQuestionAsked,
+  EventQuestionReplied,
+  EventQuestionRejected,
 } from "@opencode-ai/sdk/v2";
 
 type WithoutEventID<T> = T extends { id: string } ? Omit<T, "id"> : never;
 export type ApprovalEvent = WithoutEventID<
-  EventPermissionAsked | EventPermissionReplied | EventQuestionAsked |
-  EventQuestionReplied | EventQuestionRejected
+  EventPermissionAsked | EventPermissionReplied | EventQuestionAsked | EventQuestionReplied | EventQuestionRejected
 >;
 export type PermissionReply = "once" | "always" | "reject";
 export type PendingPermission = PermissionRequest;
@@ -35,14 +40,12 @@ type Pending = {
   context: Context;
   request: UIRequest;
   timer?: ReturnType<typeof setTimeout>;
-} & (
-  { kind: "permission"; card: PermissionRequest } |
-  { kind: "question"; card: QuestionRequest }
-);
+} & ({ kind: "permission"; card: PermissionRequest } | { kind: "question"; card: QuestionRequest });
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown> : undefined;
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 export function extensionUiRequestFrom(value: Record<string, unknown>): UIRequest | undefined {
@@ -50,7 +53,9 @@ export function extensionUiRequestFrom(value: Record<string, unknown>): UIReques
   if (typeof id !== "string" || id === "") return undefined;
   if (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor") return undefined;
   return {
-    id, method, title: typeof title === "string" ? title : "",
+    id,
+    method,
+    title: typeof title === "string" ? title : "",
     options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : [],
     ...(typeof toolCallId === "string" ? { toolCallId } : {}),
     ...(typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0 ? { timeout } : {}),
@@ -74,8 +79,12 @@ export function parsePermissionTitle(title: string): { permission: string; patte
 
 export function toV2Permission(card: PermissionRequest): PermissionV2Request {
   return {
-    id: card.id, sessionID: card.sessionID, action: card.permission,
-    resources: card.patterns, save: card.always, metadata: card.metadata,
+    id: card.id,
+    sessionID: card.sessionID,
+    action: card.permission,
+    resources: card.patterns,
+    save: card.always,
+    metadata: card.metadata,
     ...(card.tool ? { source: { type: "tool", ...card.tool } } : {}),
   };
 }
@@ -121,17 +130,25 @@ export class ApprovalBridge {
   }
 
   permissions(sessionID?: string, directory?: string): PermissionRequest[] {
-    return [...this.pending.values()].filter((p) => p.kind === "permission" &&
-      (sessionID === undefined || p.context.sessionID === sessionID) &&
-      (directory === undefined || p.context.directory === directory))
-      .flatMap((p) => p.kind === "permission" ? [p.card] : []);
+    return [...this.pending.values()]
+      .filter(
+        (p) =>
+          p.kind === "permission" &&
+          (sessionID === undefined || p.context.sessionID === sessionID) &&
+          (directory === undefined || p.context.directory === directory),
+      )
+      .flatMap((p) => (p.kind === "permission" ? [p.card] : []));
   }
 
   questionRequests(sessionID?: string, directory?: string): QuestionRequest[] {
-    return [...this.pending.values()].filter((p) => p.kind === "question" &&
-      (sessionID === undefined || p.context.sessionID === sessionID) &&
-      (directory === undefined || p.context.directory === directory))
-      .flatMap((p) => p.kind === "question" ? [p.card] : []);
+    return [...this.pending.values()]
+      .filter(
+        (p) =>
+          p.kind === "question" &&
+          (sessionID === undefined || p.context.sessionID === sessionID) &&
+          (directory === undefined || p.context.directory === directory),
+      )
+      .flatMap((p) => (p.kind === "question" ? [p.card] : []));
   }
 
   questions(): QuestionRequest[] {
@@ -139,8 +156,10 @@ export class ApprovalBridge {
   }
 
   hasPending(sessionID: string): boolean {
-    return [...this.pending.values()].some((p) => p.context.sessionID === sessionID) ||
-      (this.followups.get(sessionID)?.size ?? 0) > 0;
+    return (
+      [...this.pending.values()].some((p) => p.context.sessionID === sessionID) ||
+      (this.followups.get(sessionID)?.size ?? 0) > 0
+    );
   }
 
   observe(context: Context, ev: Record<string, unknown>): void {
@@ -160,13 +179,14 @@ export class ApprovalBridge {
             options: (Array.isArray(q.options) ? q.options : []).flatMap((value) => {
               const o = record(value);
               return o && typeof o.label === "string"
-                ? [{ label: o.label, description: typeof o.description === "string" ? o.description : "" }] : [];
+                ? [{ label: o.label, description: typeof o.description === "string" ? o.description : "" }]
+                : [];
             }),
             multiple: false,
           });
         }
         let calls = this.questionCalls.get(context.sessionID);
-        if (!calls) this.questionCalls.set(context.sessionID, calls = new Map());
+        if (!calls) this.questionCalls.set(context.sessionID, (calls = new Map()));
         calls.set(callID, parsed);
         return;
       }
@@ -189,12 +209,17 @@ export class ApprovalBridge {
     const request = extensionUiRequestFrom(ev);
     if (!request || this.pending.has(request.id)) return;
     const calls = this.questionCalls.get(context.sessionID);
-    const matched = request.method === "select"
-      ? [...(calls ?? [])].flatMap(([callID, questions]) =>
-        questions.filter((q) => q.question === request.title).map((question) => ({ callID, question }))) : [];
+    const matched =
+      request.method === "select"
+        ? [...(calls ?? [])].flatMap(([callID, questions]) =>
+            questions.filter((q) => q.question === request.title).map((question) => ({ callID, question })),
+          )
+        : [];
     const match = matched.length === 1 ? matched[0] : undefined;
     const soleCall = calls?.size === 1 ? calls.keys().next().value : undefined;
-    let callID = request.toolCallId ?? match?.callID ??
+    let callID =
+      request.toolCallId ??
+      match?.callID ??
       (request.method === "input" || request.method === "editor" ? soleCall : undefined);
     const followups = this.followups.get(context.sessionID);
     if (callID === undefined && request.method === "input" && followups?.size === 1) {
@@ -214,26 +239,34 @@ export class ApprovalBridge {
     if (request.method === "select" && request.title.startsWith("Permission required:")) {
       const parsed = parsePermissionTitle(request.title);
       const card: PermissionRequest = {
-        id: request.id, sessionID: context.sessionID, ...parsed,
-        always: [], metadata: { title: request.title },
+        id: request.id,
+        sessionID: context.sessionID,
+        ...parsed,
+        always: [],
+        metadata: { title: request.title },
         ...(callID !== undefined ? { tool: { messageID: context.messageID, callID } } : {}),
       };
       pending = { kind: "permission", card, context, request };
     } else {
-      const options = request.method === "confirm" ? ["Yes", "No"]
-        : request.method === "select" ? request.options : [];
-      const question: QuestionInfo = match ? {
-        ...match.question,
-        options: match.question.options.filter((o) => options.includes(o.label)),
-        custom: options.includes("Other (type an answer)"),
-      } : {
-        question: request.title, header: request.title.slice(0, 30),
-        options: options.map((label) => ({ label, description: "" })),
-        multiple: false, custom: request.method === "input" || request.method === "editor" ||
-          options.includes("Other (type an answer)"),
-      };
+      const options = request.method === "confirm" ? ["Yes", "No"] : request.method === "select" ? request.options : [];
+      const question: QuestionInfo = match
+        ? {
+            ...match.question,
+            options: match.question.options.filter((o) => options.includes(o.label)),
+            custom: options.includes("Other (type an answer)"),
+          }
+        : {
+            question: request.title,
+            header: request.title.slice(0, 30),
+            options: options.map((label) => ({ label, description: "" })),
+            multiple: false,
+            custom:
+              request.method === "input" || request.method === "editor" || options.includes("Other (type an answer)"),
+          };
       const card: QuestionRequest = {
-        id: request.id, sessionID: context.sessionID, questions: [question],
+        id: request.id,
+        sessionID: context.sessionID,
+        questions: [question],
         ...(callID !== undefined ? { tool: { messageID: context.messageID, callID } } : {}),
       };
       pending = { kind: "question", card, context, request };
@@ -243,18 +276,22 @@ export class ApprovalBridge {
       pending.timer = setTimeout(() => this.remove(pending, true), request.timeout);
       pending.timer.unref();
     }
-    this.emit(context.directory, pending.kind === "permission"
-      ? { type: "permission.asked", properties: pending.card }
-      : { type: "question.asked", properties: pending.card });
+    this.emit(
+      context.directory,
+      pending.kind === "permission"
+        ? { type: "permission.asked", properties: pending.card }
+        : { type: "question.asked", properties: pending.card },
+    );
   }
 
   replyPermission(id: string, reply: PermissionReply, message?: string, sessionID?: string): boolean {
     const p = this.pending.get(id);
     if (!p || p.kind !== "permission" || (sessionID !== undefined && p.context.sessionID !== sessionID)) return false;
-    if (reply !== "once" && reply !== "always" && reply !== "reject") throw new ApprovalInputError("invalid permission reply");
+    if (reply !== "once" && reply !== "always" && reply !== "reject")
+      throw new ApprovalInputError("invalid permission reply");
     if (message !== undefined && typeof message !== "string") throw new ApprovalInputError("message must be a string");
-    const label = reply === "once" ? "Allow once" : reply === "always" ? "Allow always"
-      : message ? "Deny with feedback" : "Deny";
+    const label =
+      reply === "once" ? "Allow once" : reply === "always" ? "Allow always" : message ? "Deny with feedback" : "Deny";
     if (!p.request.options.includes(label)) throw new ApprovalInputError(`permission option unavailable: ${label}`);
     if (message && reply === "reject" && p.request.toolCallId !== undefined) {
       this.follow(p, message, "permission");
@@ -262,7 +299,8 @@ export class ApprovalBridge {
     this.remove(p, false);
     p.context.send({ type: "extension_ui_response", id, value: label });
     this.emit(p.context.directory, {
-      type: "permission.replied", properties: { sessionID: p.context.sessionID, requestID: id, reply },
+      type: "permission.replied",
+      properties: { sessionID: p.context.sessionID, requestID: id, reply },
     });
     return true;
   }
@@ -270,8 +308,13 @@ export class ApprovalBridge {
   replyQuestion(id: string, answers: string[][], sessionID?: string): boolean {
     const p = this.pending.get(id);
     if (!p || p.kind !== "question" || (sessionID !== undefined && p.context.sessionID !== sessionID)) return false;
-    if (!Array.isArray(answers) || answers.length !== 1 || !Array.isArray(answers[0]) ||
-      answers[0].length !== 1 || typeof answers[0][0] !== "string") {
+    if (
+      !Array.isArray(answers) ||
+      answers.length !== 1 ||
+      !Array.isArray(answers[0]) ||
+      answers[0].length !== 1 ||
+      typeof answers[0][0] !== "string"
+    ) {
       throw new ApprovalInputError("answers must contain one question with one string answer");
     }
     const answer = answers[0][0];
@@ -285,13 +328,17 @@ export class ApprovalBridge {
       p.request.toolCallId ??= p.request.id;
       this.follow(p, answer, "question");
     }
-    if (method === "confirm" && answer !== "Yes" && answer !== "No") throw new ApprovalInputError("confirm answer must be Yes or No");
+    if (method === "confirm" && answer !== "Yes" && answer !== "No")
+      throw new ApprovalInputError("confirm answer must be Yes or No");
     this.remove(p, false);
-    p.context.send(method === "confirm"
-      ? { type: "extension_ui_response", id, confirmed: answer === "Yes" }
-      : { type: "extension_ui_response", id, value });
+    p.context.send(
+      method === "confirm"
+        ? { type: "extension_ui_response", id, confirmed: answer === "Yes" }
+        : { type: "extension_ui_response", id, value },
+    );
     this.emit(p.context.directory, {
-      type: "question.replied", properties: { sessionID: p.context.sessionID, requestID: id, answers },
+      type: "question.replied",
+      properties: { sessionID: p.context.sessionID, requestID: id, answers },
     });
     return true;
   }
@@ -308,7 +355,7 @@ export class ApprovalBridge {
     const callID = p.request.toolCallId;
     if (callID === undefined) return;
     let followups = this.followups.get(p.context.sessionID);
-    if (!followups) this.followups.set(p.context.sessionID, followups = new Map());
+    if (!followups) this.followups.set(p.context.sessionID, (followups = new Map()));
     followups.set(callID, { value, kind });
   }
 
@@ -316,13 +363,18 @@ export class ApprovalBridge {
     if (!this.pending.delete(p.request.id)) return;
     if (p.timer !== undefined) clearTimeout(p.timer);
     if (!rejected) return;
-    this.emit(p.context.directory, p.kind === "permission" ? {
-      type: "permission.replied",
-      properties: { sessionID: p.context.sessionID, requestID: p.request.id, reply: "reject" },
-    } : {
-      type: "question.rejected",
-      properties: { sessionID: p.context.sessionID, requestID: p.request.id },
-    });
+    this.emit(
+      p.context.directory,
+      p.kind === "permission"
+        ? {
+            type: "permission.replied",
+            properties: { sessionID: p.context.sessionID, requestID: p.request.id, reply: "reject" },
+          }
+        : {
+            type: "question.rejected",
+            properties: { sessionID: p.context.sessionID, requestID: p.request.id },
+          },
+    );
   }
 
   clear(sessionID: string, cancel: boolean, callID?: string): void {

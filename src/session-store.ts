@@ -80,7 +80,9 @@ export interface SessionRegistryEntry {
 
 export class SessionPersistenceError extends Error {
   constructor(file: string, cause: unknown) {
-    super(`Failed to persist session registry ${file}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    super(`Failed to persist session registry ${file}: ${cause instanceof Error ? cause.message : String(cause)}`, {
+      cause,
+    });
     this.name = "SessionPersistenceError";
   }
 }
@@ -290,7 +292,10 @@ export class SessionStore {
         if (v && typeof v.piPath === "string" && typeof v.piSessionId === "string") {
           // A hand-edited or partially written registry must not be able to
           // poison the model a dormant session advertises.
-          if (v.model !== undefined && (typeof v.model.providerID !== "string" || typeof v.model.modelID !== "string")) {
+          if (
+            v.model !== undefined &&
+            (typeof v.model.providerID !== "string" || typeof v.model.modelID !== "string")
+          ) {
             delete v.model;
           }
           this.entries.set(k, v);
@@ -320,7 +325,9 @@ export class SessionStore {
   }
 
   childIds(): string[] {
-    return [...this.load()].filter(([, entry]) => entry.task !== undefined && entry.parentID !== undefined).map(([id]) => id);
+    return [...this.load()]
+      .filter(([, entry]) => entry.task !== undefined && entry.parentID !== undefined)
+      .map(([id]) => id);
   }
 
   set(ocSessionId: string, entry: SessionRegistryEntry): void {

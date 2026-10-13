@@ -15,15 +15,16 @@ process.stdin.on("data", (chunk) => {
       responses.push(command);
       continue;
     }
-    const data = command.type === "get_state"
-      ? { sessionId, model: null, isStreaming: false, responses } : {};
+    const data = command.type === "get_state" ? { sessionId, model: null, isStreaming: false, responses } : {};
     send({ type: "response", id: command.id, command: command.type, success: true, data });
     if (command.type === "emit_ui") send({ type: "extension_ui_request", ...command.request });
     if (command.type === "prompt") {
       send({ type: "agent_start" });
       const question = command.message === "question";
       send({
-        type: "extension_ui_request", id: randomUUID(), toolCallId: "fixture-call",
+        type: "extension_ui_request",
+        id: randomUUID(),
+        toolCallId: "fixture-call",
         method: question ? "input" : "select",
         title: question ? "Answer?" : "Permission required: read\nPath: /tmp/fixture\nPatterns:\n - /tmp/fixture",
         options: question ? [] : ["Allow once", "Allow always", "Deny", "Deny with feedback"],

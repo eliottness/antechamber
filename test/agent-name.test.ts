@@ -6,7 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 const root = process.cwd();
-const probe = "import { getExposedAgentNames } from './src/agent-name.ts'; console.log(JSON.stringify(getExposedAgentNames()));";
+const probe =
+  "import { getExposedAgentNames } from './src/agent-name.ts'; console.log(JSON.stringify(getExposedAgentNames()));";
 const legacyProbe = `
   import { AdapterServer } from './src/server.ts';
   const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.ANTECHAMBER_TEST_DIRECTORY });
@@ -27,11 +28,13 @@ const legacyProbe = `
 `;
 
 function exposedNames(env: NodeJS.ProcessEnv): string[] {
-  return JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", probe], {
-    cwd: root,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
-  })) as string[];
+  return JSON.parse(
+    execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", probe], {
+      cwd: root,
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+    }),
+  ) as string[];
 }
 
 for (const variable of ["PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) {
@@ -41,16 +44,26 @@ for (const variable of ["PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) {
     const agentDir = join(home, "custom", "agent");
     mkdirSync(agentDir, { recursive: true });
     const name = 'https://example.test/*agent*/"quoted"';
-    writeFileSync(join(home, "custom", "oh-my-pi.jsonc"), `{
+    writeFileSync(
+      join(home, "custom", "oh-my-pi.jsonc"),
+      `{
       /* orchestrator settings
          with "quotes" and // nested line markers */
       "orchestrator": { "agentName": ${JSON.stringify(name)} /* trailing comment */ }
       // final line comment
-    }`);
-    assert.deepEqual(exposedNames({
-      HOME: home, ANTECHAMBER_AGENT: "", OCPI_AGENT: "",
-      PI_CODING_AGENT_DIR: "", OMO_CODING_AGENT_DIR: "", [variable]: agentDir,
-    }), [name, "build"]);
+    }`,
+    );
+    assert.deepEqual(
+      exposedNames({
+        HOME: home,
+        ANTECHAMBER_AGENT: "",
+        OCPI_AGENT: "",
+        PI_CODING_AGENT_DIR: "",
+        OMO_CODING_AGENT_DIR: "",
+        [variable]: agentDir,
+      }),
+      [name, "build"],
+    );
   });
 
   test(`agent name detects packages under overridden ${variable}`, (t) => {
@@ -59,10 +72,17 @@ for (const variable of ["PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) {
     const agentDir = join(home, "custom", "agent");
     mkdirSync(agentDir, { recursive: true });
     writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:oh-my-pi"] }));
-    assert.deepEqual(exposedNames({
-      HOME: home, ANTECHAMBER_AGENT: "", OCPI_AGENT: "",
-      PI_CODING_AGENT_DIR: "", OMO_CODING_AGENT_DIR: "", [variable]: agentDir,
-    }), ["oh-my-pi", "build"]);
+    assert.deepEqual(
+      exposedNames({
+        HOME: home,
+        ANTECHAMBER_AGENT: "",
+        OCPI_AGENT: "",
+        PI_CODING_AGENT_DIR: "",
+        OMO_CODING_AGENT_DIR: "",
+        [variable]: agentDir,
+      }),
+      ["oh-my-pi", "build"],
+    );
   });
 }
 
@@ -87,23 +107,24 @@ test("no resolved agent exposes only build", () => {
 test("a legacy build-agent session still accepts a prompt", () => {
   const state = mkdtempSync(join(tmpdir(), "antechamber-agent-state-"));
   try {
-    const result = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", legacyProbe], {
-      cwd: root,
-      env: {
-        ...process.env,
-        ANTECHAMBER_AGENT: "OmO",
-        ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
-        ANTECHAMBER_STATE_DIR: state,
-        ANTECHAMBER_TEST_DIRECTORY: state,
-      },
-      encoding: "utf8",
-    })) as { prompt: number; alias: number };
+    const result = JSON.parse(
+      execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", legacyProbe], {
+        cwd: root,
+        env: {
+          ...process.env,
+          ANTECHAMBER_AGENT: "OmO",
+          ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
+          ANTECHAMBER_STATE_DIR: state,
+          ANTECHAMBER_TEST_DIRECTORY: state,
+        },
+        encoding: "utf8",
+      }),
+    ) as { prompt: number; alias: number };
     assert.deepEqual(result, { prompt: 200, alias: 200 });
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
 });
-
 
 const configProbe = `
   import { AdapterServer } from './src/server.ts';
@@ -120,12 +141,19 @@ const configProbe = `
   }
 `;
 
-function fetchConfigs(env: NodeJS.ProcessEnv): { v1Config: unknown; v2Config: unknown; v1Agents: unknown[]; v2Agents: unknown[] } {
-  return JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", configProbe], {
-    cwd: root,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
-  })) as { v1Config: unknown; v2Config: unknown; v1Agents: unknown[]; v2Agents: unknown[] };
+function fetchConfigs(env: NodeJS.ProcessEnv): {
+  v1Config: unknown;
+  v2Config: unknown;
+  v1Agents: unknown[];
+  v2Agents: unknown[];
+} {
+  return JSON.parse(
+    execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", configProbe], {
+      cwd: root,
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+    }),
+  ) as { v1Config: unknown; v2Config: unknown; v1Agents: unknown[]; v2Agents: unknown[] };
 }
 
 test("config includes default_agent with resolved OmO name", () => {

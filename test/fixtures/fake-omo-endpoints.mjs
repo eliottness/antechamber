@@ -69,9 +69,15 @@ input.on("line", (line) => {
   switch (command.type) {
     case "get_state":
       reply(command, true, {
-        model: process.env.FAKE_THINKING_LEVEL === undefined
-          ? { provider: "fake", id: "fake-model" }
-          : { provider: "fake", id: "fake-model", reasoning: true, supportedThinkingLevels: ["low", "medium", "high"] },
+        model:
+          process.env.FAKE_THINKING_LEVEL === undefined
+            ? { provider: "fake", id: "fake-model" }
+            : {
+                provider: "fake",
+                id: "fake-model",
+                reasoning: true,
+                supportedThinkingLevels: ["low", "medium", "high"],
+              },
         ...(process.env.FAKE_THINKING_LEVEL === undefined ? {} : { thinkingLevel: process.env.FAKE_THINKING_LEVEL }),
         sessionId,
         sessionFile,
@@ -98,7 +104,13 @@ input.on("line", (line) => {
       const text = command.message;
       hasPrompt = true;
       if (text === "/notify-fixture") {
-        send({ type: "extension_ui_request", id: randomUUID(), method: "notify", message: "Print-only command output", notifyType: "info" });
+        send({
+          type: "extension_ui_request",
+          id: randomUUID(),
+          method: "notify",
+          message: "Print-only command output",
+          notifyType: "info",
+        });
         reply(command, true, { disposition: "handled" });
         return;
       }

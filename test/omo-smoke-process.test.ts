@@ -21,7 +21,10 @@ test("F2 B4 private task hosts fail before any harness termination can hide them
       survivors = [];
     },
   };
-  await assert.rejects(async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []), /SIGTERM/);
+  await assert.rejects(
+    async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []),
+    /SIGTERM/,
+  );
   assert.deepEqual(signals, [], "shutdown acceptance must precede all harness cleanup");
 });
 
@@ -34,9 +37,14 @@ test("F2 B4 shutdown rejects private detached hosts without scoped cleanup", asy
   const context = {
     owned: new Map(),
     capture: () => survivors,
-    terminate: async (identities: typeof survivors) => { signals.push(...identities.map((identity) => identity.pid)); },
+    terminate: async (identities: typeof survivors) => {
+      signals.push(...identities.map((identity) => identity.pid));
+    },
   };
-  await assert.rejects(async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []), /surviv/);
+  await assert.rejects(
+    async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []),
+    /surviv/,
+  );
   assert.deepEqual(signals, [], "cleanup must never determine connector shutdown acceptance");
 });
 
@@ -44,12 +52,16 @@ test("F2 B4 ordinary RPC survivors fail even when fallback cleanup could termina
   const context = {
     owned: new Map(),
     capture: () => [{ pid: 103, argv: ["bun", "cli.js", "--mode", "rpc"] }],
-    terminate: async () => { throw new Error("ordinary RPC must not be hidden by fallback cleanup"); },
+    terminate: async () => {
+      throw new Error("ordinary RPC must not be hidden by fallback cleanup");
+    },
   };
   await assert.rejects(async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []), /RPC/);
 });
 
-test("F2 B4 live private survivor fails shutdown even when harness cleanup can kill it", { timeout: 10_000 }, async (t) => {
+test("F2 B4 live private survivor fails shutdown even when harness cleanup can kill it", {
+  timeout: 10_000,
+}, async (t) => {
   const source = mkdtempSync(join(tmpdir(), "antechamber-smoke-source-"));
   const previousAgent = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = source;
@@ -61,10 +73,16 @@ test("F2 B4 live private survivor fails shutdown even when harness cleanup can k
     await context.cleanup();
     rmSync(source, { recursive: true, force: true });
   });
-  const child = spawn(process.execPath, ["-e", 'process.stdout.write("READY\\n"); setInterval(() => {}, 1000)', "--", "--internal-rpc-host-supervisor"], {
-    cwd: context.work, detached: true, stdio: ["ignore", "pipe", "ignore"],
-    env: { ...process.env, HOME: join(context.root, "home"), PI_CODING_AGENT_DIR: context.agent },
-  });
+  const child = spawn(
+    process.execPath,
+    ["-e", 'process.stdout.write("READY\\n"); setInterval(() => {}, 1000)', "--", "--internal-rpc-host-supervisor"],
+    {
+      cwd: context.work,
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, HOME: join(context.root, "home"), PI_CODING_AGENT_DIR: context.agent },
+    },
+  );
   const exited = once(child, "exit");
   assert.ok(child.stdout);
   await once(child.stdout, "data", { signal: AbortSignal.timeout(5_000) });
@@ -91,13 +109,22 @@ test("F2 B4 shared LSP is reported separately and is never killed by the shutdow
   const context = {
     owned: new Map(),
     capture: () => [daemon, server],
-    terminate: async () => { assert.fail("shared infrastructure is not connector teardown"); },
+    terminate: async () => {
+      assert.fail("shared infrastructure is not connector teardown");
+    },
   };
   await Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []);
   assert.equal(lines.length, 2);
   for (const info of [daemon, server]) {
-    assert.ok(lines.some((line) => line.includes(`pid=${info.pid}`) && line.includes(info.argv.join(" ")) &&
-      line.includes("NON-CONNECTOR") && line.includes("OmO-owned, outside connector scope")));
+    assert.ok(
+      lines.some(
+        (line) =>
+          line.includes(`pid=${info.pid}`) &&
+          line.includes(info.argv.join(" ")) &&
+          line.includes("NON-CONNECTOR") &&
+          line.includes("OmO-owned, outside connector scope"),
+      ),
+    );
   }
 });
 
@@ -107,9 +134,14 @@ test("F2 B4 an LSP-looking process inside a connector RPC group remains a shutdo
   const context = {
     owned: new Map([[rpc.pid, rpc]]),
     capture: () => [daemon],
-    terminate: async () => { assert.fail("connector group survivors must fail before cleanup"); },
+    terminate: async () => {
+      assert.fail("connector group survivors must fail before cleanup");
+    },
   };
-  await assert.rejects(async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []), /SIGTERM/);
+  await assert.rejects(
+    async () => Reflect.apply(SmokeContext.prototype.assertShutdownProcesses, context, []),
+    /SIGTERM/,
+  );
 });
 
 test("detached ownership requires exact private environment and scoped cwd", () => {

@@ -39,12 +39,17 @@ export class SmokeRegistry {
   readonly check: Check = (name, fn, options = {}) => {
     if (this.checks.some((check) => check.name === name)) throw new Error(`duplicate check: ${name}`);
     for (const dependency of options.dependsOn ?? []) {
-      if (!this.checks.some((check) => check.name === dependency)) throw new Error(`unregistered prerequisite: ${dependency}`);
+      if (!this.checks.some((check) => check.name === dependency))
+        throw new Error(`unregistered prerequisite: ${dependency}`);
     }
     this.checks.push({ name, fn, options });
   };
 
-  async run(options: { only?: Set<string> | undefined; signal?: AbortSignal; log: (line: string) => void }): Promise<CheckResult[]> {
+  async run(options: {
+    only?: Set<string> | undefined;
+    signal?: AbortSignal;
+    log: (line: string) => void;
+  }): Promise<CheckResult[]> {
     const selected = new Set(options.only ?? this.checks.map((check) => check.name));
     const include = (name: string): void => {
       const check = this.checks.find((check) => check.name === name);
@@ -60,7 +65,11 @@ export class SmokeRegistry {
     for (const check of this.checks) {
       let result: CheckResult;
       if (!selected.has(check.name) || failed || options.signal?.aborted) {
-        result = { name: check.name, status: "SKIP", detail: !selected.has(check.name) ? "filtered" : "previous failure or interruption" };
+        result = {
+          name: check.name,
+          status: "SKIP",
+          detail: !selected.has(check.name) ? "filtered" : "previous failure or interruption",
+        };
       } else {
         const controller = new AbortController();
         const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
@@ -69,7 +78,10 @@ export class SmokeRegistry {
         const deadline = new Promise<never>((_, reject) => {
           onAbort = () => reject(signal.reason);
           signal.addEventListener("abort", onAbort, { once: true });
-          timer = setTimeout(() => controller.abort(new Error(`check timed out after ${check.options.timeoutMs ?? 120_000}ms`)), check.options.timeoutMs ?? 120_000);
+          timer = setTimeout(
+            () => controller.abort(new Error(`check timed out after ${check.options.timeoutMs ?? 120_000}ms`)),
+            check.options.timeoutMs ?? 120_000,
+          );
         });
         try {
           await Promise.race([check.fn(signal), deadline]);
@@ -96,7 +108,11 @@ export class SmokeRegistry {
 /** Future-only waits prevent an earlier idle/delta from satisfying a new turn. */
 export class SseCollector {
   readonly events: SmokeEvent[] = [];
-  private waiters = new Set<{ predicate: (event: SmokeEvent) => boolean; resolve: (event: SmokeEvent) => void; reject: (error: Error) => void }>();
+  private waiters = new Set<{
+    predicate: (event: SmokeEvent) => boolean;
+    resolve: (event: SmokeEvent) => void;
+    reject: (error: Error) => void;
+  }>();
   private controller = new AbortController();
   private pumping: Promise<void> | undefined;
 
@@ -140,7 +156,11 @@ export class SseCollector {
     }
   }
 
-  waitForEvent(predicate: (event: SmokeEvent) => boolean, timeoutMs: number, signal?: AbortSignal): Promise<SmokeEvent> {
+  waitForEvent(
+    predicate: (event: SmokeEvent) => boolean,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<SmokeEvent> {
     const promise = new Promise<SmokeEvent>((resolve, reject) => {
       const finish = (): void => {
         clearTimeout(timer);
@@ -149,8 +169,14 @@ export class SseCollector {
       };
       const waiter = {
         predicate,
-        resolve: (event: SmokeEvent) => { finish(); resolve(event); },
-        reject: (error: Error) => { finish(); reject(error); },
+        resolve: (event: SmokeEvent) => {
+          finish();
+          resolve(event);
+        },
+        reject: (error: Error) => {
+          finish();
+          reject(error);
+        },
       };
       const abort = (): void => waiter.reject(new Error("SSE wait cancelled"));
       const timer = setTimeout(() => waiter.reject(new Error(`event timed out after ${timeoutMs}ms`)), timeoutMs);

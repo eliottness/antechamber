@@ -7,17 +7,31 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { AdapterServer } from "../src/server.js";
 
-test("unwritable debug log preserves health and agent events with exactly one warning", { timeout: 15_000 }, async (t) => {
+test("unwritable debug log preserves health and agent events with exactly one warning", {
+  timeout: 15_000,
+}, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-t12-debug-"));
   const child = spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "serve", "--port", "0", "--directory", dir], {
-    env: { ...process.env, ANTECHAMBER_DEBUG: "1", ANTECHAMBER_DEBUG_LOG: "/proc/nope.log",
-      ANTECHAMBER_STATE_DIR: join(dir, "state"), PI_CODING_AGENT_DIR: join(dir, "agent"), ANTECHAMBER_PI_BINARY: resolve("test/fixtures/diff-omo.mjs") },
+    env: {
+      ...process.env,
+      ANTECHAMBER_DEBUG: "1",
+      ANTECHAMBER_DEBUG_LOG: "/proc/nope.log",
+      ANTECHAMBER_STATE_DIR: join(dir, "state"),
+      PI_CODING_AGENT_DIR: join(dir, "agent"),
+      ANTECHAMBER_PI_BINARY: resolve("test/fixtures/diff-omo.mjs"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const exited = once(child, "exit");
   let stderr = "";
-  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
-  t.after(async () => { child.kill("SIGTERM"); await exited; rmSync(dir, { recursive: true, force: true }); });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  t.after(async () => {
+    child.kill("SIGTERM");
+    await exited;
+    rmSync(dir, { recursive: true, force: true });
+  });
   const url = await new Promise<string>((resolveUrl, reject) => {
     let stdout = "";
     child.stdout.on("data", (chunk) => {
@@ -29,9 +43,10 @@ test("unwritable debug log preserves health and agent events with exactly one wa
     AbortSignal.timeout(5000).addEventListener("abort", () => reject(new Error("startup deadline")), { once: true });
   });
   assert.equal((await fetch(url + "/global/health")).status, 200);
-  const session = await (await fetch(url + "/session", { method: "POST", body: "{}" })).json() as { id: string };
+  const session = (await (await fetch(url + "/session", { method: "POST", body: "{}" })).json()) as { id: string };
   const prompted = await fetch(url + "/session/" + session.id + "/message", {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }),
   });
   assert.equal(prompted.status, 200);
@@ -41,22 +56,33 @@ test("unwritable debug log preserves health and agent events with exactly one wa
   assert.equal(stderr.split("\n").filter((line) => line.startsWith("[debug] logging disabled:")).length, 1);
 });
 
-test("title matches GET, sidebar lists and session.updated through prompts, rename and reload", { timeout: 15_000 }, async (t) => {
+test("title matches GET, sidebar lists and session.updated through prompts, rename and reload", {
+  timeout: 15_000,
+}, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-t12-title-"));
-  const prior = { binary: process.env.ANTECHAMBER_PI_BINARY, state: process.env.ANTECHAMBER_STATE_DIR, agent: process.env.PI_CODING_AGENT_DIR };
+  const prior = {
+    binary: process.env.ANTECHAMBER_PI_BINARY,
+    state: process.env.ANTECHAMBER_STATE_DIR,
+    agent: process.env.PI_CODING_AGENT_DIR,
+  };
   process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/diff-omo.mjs");
   process.env.ANTECHAMBER_STATE_DIR = join(dir, "state");
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
   let server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
   t.after(async () => {
     await server.stop();
-    if (prior.binary === undefined) delete process.env.ANTECHAMBER_PI_BINARY; else process.env.ANTECHAMBER_PI_BINARY = prior.binary;
-    if (prior.state === undefined) delete process.env.ANTECHAMBER_STATE_DIR; else process.env.ANTECHAMBER_STATE_DIR = prior.state;
-    if (prior.agent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prior.agent;
+    if (prior.binary === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = prior.binary;
+    if (prior.state === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
+    else process.env.ANTECHAMBER_STATE_DIR = prior.state;
+    if (prior.agent === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = prior.agent;
     rmSync(dir, { recursive: true, force: true });
   });
   await server.start();
-  const session = await (await fetch(server.url + "/session", { method: "POST", body: JSON.stringify({ title: "   " }) })).json() as { id: string };
+  const session = (await (
+    await fetch(server.url + "/session", { method: "POST", body: JSON.stringify({ title: "   " }) })
+  ).json()) as { id: string };
   const controller = new AbortController();
   const stream = await fetch(server.url + "/event", { signal: controller.signal });
   assert.ok(stream.body);
@@ -80,20 +106,41 @@ test("title matches GET, sidebar lists and session.updated through prompts, rena
     }
   })();
   await fetch(server.url + "/session/" + session.id + "/message", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parts: [{ type: "text", text: "  []  " }] }),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parts: [{ type: "text", text: "  []  " }] }),
   });
   const eventInfo = await updated;
   controller.abort();
   assert.equal(eventInfo.title, "[]");
-  for (const path of ["/session/" + session.id, "/session", "/experimental/session", "/experimental/session?archived=true"]) {
-    const body = await (await fetch(server.url + path)).json() as { title: string } | Array<{ id: string; title: string }>;
+  for (const path of [
+    "/session/" + session.id,
+    "/session",
+    "/experimental/session",
+    "/experimental/session?archived=true",
+  ]) {
+    const body = (await (await fetch(server.url + path)).json()) as
+      | { title: string }
+      | Array<{ id: string; title: string }>;
     assert.equal((Array.isArray(body) ? body.find((entry) => entry.id === session.id) : body)!.title, "[]");
   }
-  await fetch(server.url + "/session/" + session.id, { method: "PATCH", body: JSON.stringify({ title: "Renamed session" }) });
-  await fetch(server.url + "/session/" + session.id + "/message", { method: "POST", body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }) });
-  assert.equal((await (await fetch(server.url + "/session/" + session.id)).json() as { title: string }).title, "Renamed session");
+  await fetch(server.url + "/session/" + session.id, {
+    method: "PATCH",
+    body: JSON.stringify({ title: "Renamed session" }),
+  });
+  await fetch(server.url + "/session/" + session.id + "/message", {
+    method: "POST",
+    body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }),
+  });
+  assert.equal(
+    ((await (await fetch(server.url + "/session/" + session.id)).json()) as { title: string }).title,
+    "Renamed session",
+  );
   await server.stop();
   server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
   await server.start();
-  assert.equal((await (await fetch(server.url + "/session/" + session.id)).json() as { title: string }).title, "Renamed session");
+  assert.equal(
+    ((await (await fetch(server.url + "/session/" + session.id)).json()) as { title: string }).title,
+    "Renamed session",
+  );
 });

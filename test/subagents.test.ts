@@ -1,7 +1,17 @@
 /// <reference types="node" />
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -12,7 +22,9 @@ import { findTask, JsonlTail, stripTaskSuffix } from "../src/subagents.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
 
 const fixture = JSON.parse(readFileSync("test/fixtures/omo-tools/task.json", "utf8"));
-const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8").trim().split("\n")
+const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8")
+  .trim()
+  .split("\n")
   .map((line) => JSON.parse(line) as Record<string, unknown>);
 
 function put(path: string, value: unknown): void {
@@ -21,16 +33,54 @@ function put(path: string, value: unknown): void {
 }
 
 function transcript(text: string, childId = "child-pi"): string {
-  return [
-    { type: "session", version: 3, id: childId, cwd: "/tmp/test", timestamp: "2026-10-12T00:00:00.000Z" },
-    { type: "message", id: "u", parentId: null, timestamp: 1, message: { role: "user", content: [{ type: "text", text: "Do the child job" }] } },
-    { type: "message", id: "a", parentId: "u", timestamp: 2, message: { role: "assistant", provider: "anthropic", model: "haiku", content: [
-      { type: "thinking", thinking: "Read the file first." },
-      { type: "toolCall", id: "read-1", name: "read", arguments: { path: "child.txt" } },
-    ] } },
-    { type: "message", id: "r", parentId: "a", timestamp: 3, message: { role: "toolResult", toolCallId: "read-1", toolName: "read", content: [{ type: "text", text: "contents" }] } },
-    { type: "message", id: "z", parentId: "r", timestamp: 4, message: { role: "assistant", provider: "anthropic", model: "haiku", content: [{ type: "text", text }] } },
-  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+  return (
+    [
+      { type: "session", version: 3, id: childId, cwd: "/tmp/test", timestamp: "2026-10-12T00:00:00.000Z" },
+      {
+        type: "message",
+        id: "u",
+        parentId: null,
+        timestamp: 1,
+        message: { role: "user", content: [{ type: "text", text: "Do the child job" }] },
+      },
+      {
+        type: "message",
+        id: "a",
+        parentId: "u",
+        timestamp: 2,
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "haiku",
+          content: [
+            { type: "thinking", thinking: "Read the file first." },
+            { type: "toolCall", id: "read-1", name: "read", arguments: { path: "child.txt" } },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "r",
+        parentId: "a",
+        timestamp: 3,
+        message: {
+          role: "toolResult",
+          toolCallId: "read-1",
+          toolName: "read",
+          content: [{ type: "text", text: "contents" }],
+        },
+      },
+      {
+        type: "message",
+        id: "z",
+        parentId: "r",
+        timestamp: 4,
+        message: { role: "assistant", provider: "anthropic", model: "haiku", content: [{ type: "text", text }] },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n"
+  );
 }
 
 function setup(t: TestContext) {
@@ -44,13 +94,26 @@ function setup(t: TestContext) {
   const directory = join(dir, "work");
   mkdirSync(directory);
   const parentPath = join(piSessionDir(directory), "parent.jsonl");
-  put(parentPath, JSON.stringify({ type: "session", version: 3, id: "parent-pi", cwd: directory, timestamp: "2026-10-12T00:00:00.000Z" }) + "\n");
+  put(
+    parentPath,
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "parent-pi",
+      cwd: directory,
+      timestamp: "2026-10-12T00:00:00.000Z",
+    }) + "\n",
+  );
   const bus = new EventEmitter();
   const events: OCEvent[] = [];
-  const manager = new SessionManager((_directory, event) => {
-    events.push(structuredClone(event) as OCEvent);
-    bus.emit("event", event as OCEvent);
-  }, new SessionStore(state), directory);
+  const manager = new SessionManager(
+    (_directory, event) => {
+      events.push(structuredClone(event) as OCEvent);
+      bus.emit("event", event as OCEvent);
+    },
+    new SessionStore(state),
+    directory,
+  );
   const parent = manager.get(ocIdFor("parent-pi"));
   assert.ok(parent);
   manager.messages(parent.info.id);
@@ -70,34 +133,67 @@ function setup(t: TestContext) {
 
 function start(manager: SessionManager, parent: ManagedSession, args: Record<string, unknown>, callID = "spawn"): void {
   manager["onPiEvent"](parent, { type: "message_start", message: { role: "assistant" } });
-  manager["onPiEvent"](parent, { type: "message_update", assistantMessageEvent: {
-    type: "toolcall_start", contentIndex: 0, id: callID, toolName: "task",
-  } });
-  manager["onPiEvent"](parent, { type: "message_update", assistantMessageEvent: {
-    type: "toolcall_end", contentIndex: 0, toolCall: { id: callID, name: "task", arguments: args },
-  } });
+  manager["onPiEvent"](parent, {
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "toolcall_start",
+      contentIndex: 0,
+      id: callID,
+      toolName: "task",
+    },
+  });
+  manager["onPiEvent"](parent, {
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "toolcall_end",
+      contentIndex: 0,
+      toolCall: { id: callID, name: "task", arguments: args },
+    },
+  });
   manager["onPiEvent"](parent, { type: "tool_execution_start", toolCallId: callID, toolName: "task", args });
 }
 
-function result(manager: SessionManager, parent: ManagedSession, details: Record<string, unknown>, text = "done", ended = true, callID = "spawn"): void {
+function result(
+  manager: SessionManager,
+  parent: ManagedSession,
+  details: Record<string, unknown>,
+  text = "done",
+  ended = true,
+  callID = "spawn",
+): void {
   const payload = { details, content: [{ type: "text", text }] };
-  manager["onPiEvent"](parent, ended
-    ? { type: "tool_execution_end", toolCallId: callID, toolName: "task", result: payload }
-    : { type: "tool_execution_update", toolCallId: callID, toolName: "task", partialResult: payload });
+  manager["onPiEvent"](
+    parent,
+    ended
+      ? { type: "tool_execution_end", toolCallId: callID, toolName: "task", result: payload }
+      : { type: "tool_execution_update", toolCallId: callID, toolName: "task", partialResult: payload },
+  );
 }
 
 function parts(messages: OCMessageWithParts[] | undefined): OCToolPart[] {
-  return (messages ?? []).flatMap((message) => message.parts).filter((part): part is OCToolPart => part.type === "tool");
+  return (messages ?? [])
+    .flatMap((message) => message.parts)
+    .filter((part): part is OCToolPart => part.type === "tool");
 }
 
 function texts(messages: OCMessageWithParts[] | undefined): string {
-  return (messages ?? []).flatMap((message) => message.parts).filter((part) => part.type === "text").map((part) => part.text).join("\n");
+  return (messages ?? [])
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 
 function liveRecord(store: string, id = "st_child", status = "running", text = "child result") {
   const path = join(store, "children", id, "sessions", id, "child.jsonl");
   put(path, transcript(text));
-  const data = { task_id: id, parent_session_id: "parent-pi", status, host_session: { session_path: path }, final_response: text };
+  const data = {
+    task_id: id,
+    parent_session_id: "parent-pi",
+    status,
+    host_session: { session_path: path },
+    final_response: text,
+  };
   const recordPath = join(store, "tasks", `${id}.json`);
   put(recordPath, data);
   return { path, recordPath, data };
@@ -105,9 +201,20 @@ function liveRecord(store: string, id = "st_child", status = "running", text = "
 
 function eventWhen(bus: EventEmitter, predicate: (event: OCEvent) => boolean): Promise<OCEvent> {
   return new Promise((resolve, reject) => {
-    const cleanup = () => { bus.off("event", listener); clearTimeout(timer); };
-    const timeout = () => { cleanup(); reject(new Error("Expected bridge event was not emitted")); };
-    const listener = (event: OCEvent) => { if (predicate(event)) { cleanup(); resolve(event); } };
+    const cleanup = () => {
+      bus.off("event", listener);
+      clearTimeout(timer);
+    };
+    const timeout = () => {
+      cleanup();
+      reject(new Error("Expected bridge event was not emitted"));
+    };
+    const listener = (event: OCEvent) => {
+      if (predicate(event)) {
+        cleanup();
+        resolve(event);
+      }
+    };
     bus.on("event", listener);
     // The bridge watchers are nonpersistent; this wait must keep its deadline alive.
     const timer = setTimeout(timeout, 5000);
@@ -132,9 +239,14 @@ test("F2 B3 child registry save failure emits a visible session error", (t) => {
   mkdirSync(join(state, "sessions.json"), { recursive: true });
   start(manager, parent, { description: "save failure", prompt: "child job", category: "quick" });
   result(manager, parent, { task_id: "st_save_failure", status: "completed", final_response: "done" });
-  assert.ok(events.some((event) => event.type === "session.error" &&
-    event.properties.sessionID === ocIdFor("st_save_failure") &&
-    event.properties.error?.name === "SessionPersistenceError"));
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === "session.error" &&
+        event.properties.sessionID === ocIdFor("st_save_failure") &&
+        event.properties.error?.name === "SessionPersistenceError",
+    ),
+  );
 });
 
 test("real tasks array yields stable parts and separately fetchable children", (t) => {
@@ -177,9 +289,12 @@ test("rediscovery replaces one logical task card while keeping batch cards disti
   start(manager, parent, batch.arguments, "distinct-batch");
   manager["onPiEvent"](parent, { type: "tool_execution_end", toolCallId: "distinct-batch", result: batch });
   const batchChildren = (batch.details.items as Array<{ task_id: string }>).map((item) =>
-    manager.subagents["children"].get(ocIdFor(item.task_id)));
+    manager.subagents["children"].get(ocIdFor(item.task_id)),
+  );
   assert.equal(batchChildren.length, 4);
-  assert.ok(batchChildren.every((batchChild: { parts: Map<string, OCToolPart> } | undefined) => batchChild?.parts.size === 1));
+  assert.ok(
+    batchChildren.every((batchChild: { parts: Map<string, OCToolPart> } | undefined) => batchChild?.parts.size === 1),
+  );
 });
 
 test("terminal record atomically archives and emits idle after streaming shared tool cards", async (t) => {
@@ -221,8 +336,11 @@ test("in-process child_session_id streams tools and archives without host_sessio
   // A different retained run must never be mistaken for the current session.
   put(join(dirname(path), "2026-10-14T00-00-00-000Z_other-pi.jsonl"), transcript("other run", "other-pi"));
   const data = {
-    task_id: "st_child", parent_session_id: "parent-pi", status: "running",
-    execution_mode: "in-process", child_session_id: "child-pi",
+    task_id: "st_child",
+    parent_session_id: "parent-pi",
+    status: "running",
+    execution_mode: "in-process",
+    child_session_id: "child-pi",
   };
   put(child.recordPath, data);
   start(manager, parent, { subagent_type: "explore", task_summary: "In-process child" });
@@ -230,11 +348,24 @@ test("in-process child_session_id streams tools and archives without host_sessio
   const childID = ocIdFor("st_child");
   assert.equal(parts(manager.messages(childID)).filter((part) => part.tool === "read").length, 1);
   assert.equal(manager.get(childID)?.status.type, "busy");
-  const streamed = eventWhen(bus, (event) => event.type === "message.part.updated" &&
-    event.properties.part.sessionID === childID && event.properties.part.type === "text" &&
-    event.properties.part.text === "IN_PROCESS_STREAM");
-  appendFileSync(path, JSON.stringify({ type: "message", id: "live", parentId: "z", timestamp: 5,
-    message: { role: "assistant", content: [{ type: "text", text: "IN_PROCESS_STREAM" }] } }) + "\n");
+  const streamed = eventWhen(
+    bus,
+    (event) =>
+      event.type === "message.part.updated" &&
+      event.properties.part.sessionID === childID &&
+      event.properties.part.type === "text" &&
+      event.properties.part.text === "IN_PROCESS_STREAM",
+  );
+  appendFileSync(
+    path,
+    JSON.stringify({
+      type: "message",
+      id: "live",
+      parentId: "z",
+      timestamp: 5,
+      message: { role: "assistant", content: [{ type: "text", text: "IN_PROCESS_STREAM" }] },
+    }) + "\n",
+  );
   await streamed;
   const idle = eventWhen(bus, (event) => event.type === "session.idle" && event.properties.sessionID === childID);
   put(`${child.recordPath}.tmp`, { ...data, status: "completed" });
@@ -257,11 +388,18 @@ test("in-process transcript discovery follows late child session publication", a
   start(manager, parent, { subagent_type: "explore", task_summary: "Starting child" });
   result(manager, parent, { task_id: "st_child", status: "running" }, "", false);
   const childID = ocIdFor("st_child");
-  const arrived = eventWhen(bus, (event) => event.type === "message.part.updated" &&
-    event.properties.part.sessionID === childID && event.properties.part.type === "tool" &&
-    event.properties.part.tool === "read");
-  put(join(store, "children", "st_child", "sessions", "st_child", "2026-10-13T00-00-00-000Z_child-pi.jsonl"),
-    transcript("late session"));
+  const arrived = eventWhen(
+    bus,
+    (event) =>
+      event.type === "message.part.updated" &&
+      event.properties.part.sessionID === childID &&
+      event.properties.part.type === "tool" &&
+      event.properties.part.tool === "read",
+  );
+  put(
+    join(store, "children", "st_child", "sessions", "st_child", "2026-10-13T00-00-00-000Z_child-pi.jsonl"),
+    transcript("late session"),
+  );
   put(`${recordPath}.tmp`, { ...data, child_session_id: "child-pi" });
   renameSync(`${recordPath}.tmp`, recordPath);
   await arrived;
@@ -280,9 +418,23 @@ test("live store history is archived even when no prior archive exists", (t) => 
 test("missing transcript renders final response usage and retention notice", (t) => {
   const { manager, parent } = setup(t);
   start(manager, parent, { task_summary: "Evicted child" });
-  result(manager, parent, { task_id: "st_missing", status: "completed", model: "anthropic/haiku", run_stats: {
-    runtime_ms: 123, total_tokens: 50, input_tokens: 30, output_tokens: 20, cost_usd: 0.01,
-  } }, "preserved result\n\n[task_id: st_missing - continue with task_send(...)]");
+  result(
+    manager,
+    parent,
+    {
+      task_id: "st_missing",
+      status: "completed",
+      model: "anthropic/haiku",
+      run_stats: {
+        runtime_ms: 123,
+        total_tokens: 50,
+        input_tokens: 30,
+        output_tokens: 20,
+        cost_usd: 0.01,
+      },
+    },
+    "preserved result\n\n[task_id: st_missing - continue with task_send(...)]",
+  );
   const messages = manager.messages(ocIdFor("st_missing"));
   assert.equal(messages?.filter((message) => message.info.role === "assistant").length, 1);
   assert.match(texts(messages), /preserved result/);
@@ -304,10 +456,19 @@ test("nested background completion wake updates the parent card and archives the
   liveRecord(store);
   start(manager, parent, { run_in_background: true, task_summary: "Background child" });
   result(manager, parent, { task_id: "st_child", status: "running" }, "Started");
-  manager["onPiEvent"](parent, { type: "message_end", message: {
-    role: "custom", customType: "omo-senpi:wake",
-    details: [{ customType: "senpi-task.completion", details: [{ task_id: "st_child", status: "completed", final_response: "wake result" }] }],
-  } });
+  manager["onPiEvent"](parent, {
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "omo-senpi:wake",
+      details: [
+        {
+          customType: "senpi-task.completion",
+          details: [{ task_id: "st_child", status: "completed", final_response: "wake result" }],
+        },
+      ],
+    },
+  });
   assert.equal(manager.get(ocIdFor("st_child"))?.status.type, "idle");
   assert.equal(parent.hasRunningChildren(), false);
   const card = parts(parent.messages)[0];
@@ -321,15 +482,28 @@ test("partial lines and split UTF8 stream only after the terminating newline", a
   const child = liveRecord(store);
   start(manager, parent, { task_summary: "Tailed child" });
   result(manager, parent, { task_id: "st_child", status: "running" }, "", false);
-  const entry = Buffer.from(JSON.stringify({ type: "message", id: "new", parentId: "z", timestamp: 5,
-    message: { role: "assistant", content: [{ type: "text", text: "new café result" }] } }) + "\n");
+  const entry = Buffer.from(
+    JSON.stringify({
+      type: "message",
+      id: "new",
+      parentId: "z",
+      timestamp: 5,
+      message: { role: "assistant", content: [{ type: "text", text: "new café result" }] },
+    }) + "\n",
+  );
   const cut = entry.indexOf(Buffer.from("é")) + 1;
   appendFileSync(child.path, entry.subarray(0, cut));
   // The pure tail reader establishes the exact partial-byte state without timing luck.
   const tail = new JsonlTail();
   tail.read(child.path);
   assert.ok(!tail.text.includes('"id":"new"'));
-  const arrived = eventWhen(bus, (event) => event.type === "message.part.updated" && event.properties.part.type === "text" && event.properties.part.text === "new café result");
+  const arrived = eventWhen(
+    bus,
+    (event) =>
+      event.type === "message.part.updated" &&
+      event.properties.part.type === "text" &&
+      event.properties.part.text === "new café result",
+  );
   appendFileSync(child.path, entry.subarray(cut));
   await arrived;
   tail.read(child.path);
@@ -383,26 +557,75 @@ test("restart resolves archived children by id through real session and message 
   await server.start();
   t.after(() => server.stop());
   const childID = ocIdFor("st_child");
-  const info = await fetch(`${server.url}/session/${childID}`).then((response) => response.json()) as { parentID?: string };
+  const info = (await fetch(`${server.url}/session/${childID}`).then((response) => response.json())) as {
+    parentID?: string;
+  };
   assert.equal(info.parentID, parent.info.id);
-  const history = await fetch(`${server.url}/session/${childID}/message`).then((response) => response.json()) as OCMessageWithParts[];
+  const history = (await fetch(`${server.url}/session/${childID}/message`).then((response) =>
+    response.json(),
+  )) as OCMessageWithParts[];
   assert.match(texts(history), /survives eviction/);
-  const roots = await fetch(`${server.url}/experimental/session?roots=true`).then((response) => response.json()) as Array<{ id: string }>;
-  const all = await fetch(`${server.url}/experimental/session?roots=false`).then((response) => response.json()) as Array<{ id: string; parentID?: string }>;
+  const roots = (await fetch(`${server.url}/experimental/session?roots=true`).then((response) =>
+    response.json(),
+  )) as Array<{ id: string }>;
+  const all = (await fetch(`${server.url}/experimental/session?roots=false`).then((response) =>
+    response.json(),
+  )) as Array<{ id: string; parentID?: string }>;
   assert.ok(!roots.some((session: { id: string }) => session.id === childID));
-  assert.ok(all.some((session: { id: string; parentID?: string }) => session.id === childID && session.parentID === parent.info.id));
+  assert.ok(
+    all.some(
+      (session: { id: string; parentID?: string }) => session.id === childID && session.parentID === parent.info.id,
+    ),
+  );
 });
 
 test("dormant parent rebuilds batch children and applies trailing wake results", (t) => {
   const { manager, parent, parentPath } = setup(t);
   const batch = fixture.samples[1];
-  appendFileSync(parentPath, [
-    { type: "message", id: "a", parentId: null, timestamp: 1, message: { role: "assistant", content: [{ type: "toolCall", id: "batch", name: "task", arguments: batch.arguments }] } },
-    { type: "message", id: "r", parentId: "a", timestamp: 2, message: { role: "toolResult", toolName: "task", toolCallId: "batch", ...batch } },
-    { type: "custom_message", id: "wake", parentId: "r", timestamp: 3, customType: "omo-senpi:wake", details: [
-      { customType: "senpi-task.completion", details: [{ task_id: "st_01a12ba2", status: "completed", final_response: "historical final response", run_stats: { runtime_ms: 17 } }] },
-    ] },
-  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  appendFileSync(
+    parentPath,
+    [
+      {
+        type: "message",
+        id: "a",
+        parentId: null,
+        timestamp: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "batch", name: "task", arguments: batch.arguments }],
+        },
+      },
+      {
+        type: "message",
+        id: "r",
+        parentId: "a",
+        timestamp: 2,
+        message: { role: "toolResult", toolName: "task", toolCallId: "batch", ...batch },
+      },
+      {
+        type: "custom_message",
+        id: "wake",
+        parentId: "r",
+        timestamp: 3,
+        customType: "omo-senpi:wake",
+        details: [
+          {
+            customType: "senpi-task.completion",
+            details: [
+              {
+                task_id: "st_01a12ba2",
+                status: "completed",
+                final_response: "historical final response",
+                run_stats: { runtime_ms: 17 },
+              },
+            ],
+          },
+        ],
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+  );
   parent.messages = undefined;
   const cards = parts(manager.messages(parent.info.id));
   assert.equal(cards.length, 4);
@@ -423,8 +646,9 @@ test("restored child message and part identifiers cannot collide across sessions
     start(manager, parent, { task_summary: id }, id);
     result(manager, parent, { task_id: id, status: "completed" }, id, true, id);
   }
-  const ids = (task: string) => manager.messages(ocIdFor(task))?.flatMap((message) =>
-    [message.info.id, ...message.parts.map((part) => part.id)]) ?? [];
+  const ids = (task: string) =>
+    manager.messages(ocIdFor(task))?.flatMap((message) => [message.info.id, ...message.parts.map((part) => part.id)]) ??
+    [];
   const first = new Set(ids("st_first"));
   assert.ok(ids("st_second").every((id) => !first.has(id)));
 });
@@ -460,7 +684,10 @@ test("cancellation ends every unlinked batch card after partial progress", async
   start(manager, parent, { category: "quick", tasks: [{ task_summary: "First" }, { task_summary: "Second" }] });
   result(manager, parent, { items: [{ status: "running" }, { status: "running" }] }, "", false);
   await manager.abort(parent.info.id);
-  assert.deepEqual(parts(parent.messages).map((part) => part.state.status), ["error", "error"]);
+  assert.deepEqual(
+    parts(parent.messages).map((part) => part.state.status),
+    ["error", "error"],
+  );
 });
 
 test("agent end finalizes resultless task calls but leaves running background children protected", (t) => {
@@ -479,12 +706,18 @@ test("agent end finalizes resultless task calls but leaves running background ch
 test("persisted completion without an archive survives an older running record after restart", async (t) => {
   const { manager, parent, store, state, directory } = setup(t);
   put(join(store, "tasks", "st_child.json"), {
-    task_id: "st_child", parent_session_id: "parent-pi", status: "running", updated_at: "2020-01-01T00:00:00.000Z",
+    task_id: "st_child",
+    parent_session_id: "parent-pi",
+    status: "running",
+    updated_at: "2020-01-01T00:00:00.000Z",
   });
   start(manager, parent, { task_summary: "Evicted background" });
   result(manager, parent, { task_id: "st_child", status: "running" });
-  manager["onPiEvent"](parent, { type: "custom_message", customType: "omo-senpi:wake",
-    details: [{ task_id: "st_child", status: "completed", final_response: "retained completion" }] });
+  manager["onPiEvent"](parent, {
+    type: "custom_message",
+    customType: "omo-senpi:wake",
+    details: [{ task_id: "st_child", status: "completed", final_response: "retained completion" }],
+  });
   await manager.disposeAll();
   const restarted = new SessionManager(() => {}, new SessionStore(state), directory);
   t.after(() => restarted.disposeAll());

@@ -9,13 +9,22 @@ test("F2 B3 failed registry writes reject essential metadata instead of acknowle
   const state = "/dev/null/F2-state";
   const store = new SessionStore(state);
   const entry = {
-    piSessionId: "F2", piPath: "/nonexistent/F2.jsonl", directory: "/nonexistent/F2",
-    created: 1, updated: 2, parentID: "ses_parent",
+    piSessionId: "F2",
+    piPath: "/nonexistent/F2.jsonl",
+    directory: "/nonexistent/F2",
+    created: 1,
+    updated: 2,
+    parentID: "ses_parent",
     tree: { messageEntries: {}, leafId: "reverted-leaf" },
   };
-  assert.throws(() => store.set("ses_F2", entry), (error: unknown) =>
-    error instanceof SessionPersistenceError && error.cause instanceof Error &&
-    "code" in error.cause && error.cause.code === "ENOTDIR");
+  assert.throws(
+    () => store.set("ses_F2", entry),
+    (error: unknown) =>
+      error instanceof SessionPersistenceError &&
+      error.cause instanceof Error &&
+      "code" in error.cause &&
+      error.cause.code === "ENOTDIR",
+  );
   assert.equal(store.get("ses_F2"), undefined, "failed save must not leave a falsely persisted cache entry");
   assert.equal(new SessionStore(state).get("ses_F2"), undefined);
 });

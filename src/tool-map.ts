@@ -22,26 +22,35 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 function generic(tool: string, input: Record<string, unknown>): MappedTool {
-  const hint = [input.summary, input.description, input.query, input.url, input.path, input.command]
-    .find((value): value is string => typeof value === "string" && value !== "");
+  const hint = [input.summary, input.description, input.query, input.url, input.path, input.command].find(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
   return { tool, input, title: (hint ?? tool).slice(0, 60) };
 }
 
 /** Mutable registry: todos 6/7 can assign handlers for `todo` and `task`. */
 export const toolMappers: Record<string, ToolMapper> = {
-  read: (args) => typeof args.path === "string"
-    ? { tool: "read", input: { filePath: args.path, offset: args.offset, limit: args.limit }, title: args.path }
-    : generic("read", args),
-  write: (args) => typeof args.path === "string" && typeof args.content === "string"
-    ? { tool: "write", input: { filePath: args.path, content: args.content }, title: args.path }
-    : generic("write", args),
+  read: (args) =>
+    typeof args.path === "string"
+      ? { tool: "read", input: { filePath: args.path, offset: args.offset, limit: args.limit }, title: args.path }
+      : generic("read", args),
+  write: (args) =>
+    typeof args.path === "string" && typeof args.content === "string"
+      ? { tool: "write", input: { filePath: args.path, content: args.content }, title: args.path }
+      : generic("write", args),
   edit: (args) => {
-    if (typeof args.path !== "string" || !Array.isArray(args.edits) || args.edits.length === 0 ||
-      !args.edits.every((edit) => record(edit) && typeof edit.oldText === "string" && typeof edit.newText === "string")) {
+    if (
+      typeof args.path !== "string" ||
+      !Array.isArray(args.edits) ||
+      args.edits.length === 0 ||
+      !args.edits.every((edit) => record(edit) && typeof edit.oldText === "string" && typeof edit.newText === "string")
+    ) {
       return generic("edit", args);
     }
     const edits = args.edits.map((edit: Record<string, unknown>) => ({
-      filePath: args.path, oldString: edit.oldText, newString: edit.newText,
+      filePath: args.path,
+      oldString: edit.oldText,
+      newString: edit.newText,
     }));
     const first = edits[0];
     return {
@@ -51,16 +60,29 @@ export const toolMappers: Record<string, ToolMapper> = {
       metadata: { filediff: { file: args.path } },
     };
   },
-  bash: (args) => typeof args.command === "string"
-    ? { tool: "bash", input: { command: args.command, description: args.description }, title: args.command.slice(0, 60) }
-    : generic("bash", args),
-  eval: (args) => typeof args.code === "string"
-    ? { tool: "eval", input: { language: args.language, code: args.code, description: args.summary }, title: typeof args.summary === "string" ? args.summary : "eval" }
-    : generic("eval", args),
+  bash: (args) =>
+    typeof args.command === "string"
+      ? {
+          tool: "bash",
+          input: { command: args.command, description: args.description },
+          title: args.command.slice(0, 60),
+        }
+      : generic("bash", args),
+  eval: (args) =>
+    typeof args.code === "string"
+      ? {
+          tool: "eval",
+          input: { language: args.language, code: args.code, description: args.summary },
+          title: typeof args.summary === "string" ? args.summary : "eval",
+        }
+      : generic("eval", args),
   ask_user_question: (args) => {
     if (!Array.isArray(args.questions) || !args.questions.every(record)) return generic("ask_user_question", args);
     const questions = args.questions.map((question) => ({
-      question: question.question, header: question.header, options: question.options, multiple: question.multiSelect,
+      question: question.question,
+      header: question.header,
+      options: question.options,
+      multiple: question.multiSelect,
     }));
     return { tool: "question", input: { questions }, title: `Asked ${questions.length} questions` };
   },
@@ -77,8 +99,11 @@ export const toolMappers: Record<string, ToolMapper> = {
 /** Text blocks only; images and structured details are not tool output text. */
 export function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";
-  return content.filter(record).filter((block) => block.type === "text" && typeof block.text === "string")
-    .map((block) => block.text).join("");
+  return content
+    .filter(record)
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
 }
 
 /** Only edit cards need patch metadata; write cards already preview input.content. */
@@ -98,7 +123,8 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
   if (result === undefined) return mapped;
   const metadata = { ...mapped.metadata, ...resultMetadata(mapped.tool, result) };
   return {
-    ...mapped, output: mapped.output ?? resultText(result.content),
+    ...mapped,
+    output: mapped.output ?? resultText(result.content),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }
@@ -119,8 +145,16 @@ function providerRaw(value: unknown): Record<string, unknown> | undefined {
     // retry at every escaped quote, unlike an unanchored string regex.
     const tokens: string[] = [];
     const simple: Record<string, string> = {
-      a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\x0b",
-      "\\": "\\", "'": "'", '"': '"',
+      a: "\x07",
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\x0b",
+      "\\": "\\",
+      "'": "'",
+      '"': '"',
     };
     let cursor = 0;
     while (cursor < value.length) {
@@ -130,7 +164,10 @@ function providerRaw(value: unknown): Record<string, unknown> | undefined {
         let closed = false;
         while (cursor < value.length) {
           const next = value[cursor++];
-          if (next === char) { closed = true; break; }
+          if (next === char) {
+            closed = true;
+            break;
+          }
           if (next !== "\\") {
             if (next === "\n" || next === "\r") return undefined;
             decoded += next;
@@ -188,12 +225,18 @@ function providerRaw(value: unknown): Record<string, unknown> | undefined {
  * Shared by RPC snapshots and history so ids and renderer state survive reloads.
  */
 export function providerToolParts(
-  content: unknown, sessionID: string, messageID: string, timestamp: number,
+  content: unknown,
+  sessionID: string,
+  messageID: string,
+  timestamp: number,
 ): Map<number, OCToolPart> {
   const parts = new Map<number, OCToolPart>();
   if (!Array.isArray(content)) return parts;
-  const blocks = content.map((block: unknown) => record(block) && block.type === "providerNative"
-    ? { subtype: block.subtype, raw: providerRaw(block.raw) } : undefined);
+  const blocks = content.map((block: unknown) =>
+    record(block) && block.type === "providerNative"
+      ? { subtype: block.subtype, raw: providerRaw(block.raw) }
+      : undefined,
+  );
   blocks.forEach((block, index) => {
     const raw = block?.raw;
     if (raw === undefined || typeof raw.id !== "string" || raw.id === "") return;
@@ -213,7 +256,9 @@ export function providerToolParts(
       }
       case "web_search_call": {
         const action = record(raw.action) ? raw.action : {};
-        const queries = Array.isArray(action.queries) ? action.queries.filter((q): q is string => typeof q === "string") : [];
+        const queries = Array.isArray(action.queries)
+          ? action.queries.filter((q): q is string => typeof q === "string")
+          : [];
         title = queries.length > 0 ? queries.join("\n") : typeof action.query === "string" ? action.query : "";
         tool = action.type === "open_page" ? "webfetch" : "websearch";
         input = tool === "webfetch" ? { url: action.url } : { query: title };
@@ -229,13 +274,18 @@ export function providerToolParts(
     }
     const time = { start: timestamp, end: timestamp };
     parts.set(index, {
-      id: `prt_${sessionID}_provider_${raw.id}`, sessionID, messageID,
-      type: "tool", callID: raw.id, tool,
-      state: error !== undefined
-        ? { status: "error", input, error, time }
-        : complete
-          ? { status: "completed", input, title, output, metadata: {}, time }
-          : { status: "running", input, title, time: { start: timestamp } },
+      id: `prt_${sessionID}_provider_${raw.id}`,
+      sessionID,
+      messageID,
+      type: "tool",
+      callID: raw.id,
+      tool,
+      state:
+        error !== undefined
+          ? { status: "error", input, error, time }
+          : complete
+            ? { status: "completed", input, title, output, metadata: {}, time }
+            : { status: "running", input, title, time: { start: timestamp } },
     });
   });
   applyProviderToolResults(content, parts.values(), timestamp);
@@ -245,13 +295,21 @@ export function providerToolParts(
 /** OmO can append a server result in a later assistant message, not just the
  * call's message. Mutate the original card so ownership and id stay intact.
  */
-export function applyProviderToolResults(content: unknown, parts: Iterable<OCToolPart>, timestamp: number): OCToolPart[] {
+export function applyProviderToolResults(
+  content: unknown,
+  parts: Iterable<OCToolPart>,
+  timestamp: number,
+): OCToolPart[] {
   const updated: OCToolPart[] = [];
   if (!Array.isArray(content)) return updated;
   const byCallID = new Map([...parts].map((part) => [part.callID, part]));
   for (const block of content) {
-    if (!record(block) || block.type !== "providerNative" ||
-      (block.subtype !== "web_search_tool_result" && block.subtype !== "tool_search_tool_result")) continue;
+    if (
+      !record(block) ||
+      block.type !== "providerNative" ||
+      (block.subtype !== "web_search_tool_result" && block.subtype !== "tool_search_tool_result")
+    )
+      continue;
     const raw = providerRaw(block.raw);
     if (typeof raw?.tool_use_id !== "string") continue;
     const part = byCallID.get(raw.tool_use_id);
@@ -260,36 +318,50 @@ export function applyProviderToolResults(content: unknown, parts: Iterable<OCToo
     let output = "";
     let error: string | undefined;
     if (Array.isArray(result)) {
-      output = result.filter(record)
+      output = result
+        .filter(record)
         .filter((item) => typeof item.title === "string" && typeof item.url === "string")
-        .map((item) => `${item.title} - ${item.url}`).join("\n");
+        .map((item) => `${item.title} - ${item.url}`)
+        .join("\n");
     } else if (record(result)) {
       if (typeof result.type === "string" && result.type.endsWith("_error")) {
         error = typeof result.error_code === "string" ? result.error_code : "Server tool failed";
       } else if (Array.isArray(result.tool_references)) {
-        output = result.tool_references.filter(record).map((item) => item.tool_name)
-          .filter((name): name is string => typeof name === "string").join("\n");
+        output = result.tool_references
+          .filter(record)
+          .map((item) => item.tool_name)
+          .filter((name): name is string => typeof name === "string")
+          .join("\n");
       }
     }
     const state = part.state;
     const time = { start: state.status === "pending" ? timestamp : state.time.start, end: timestamp };
-    part.state = error !== undefined
-      ? { status: "error", input: state.input, error, time }
-      : {
-          status: "completed", input: state.input, output, metadata: {},
-          title: state.status === "running" || state.status === "completed" ? state.title ?? part.tool : part.tool,
-          time,
-        };
+    part.state =
+      error !== undefined
+        ? { status: "error", input: state.input, error, time }
+        : {
+            status: "completed",
+            input: state.input,
+            output,
+            metadata: {},
+            title: state.status === "running" || state.status === "completed" ? (state.title ?? part.tool) : part.tool,
+            time,
+          };
     updated.push(part);
   }
   return updated;
 }
 
 /** Only an actual result (or a self-contained provider status) means success. */
-export function finishProviderToolParts(parts: Iterable<OCToolPart>, timestamp: number, error = "No result"): OCToolPart[] {
+export function finishProviderToolParts(
+  parts: Iterable<OCToolPart>,
+  timestamp: number,
+  error = "No result",
+): OCToolPart[] {
   const updated: OCToolPart[] = [];
   for (const part of parts) {
-    if (!part.id.includes("_provider_") || (part.state.status !== "pending" && part.state.status !== "running")) continue;
+    if (!part.id.includes("_provider_") || (part.state.status !== "pending" && part.state.status !== "running"))
+      continue;
     const start = part.state.status === "pending" ? timestamp : part.state.time.start;
     part.state = { status: "error", input: part.state.input, error, time: { start, end: timestamp } };
     updated.push(part);

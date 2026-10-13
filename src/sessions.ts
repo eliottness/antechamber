@@ -12,15 +12,46 @@ import { setThinkingLevel, type ModelSelection, type ThinkingState } from "./thi
 import { SessionLifecycle, type LifecycleOptions } from "./lifecycle.js";
 import { ApprovalBridge, extensionUiRequestFrom, type PendingPermission, type PendingQuestion } from "./approvals.js";
 import { getAgentName } from "./agent-name.js";
-import { applyProviderToolResults, finishProviderToolParts, mapTool, providerToolParts, resultMetadata, resultText } from "./tool-map.js";
+import {
+  applyProviderToolResults,
+  finishProviderToolParts,
+  mapTool,
+  providerToolParts,
+  resultMetadata,
+  resultText,
+} from "./tool-map.js";
 import { TodoBridge, type Todo, type TodoUpdated } from "./todo-bridge.js";
-import { bindMessageEntries, durableShellTree, forkConversation, getEntries, navigate, readSessionTree, recordTurn, revertConversation, revertNotice, SessionTreeError, unrevertConversation, type Entries, type TreeEntry, type SessionTreeState } from "./session-tree.js";
+import {
+  bindMessageEntries,
+  durableShellTree,
+  forkConversation,
+  getEntries,
+  navigate,
+  readSessionTree,
+  recordTurn,
+  revertConversation,
+  revertNotice,
+  SessionTreeError,
+  unrevertConversation,
+  type Entries,
+  type TreeEntry,
+  type SessionTreeState,
+} from "./session-tree.js";
 import { SubagentBridge, taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { sessionDiff, touchedFiles } from "./session-diff.js";
 import { announceSessionNotice, shellTitle, shellUserMessage } from "./session-commands.js";
 import { debugLog } from "./misc-routes.js";
 import { envSetting } from "./config.js";
-import { ocIdFor, piSessionDir, piSessionsRootMtime, scanAllPiSessions, scanPiSessions, SessionPersistenceError, SessionStore, type ScannedSession } from "./session-store.js";
+import {
+  ocIdFor,
+  piSessionDir,
+  piSessionsRootMtime,
+  scanAllPiSessions,
+  scanPiSessions,
+  SessionPersistenceError,
+  SessionStore,
+  type ScannedSession,
+} from "./session-store.js";
 import type {
   OCAssistantMessage,
   OCEvent,
@@ -134,8 +165,9 @@ export class SessionManager {
   ) {
     this.store = store ?? new SessionStore();
     this.lifecycle = new SessionLifecycle(() => this.sessions.values(), lifecycleOptions);
-    this.subagents = new SubagentBridge(this.store, this.sessions, this.emit,
-      (session, raw) => parsePiSessionText(session, getAgentName(), raw));
+    this.subagents = new SubagentBridge(this.store, this.sessions, this.emit, (session, raw) =>
+      parsePiSessionText(session, getAgentName(), raw),
+    );
   }
 
   async create(directory: string, title?: string, parentID?: string): Promise<OCSession> {
@@ -157,7 +189,8 @@ export class SessionManager {
     const now = Date.now();
     // Deterministic id derived from pi's session id, so a session keeps the
     // same OpenChamber id across adapter restarts (create once, restore later).
-    const piSessionId = typeof state.data.sessionId === "string" && state.data.sessionId !== "" ? state.data.sessionId : undefined;
+    const piSessionId =
+      typeof state.data.sessionId === "string" && state.data.sessionId !== "" ? state.data.sessionId : undefined;
     if (piSessionId !== undefined) this.createdSessions.set(piSessionId, directory);
     const info: OCSession = {
       id: piSessionId !== undefined ? ocIdFor(piSessionId) : id("ses"),
@@ -201,12 +234,14 @@ export class SessionManager {
       managed.piPath = state.data.sessionFile;
       this.persistMeta(managed);
     } else if (piSessionId !== undefined) {
-      void this.resolvePiFile(directory, piSessionId).then((piPath) => {
-        if (piPath !== undefined && managed.piPath === undefined) {
-          managed.piPath = piPath;
-          this.persistMeta(managed);
-        }
-      }).catch((error: unknown) => this.reportPersistenceError(managed, error));
+      void this.resolvePiFile(directory, piSessionId)
+        .then((piPath) => {
+          if (piPath !== undefined && managed.piPath === undefined) {
+            managed.piPath = piPath;
+            this.persistMeta(managed);
+          }
+        })
+        .catch((error: unknown) => this.reportPersistenceError(managed, error));
     }
 
     return info;
@@ -233,7 +268,9 @@ export class SessionManager {
       if (s.pi !== pi) return;
       s.approvals?.finishTurn();
       this.subagents.stopParent(s.info.id);
-      void this.lifecycle.dormant(s).catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
+      void this.lifecycle
+        .dormant(s)
+        .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
       this.setStatus(s, { type: "idle" });
       this.emit(s.info.directory, {
         type: "session.error",
@@ -311,7 +348,7 @@ export class SessionManager {
     this.sessions.delete(sessionId);
     this.emit(s.info.directory, { type: "session.deleted", properties: { info: s.info } });
     await this.lifecycle.dormant(s);
-    const piPath = this.subagents.owns(sessionId) ? undefined : s.piPath ?? s.restored?.piPath;
+    const piPath = this.subagents.owns(sessionId) ? undefined : (s.piPath ?? s.restored?.piPath);
     this.subagents.remove(sessionId);
     if (piPath !== undefined) {
       try {
@@ -330,7 +367,10 @@ export class SessionManager {
    * (SDK v2 session.update); `title` is only touched when actually sent,
    * otherwise an archive-only PATCH would blank the title.
    */
-  update(sessionId: string, patch: { title?: string | undefined; archived?: number | undefined }): OCSession | undefined {
+  update(
+    sessionId: string,
+    patch: { title?: string | undefined; archived?: number | undefined },
+  ): OCSession | undefined {
     const s = this.get(sessionId);
     if (!s) return undefined;
     if (typeof patch.title === "string" && patch.title !== "") s.info.title = patch.title;
@@ -353,7 +393,10 @@ export class SessionManager {
     const messages = s.tree.localShellTurns?.length ? this.refreshMessageCache(s) : this.ensureMessages(s);
     // OpenChamber also hydrates the panel through SSE when reopening history.
     if (s.todoBridge !== undefined) {
-      this.emit(s.info.directory, { type: "todo.updated", properties: { sessionID: s.info.id, todos: s.todoBridge.todos } });
+      this.emit(s.info.directory, {
+        type: "todo.updated",
+        properties: { sessionID: s.info.id, todos: s.todoBridge.todos },
+      });
     }
     const notice = revertNotice(s);
     if (!notice) return messages;
@@ -396,12 +439,17 @@ export class SessionManager {
       if (disk.leafId !== tree.leafId || disk.entries.some((entry) => !known.has(entry.id))) {
         // Only idle user tree operations can replace a stale native runtime.
         const saved = s.tree.leafId;
-        const response = await pi.command<{ cancelled?: boolean }>({ type: "switch_session", sessionPath: s.piPath }, RPC_COMMAND_TIMEOUT_MS);
-        if (!response.success || response.data?.cancelled) throw new SessionTreeError(response.error ?? "Native tree refresh was cancelled");
+        const response = await pi.command<{ cancelled?: boolean }>(
+          { type: "switch_session", sessionPath: s.piPath },
+          RPC_COMMAND_TIMEOUT_MS,
+        );
+        if (!response.success || response.data?.cancelled)
+          throw new SessionTreeError(response.error ?? "Native tree refresh was cancelled");
         try {
           const leaf = saved === undefined ? undefined : await navigate(pi, saved);
           tree = await getEntries(pi);
-          if (leaf !== undefined && tree.leafId !== leaf) throw new SessionTreeError("Native tree refresh did not restore the saved navigation");
+          if (leaf !== undefined && tree.leafId !== leaf)
+            throw new SessionTreeError("Native tree refresh did not restore the saved navigation");
           if (leaf !== undefined) s.tree.leafId = leaf;
         } catch (error) {
           await this.lifecycle.dormant(s);
@@ -415,7 +463,10 @@ export class SessionManager {
     return tree;
   }
 
-  private async treeSession(sessionId: string, action: (s: ManagedSession, pi: PiRpcClient) => Promise<OCSession>): Promise<OCSession> {
+  private async treeSession(
+    sessionId: string,
+    action: (s: ManagedSession, pi: PiRpcClient) => Promise<OCSession>,
+  ): Promise<OCSession> {
     const s = this.get(sessionId);
     if (!s) throw new SessionTreeError(`unknown session: ${sessionId}`);
     return this.operation(s, async () => {
@@ -436,8 +487,12 @@ export class SessionManager {
       this.createdSessions.set(state.sessionId, s.info.directory);
       const now = Date.now();
       const child = this.adopt({
-        piSessionId: state.sessionId, piPath: state.sessionFile, directory: s.info.directory,
-        title: `${s.info.title} (fork)`, created: now, updated: now,
+        piSessionId: state.sessionId,
+        piPath: state.sessionFile,
+        directory: s.info.directory,
+        title: `${s.info.title} (fork)`,
+        created: now,
+        updated: now,
       });
       child.pi = pi;
       child.piPath = state.sessionFile;
@@ -459,7 +514,7 @@ export class SessionManager {
     return this.treeSession(sessionId, async (s, pi) => {
       const tree = await this.syncTree(s, true);
       const previousNotice = revertNotice(s);
-      if (!await revertConversation(s, pi, tree, messageID)) return s.info;
+      if (!(await revertConversation(s, pi, tree, messageID))) return s.info;
       this.removeRevertNotice(s, previousNotice);
       this.persistMeta(s);
       this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
@@ -476,7 +531,7 @@ export class SessionManager {
     return this.treeSession(sessionId, async (s, pi) => {
       await this.syncTree(s, true);
       const previousNotice = revertNotice(s);
-      if (!await unrevertConversation(s, pi)) return s.info;
+      if (!(await unrevertConversation(s, pi))) return s.info;
       this.removeRevertNotice(s, previousNotice);
       this.persistMeta(s);
       this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
@@ -485,7 +540,11 @@ export class SessionManager {
   }
 
   private removeRevertNotice(s: ManagedSession, notice: OCMessageWithParts | undefined): void {
-    if (notice) this.emit(s.info.directory, { type: "message.removed", properties: { sessionID: s.info.id, messageID: notice.info.id } });
+    if (notice)
+      this.emit(s.info.directory, {
+        type: "message.removed",
+        properties: { sessionID: s.info.id, messageID: notice.info.id },
+      });
   }
 
   async reloadMessages(sessionId: string, signal?: AbortSignal): Promise<OCMessageWithParts[] | undefined> {
@@ -506,14 +565,18 @@ export class SessionManager {
     bindMessageEntries(s, tree);
     // Compact/bash and extension slash commands can append without agent_end.
     // Binding follows new descendants, never a stale ancestor of the selection.
-    if (s.tree.revert && s.tree.leafId !== undefined && tree.leafId !== s.tree.leafId) await navigate(pi, s.tree.leafId, signal);
+    if (s.tree.revert && s.tree.leafId !== undefined && tree.leafId !== s.tree.leafId)
+      await navigate(pi, s.tree.leafId, signal);
     signal?.throwIfAborted();
     const previous = s.messages ?? [];
     const messages = this.refreshMessageCache(s);
     const ids = new Set(messages.map((message) => message.info.id));
     for (const message of previous) {
       if (!ids.has(message.info.id)) {
-        this.emit(s.info.directory, { type: "message.removed", properties: { sessionID: sessionId, messageID: message.info.id } });
+        this.emit(s.info.directory, {
+          type: "message.removed",
+          properties: { sessionID: sessionId, messageID: message.info.id },
+        });
       }
     }
     for (const message of messages) {
@@ -546,15 +609,23 @@ export class SessionManager {
   private emitDiff(s: ManagedSession): void {
     if (!this.dirtyDiffs.delete(s.info.id)) return;
     const previous = this.diffEmissions.get(s.info.id) ?? Promise.resolve();
-    const pending = previous.then(async () => {
-      const diff = await this.diff(s.info.id);
-      this.emit(s.info.directory, { type: "session.diff", properties: { sessionID: s.info.id, diff } });
-    }).catch((error: unknown) => {
-      this.emit(s.info.directory, { type: "session.error", properties: { sessionID: s.info.id,
-        error: { name: "UnknownError", data: { message: error instanceof Error ? error.message : String(error) } } } });
-    }).finally(() => {
-      if (this.diffEmissions.get(s.info.id) === pending) this.diffEmissions.delete(s.info.id);
-    });
+    const pending = previous
+      .then(async () => {
+        const diff = await this.diff(s.info.id);
+        this.emit(s.info.directory, { type: "session.diff", properties: { sessionID: s.info.id, diff } });
+      })
+      .catch((error: unknown) => {
+        this.emit(s.info.directory, {
+          type: "session.error",
+          properties: {
+            sessionID: s.info.id,
+            error: { name: "UnknownError", data: { message: error instanceof Error ? error.message : String(error) } },
+          },
+        });
+      })
+      .finally(() => {
+        if (this.diffEmissions.get(s.info.id) === pending) this.diffEmissions.delete(s.info.id);
+      });
     this.diffEmissions.set(s.info.id, pending);
   }
 
@@ -572,14 +643,23 @@ export class SessionManager {
   }
 
   permissions(sessionId?: string): PendingPermission[] {
-    return [...this.sessions.values()].flatMap((session) => (sessionId === undefined || session.info.id === sessionId ? session.approvals?.permissions() ?? [] : []));
+    return [...this.sessions.values()].flatMap((session) =>
+      sessionId === undefined || session.info.id === sessionId ? (session.approvals?.permissions() ?? []) : [],
+    );
   }
 
   questions(sessionId?: string): PendingQuestion[] {
-    return [...this.sessions.values()].flatMap((session) => (sessionId === undefined || session.info.id === sessionId ? session.approvals?.questions() ?? [] : []));
+    return [...this.sessions.values()].flatMap((session) =>
+      sessionId === undefined || session.info.id === sessionId ? (session.approvals?.questions() ?? []) : [],
+    );
   }
 
-  replyPermission(sessionID: string, requestID: string, reply: "once" | "always" | "reject", message?: string): boolean {
+  replyPermission(
+    sessionID: string,
+    requestID: string,
+    reply: "once" | "always" | "reject",
+    message?: string,
+  ): boolean {
     return this.get(sessionID)?.approvals?.replyPermission(requestID, reply, message) ?? false;
   }
 
@@ -597,7 +677,8 @@ export class SessionManager {
       s.info.id,
       (event) => this.emit(s.info.directory, event as OCEvent),
       (response) => s.pi?.respondExtensionUI(response),
-      () => s.streaming?.message.id ?? [...(s.messages ?? [])].reverse().find((m) => m.info.role === "assistant")?.info.id,
+      () =>
+        s.streaming?.message.id ?? [...(s.messages ?? [])].reverse().find((m) => m.info.role === "assistant")?.info.id,
     );
   }
 
@@ -617,7 +698,8 @@ export class SessionManager {
       if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
       this.lifecycle.touch(s);
       const response = await pi.command<T>(command, RPC_COMMAND_TIMEOUT_MS, signal, onDispatch);
-      if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash")) await this.reloadMessagesLive(s, signal);
+      if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash"))
+        await this.reloadMessagesLive(s, signal);
       return response;
     });
     if (!signal) return pending;
@@ -707,13 +789,25 @@ export class SessionManager {
     return true;
   }
 
-  async prompt(sessionId: string, text: string, model?: ModelSelection, noReply = false, messageID?: string): Promise<void> {
+  async prompt(
+    sessionId: string,
+    text: string,
+    model?: ModelSelection,
+    noReply = false,
+    messageID?: string,
+  ): Promise<void> {
     const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
     return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID));
   }
 
-  private async promptLive(s: ManagedSession, text: string, model?: ModelSelection, noReply = false, messageID?: string): Promise<void> {
+  private async promptLive(
+    s: ManagedSession,
+    text: string,
+    model?: ModelSelection,
+    noReply = false,
+    messageID?: string,
+  ): Promise<void> {
     const sessionId = s.info.id;
     if (s.pi === undefined) await this.revive(s);
     const pi = s.pi;
@@ -725,7 +819,10 @@ export class SessionManager {
       const boundary = s.messages?.findIndex((message) => message.info.id === s.tree.revert?.messageID) ?? -1;
       if (boundary >= 0) {
         for (const message of s.messages?.splice(boundary) ?? []) {
-          this.emit(s.info.directory, { type: "message.removed", properties: { sessionID: s.info.id, messageID: message.info.id } });
+          this.emit(s.info.directory, {
+            type: "message.removed",
+            properties: { sessionID: s.info.id, messageID: message.info.id },
+          });
         }
       }
       this.removeRevertNotice(s, revertNotice(s));
@@ -767,9 +864,7 @@ export class SessionManager {
       agent: getAgentName(),
       model: s.model ?? model ?? { providerID: "unknown", modelID: "unknown" },
     };
-    const parts: OCPart[] = [
-      { id: id("prt"), sessionID: s.info.id, messageID: userMsg.id, type: "text", text },
-    ];
+    const parts: OCPart[] = [{ id: id("prt"), sessionID: s.info.id, messageID: userMsg.id, type: "text", text }];
     s.messages?.push({ info: userMsg, parts });
     s.info.time.updated = Date.now();
     if (s.info.title === "New session") {
@@ -795,12 +890,15 @@ export class SessionManager {
       }
     };
     if (text.startsWith("/")) pi.onExtensionUI(onNotification);
-    const res = await pi.command({ type: "prompt", message: text }).catch((error: unknown) => {
-      this.setStatus(s, { type: "idle" });
-      throw error;
-    }).finally(() => {
-      pi.off("extension_ui_request", onNotification);
-    });
+    const res = await pi
+      .command({ type: "prompt", message: text })
+      .catch((error: unknown) => {
+        this.setStatus(s, { type: "idle" });
+        throw error;
+      })
+      .finally(() => {
+        pi.off("extension_ui_request", onNotification);
+      });
     if (!res.success) {
       this.setStatus(s, { type: "idle" });
       this.emit(s.info.directory, {
@@ -813,7 +911,12 @@ export class SessionManager {
       return;
     }
     // Extension commands can finish without starting an agent turn.
-    if (res.data !== null && typeof res.data === "object" && "disposition" in res.data && res.data.disposition === "handled") {
+    if (
+      res.data !== null &&
+      typeof res.data === "object" &&
+      "disposition" in res.data &&
+      res.data.disposition === "handled"
+    ) {
       this.setStatus(s, { type: "idle" });
     }
 
@@ -864,16 +967,22 @@ export class SessionManager {
     if (!existsSync(restored.piPath)) throw new Error(`pi session file is gone: ${restored.piPath}`);
     this.refreshMessageCache(s);
     await this.lifecycle.makeRoom();
-    const pi = new PiRpcClient({ cwd: s.info.directory, args: ["--session", restored.piPath], clock: this.lifecycle.clock });
+    const pi = new PiRpcClient({
+      cwd: s.info.directory,
+      args: ["--session", restored.piPath],
+      clock: this.lifecycle.clock,
+    });
     try {
       const state = await pi.command<PiState>({ type: "get_state" });
       if (!state.success || !state.data) throw new Error(`pi get_state failed on resume: ${state.error ?? "no data"}`);
       // Restore selection before publishing a runtime that prompts can use.
-      const thinking: ThinkingState = state.data.thinkingLevel === undefined ? {} : { thinkingLevel: state.data.thinkingLevel };
+      const thinking: ThinkingState =
+        state.data.thinkingLevel === undefined ? {} : { thinkingLevel: state.data.thinkingLevel };
       await setThinkingLevel(thinking, pi, s.thinkingLevel);
       const leaf = s.tree.leafId === undefined ? undefined : await navigate(pi, s.tree.leafId);
       const tree = await getEntries(pi);
-      if (leaf !== undefined && tree.leafId !== leaf) throw new SessionTreeError("Revival did not restore the saved navigation");
+      if (leaf !== undefined && tree.leafId !== leaf)
+        throw new SessionTreeError("Revival did not restore the saved navigation");
       if (leaf !== undefined) s.tree.leafId = leaf;
       bindMessageEntries(s, tree);
       if (thinking.thinkingLevel !== undefined) s.thinkingLevel = thinking.thinkingLevel;
@@ -941,7 +1050,8 @@ export class SessionManager {
       return; // no sessions recorded for this directory yet
     }
     const cached = this.scanCache.get(directory);
-    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < SESSION_SCAN_CACHE_TTL_MS) return;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < SESSION_SCAN_CACHE_TTL_MS)
+      return;
     this.scanCache.set(directory, { mtimeMs, at: Date.now() });
 
     const { paths, piIds } = this.knownSessionKeys();
@@ -956,7 +1066,8 @@ export class SessionManager {
     const mtimeMs = piSessionsRootMtime();
     if (mtimeMs === undefined) return; // no sessions recorded yet
     const cached = this.scanAllCache;
-    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < SESSION_SCAN_CACHE_TTL_MS) return;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < SESSION_SCAN_CACHE_TTL_MS)
+      return;
     this.scanAllCache = { mtimeMs, at: Date.now() };
 
     const { paths, piIds } = this.knownSessionKeys();
@@ -1006,8 +1117,12 @@ export class SessionManager {
     const reg = this.store.get(sessionId);
     if (reg && existsSync(reg.piPath)) {
       return this.adopt({
-        piSessionId: reg.piSessionId, piPath: reg.piPath, directory: reg.directory,
-        title: reg.title ?? "New session", created: reg.created, updated: reg.updated,
+        piSessionId: reg.piSessionId,
+        piPath: reg.piPath,
+        directory: reg.directory,
+        title: reg.title ?? "New session",
+        created: reg.created,
+        updated: reg.updated,
       });
     }
     const dirs = new Set<string>([
@@ -1135,7 +1250,9 @@ export class SessionManager {
         const mapped = mapTool(name, name === "todo" ? part.state.input : ev.args);
         part.tool = mapped.tool;
         part.state = {
-          status: "running", input: mapped.input, title: mapped.title,
+          status: "running",
+          input: mapped.input,
+          title: mapped.title,
           ...(mapped.metadata !== undefined ? { metadata: mapped.metadata } : {}),
           time: { start: part.state.status !== "pending" ? part.state.time.start : Date.now() },
         };
@@ -1144,8 +1261,16 @@ export class SessionManager {
       }
 
       case "tool_execution_update": {
-        if (typeof ev.toolCallId === "string" && this.subagents.result(s, ev.toolCallId,
-          ev.partialResult !== null && typeof ev.partialResult === "object" ? ev.partialResult : {}, false)) break;
+        if (
+          typeof ev.toolCallId === "string" &&
+          this.subagents.result(
+            s,
+            ev.toolCallId,
+            ev.partialResult !== null && typeof ev.partialResult === "object" ? ev.partialResult : {},
+            false,
+          )
+        )
+          break;
         const part = typeof ev.toolCallId === "string" ? s.toolByCallId.get(ev.toolCallId) : undefined;
         if (part === undefined || part.state.status !== "running") break;
         this.emitPart(s, part);
@@ -1160,7 +1285,9 @@ export class SessionManager {
       }
 
       case "message_start": {
-        const msg = ev.message as { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown } | undefined;
+        const msg = ev.message as
+          | { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown }
+          | undefined;
         if (msg?.role !== "assistant") break; // user message already recorded at prompt()
         // pi stamps the assistant message with the model really serving it.
         // Trust that over our snapshot, which goes stale whenever pi switches on
@@ -1191,16 +1318,32 @@ export class SessionManager {
         break;
 
       case "message_end": {
-        const ended = ev.message as { role?: string; stopReason?: string; usage?: PiUsage; provider?: unknown; model?: unknown; responseModel?: unknown } | undefined;
+        const ended = ev.message as
+          | {
+              role?: string;
+              stopReason?: string;
+              usage?: PiUsage;
+              provider?: unknown;
+              model?: unknown;
+              responseModel?: unknown;
+            }
+          | undefined;
         if (ended?.role === "assistant" && s.streaming) {
           this.onProviderTools(s, ev.message);
           if (ended.stopReason === "aborted" || ended.stopReason === "error") {
-            for (const part of finishProviderToolParts(s.toolByCallId.values(), Date.now(),
-              ended.stopReason === "aborted" ? "Cancelled" : "No result")) this.emitPart(s, part);
+            for (const part of finishProviderToolParts(
+              s.toolByCallId.values(),
+              Date.now(),
+              ended.stopReason === "aborted" ? "Cancelled" : "No result",
+            ))
+              this.emitPart(s, part);
           }
           // Last chance to correct attribution: some providers only reveal the
           // concrete model once the stream has closed.
-          if (this.applyPiModel(s, ended.provider, piModelId(ended.responseModel, ended.model)) && s.model !== undefined) {
+          if (
+            this.applyPiModel(s, ended.provider, piModelId(ended.responseModel, ended.model)) &&
+            s.model !== undefined
+          ) {
             s.streaming.message.providerID = s.model.providerID;
             s.streaming.message.modelID = s.model.modelID;
           }
@@ -1244,7 +1387,16 @@ export class SessionManager {
     const streaming = s.streaming;
     if (!streaming) return;
     const ame = ev.assistantMessageEvent as
-      | { type: string; partial?: unknown; contentIndex?: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: { id?: string; name?: string; arguments?: Record<string, unknown> } }
+      | {
+          type: string;
+          partial?: unknown;
+          contentIndex?: number;
+          delta?: string;
+          content?: string;
+          id?: string;
+          toolName?: string;
+          toolCall?: { id?: string; name?: string; arguments?: Record<string, unknown> };
+        }
       | undefined;
     this.onProviderTools(s, ev.message ?? ame?.partial);
     if (!ame || ame.contentIndex === undefined) return;
@@ -1308,11 +1460,14 @@ export class SessionManager {
       }
       // Task expansion replaces the streaming placeholder with one or more
       // cards sharing its callID. Order those cards without reconstructing it.
-      const indices = new Map([...streaming.parts].map(([index, part]) =>
-        [part.type === "tool" ? part.callID : part.id, index]));
-      owner.parts.sort((a, b) =>
-        (indices.get(a.type === "tool" ? a.callID : a.id) ?? Infinity) -
-        (indices.get(b.type === "tool" ? b.callID : b.id) ?? Infinity));
+      const indices = new Map(
+        [...streaming.parts].map(([index, part]) => [part.type === "tool" ? part.callID : part.id, index]),
+      );
+      owner.parts.sort(
+        (a, b) =>
+          (indices.get(a.type === "tool" ? a.callID : a.id) ?? Infinity) -
+          (indices.get(b.type === "tool" ? b.callID : b.id) ?? Infinity),
+      );
     }
   }
 
@@ -1327,7 +1482,14 @@ export class SessionManager {
    */
   private onToolcallEvent(
     s: ManagedSession,
-    ame: { type: string; contentIndex?: number; delta?: string; id?: string; toolName?: string; toolCall?: { id?: string; name?: string; arguments?: Record<string, unknown> } },
+    ame: {
+      type: string;
+      contentIndex?: number;
+      delta?: string;
+      id?: string;
+      toolName?: string;
+      toolCall?: { id?: string; name?: string; arguments?: Record<string, unknown> };
+    },
   ): void {
     const streaming = s.streaming;
     if (!streaming || ame.contentIndex === undefined) return;
@@ -1417,8 +1579,14 @@ export class SessionManager {
       const text = resultText(tr.content);
       const startedAt = part.state.status !== "pending" ? part.state.time.start : Date.now();
       const input = part.state.input ?? {};
-      const metadata = { ...(part.state.status !== "pending" ? part.state.metadata : {}), ...resultMetadata(part.tool, tr) };
-      const title = part.state.status === "running" || part.state.status === "completed" ? part.state.title ?? part.tool : part.tool;
+      const metadata = {
+        ...(part.state.status !== "pending" ? part.state.metadata : {}),
+        ...resultMetadata(part.tool, tr),
+      };
+      const title =
+        part.state.status === "running" || part.state.status === "completed"
+          ? (part.state.title ?? part.tool)
+          : part.tool;
       if (tr.isError === true) {
         part.state = {
           status: "error",
@@ -1545,9 +1713,7 @@ function entryTime(e: PiFileEntry): number {
 
 function textOf(content: Array<Record<string, unknown>> | undefined): string {
   if (!Array.isArray(content)) return "";
-  return content
-    .map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : ""))
-    .join("");
+  return content.map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : "")).join("");
 }
 
 /**
@@ -1594,7 +1760,11 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
   if (!s.tree.revert && s.tree.localShellTurns?.length) {
     // Follow a newly recorded descendant, never a sibling of the selected native branch.
     if (selectedLeaf === null) selectedLeaf = undefined;
-    for (let entry = leaf; entry !== undefined; entry = typeof entry.parentId === "string" ? byId.get(entry.parentId) : undefined) {
+    for (
+      let entry = leaf;
+      entry !== undefined;
+      entry = typeof entry.parentId === "string" ? byId.get(entry.parentId) : undefined
+    ) {
       if (entry.id === selectedLeaf) {
         selectedLeaf = undefined;
         break;
@@ -1615,17 +1785,25 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
     entries: entries.flatMap((entry): TreeEntry[] => {
       if (entry.id === undefined || entry.type === undefined) return [];
       const m = entry.message;
-      return [{
-        type: entry.type, id: entry.id, parentId: entry.parentId ?? null,
-        ...(m?.role === undefined ? {} : { message: {
-          role: m.role,
-          ...(m.role === "user" ? { content: [{ type: "text", text: textOf(m.content) }] } : {}),
-          ...(m.command === undefined ? {} : { command: m.command }),
-          ...(m.output === undefined ? {} : { output: m.output }),
-          ...(m.exitCode === undefined ? {} : { exitCode: m.exitCode }),
-          ...(m.cancelled === undefined ? {} : { cancelled: m.cancelled }),
-        } }),
-      }];
+      return [
+        {
+          type: entry.type,
+          id: entry.id,
+          parentId: entry.parentId ?? null,
+          ...(m?.role === undefined
+            ? {}
+            : {
+                message: {
+                  role: m.role,
+                  ...(m.role === "user" ? { content: [{ type: "text", text: textOf(m.content) }] } : {}),
+                  ...(m.command === undefined ? {} : { command: m.command }),
+                  ...(m.output === undefined ? {} : { output: m.output }),
+                  ...(m.exitCode === undefined ? {} : { exitCode: m.exitCode }),
+                  ...(m.cancelled === undefined ? {} : { cancelled: m.cancelled }),
+                },
+              }),
+        },
+      ];
     }),
   };
   if (s.tree.localShellTurns?.length) bindMessageEntries(s, nativeTree);
@@ -1639,8 +1817,11 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
   let runAssistant: PiFileEntry | undefined;
   const endRun = (): void => {
     if (runAssistant === undefined) return;
-    finishProviderToolParts([...toolParts.values()].flat(), entryTime(runAssistant),
-      runAssistant.message?.stopReason === "aborted" ? "Cancelled" : "No result");
+    finishProviderToolParts(
+      [...toolParts.values()].flat(),
+      entryTime(runAssistant),
+      runAssistant.message?.stopReason === "aborted" ? "Cancelled" : "No result",
+    );
     runAssistant = undefined;
   };
 
@@ -1659,7 +1840,9 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
       endRun();
       const text = textOf(m.content);
       if (text === "") continue;
-      const msgId = Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ?? `msg_${sessionID}_r${idx}`;
+      const msgId =
+        Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ??
+        `msg_${sessionID}_r${idx}`;
       if (e.id) s.tree.messageEntries[msgId] = e.id;
       lastUserId = msgId;
       const info: OCUserMessage = {
@@ -1671,7 +1854,14 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
         model: currentModel,
       };
       const parts: OCPart[] = [
-        { id: `prt_${sessionID}_r${idx}_0`, sessionID, messageID: msgId, type: "text", text, time: { start: created, end: created } },
+        {
+          id: `prt_${sessionID}_r${idx}_0`,
+          sessionID,
+          messageID: msgId,
+          type: "text",
+          text,
+          time: { start: created, end: created },
+        },
       ];
       out.push({ info, parts });
       continue;
@@ -1690,21 +1880,42 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
       const command = m.command ?? "";
       const input = { command, description: command };
       const metadata = {
-        exitCode: m.exitCode ?? null, cancelled: m.cancelled === true, truncated: m.truncated === true,
+        exitCode: m.exitCode ?? null,
+        cancelled: m.cancelled === true,
+        truncated: m.truncated === true,
         ...(m.fullOutputPath !== undefined ? { fullOutputPath: m.fullOutputPath } : {}),
       };
       const info: OCAssistantMessage = {
-        id: msgId, sessionID, role: "assistant", time: { created, completed: created },
-        parentID: lastUserId, modelID: currentModel.modelID, providerID: currentModel.providerID,
-        mode: agentName, path: { cwd: directory, root: directory }, cost: 0,
+        id: msgId,
+        sessionID,
+        role: "assistant",
+        time: { created, completed: created },
+        parentID: lastUserId,
+        modelID: currentModel.modelID,
+        providerID: currentModel.providerID,
+        mode: agentName,
+        path: { cwd: directory, root: directory },
+        cost: 0,
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       };
       const part: OCToolPart = {
-        id: `prt_${sessionID}_r${idx}_0`, sessionID, messageID: msgId,
-        type: "tool", tool: "bash", callID: `call_${sessionID}_r${idx}_0`,
-        state: m.cancelled === true
-          ? { status: "error", input, error: "Command cancelled", metadata, time: { start: created, end: created } }
-          : { status: "completed", input, output: m.output ?? "", title: shellTitle(command), metadata, time: { start: created, end: created } },
+        id: `prt_${sessionID}_r${idx}_0`,
+        sessionID,
+        messageID: msgId,
+        type: "tool",
+        tool: "bash",
+        callID: `call_${sessionID}_r${idx}_0`,
+        state:
+          m.cancelled === true
+            ? { status: "error", input, error: "Command cancelled", metadata, time: { start: created, end: created } }
+            : {
+                status: "completed",
+                input,
+                output: m.output ?? "",
+                title: shellTitle(command),
+                metadata,
+                time: { start: created, end: created },
+              },
       };
       const message = { info, parts: [part] } satisfies import("./session-commands.js").ShellMessage;
       out.push(shellUserMessage(message), message);
@@ -1716,7 +1927,9 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
       if (typeof m.provider === "string" && typeof m.model === "string") {
         currentModel = { providerID: m.provider, modelID: m.model };
       }
-      const msgId = Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ?? `msg_${sessionID}_r${idx}`;
+      const msgId =
+        Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ??
+        `msg_${sessionID}_r${idx}`;
       if (e.id) s.tree.messageEntries[msgId] = e.id;
       const info: OCAssistantMessage = {
         id: msgId,
@@ -1739,14 +1952,33 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
       };
       const parts: OCPart[] = [];
       const blocks = Array.isArray(m.content) ? m.content : [];
-      const providerParts = providerToolParts(blocks, sessionID, msgId, typeof m.timestamp === "number" ? m.timestamp : created);
+      const providerParts = providerToolParts(
+        blocks,
+        sessionID,
+        msgId,
+        typeof m.timestamp === "number" ? m.timestamp : created,
+      );
       blocks.forEach((block, b) => {
         const partId = `prt_${sessionID}_r${idx}_${b}`;
         const kind = block?.type;
         if (kind === "text" && typeof block.text === "string") {
-          parts.push({ id: partId, sessionID, messageID: msgId, type: "text", text: block.text, time: { start: created, end: created } });
+          parts.push({
+            id: partId,
+            sessionID,
+            messageID: msgId,
+            type: "text",
+            text: block.text,
+            time: { start: created, end: created },
+          });
         } else if (kind === "thinking" && typeof block.thinking === "string") {
-          parts.push({ id: partId, sessionID, messageID: msgId, type: "reasoning", text: block.thinking, time: { start: created, end: created } });
+          parts.push({
+            id: partId,
+            sessionID,
+            messageID: msgId,
+            type: "reasoning",
+            text: block.thinking,
+            time: { start: created, end: created },
+          });
         } else if (kind === "providerNative") {
           const part = providerParts.get(b);
           if (part !== undefined) {
@@ -1767,7 +1999,9 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
             callID,
             tool: mapped.tool,
             state: {
-              status: "running", input: mapped.input, title: mapped.title,
+              status: "running",
+              input: mapped.input,
+              title: mapped.title,
               ...(mapped.metadata !== undefined ? { metadata: mapped.metadata } : {}),
               time: { start: created },
             },
@@ -1777,7 +2011,11 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
           parts.push(...mappedParts);
         }
       });
-      applyProviderToolResults(blocks, [...toolParts.values()].flat(), typeof m.timestamp === "number" ? m.timestamp : created);
+      applyProviderToolResults(
+        blocks,
+        [...toolParts.values()].flat(),
+        typeof m.timestamp === "number" ? m.timestamp : created,
+      );
       out.push({ info, parts });
       continue;
     }
@@ -1794,11 +2032,23 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
       const text = resultText(m.content) ?? "";
       const startedAt = part.state.status !== "pending" ? part.state.time.start : created;
       const input = part.state.input ?? {};
-      const metadata = { ...(part.state.status !== "pending" ? part.state.metadata : {}), ...resultMetadata(part.tool, m) };
-      const title = part.state.status === "running" || part.state.status === "completed" ? part.state.title ?? part.tool : part.tool;
+      const metadata = {
+        ...(part.state.status !== "pending" ? part.state.metadata : {}),
+        ...resultMetadata(part.tool, m),
+      };
+      const title =
+        part.state.status === "running" || part.state.status === "completed"
+          ? (part.state.title ?? part.tool)
+          : part.tool;
       part.state =
         m.isError === true
-          ? { status: "error", input, error: text !== "" ? text : `tool ${part.tool} failed`, metadata, time: { start: startedAt, end: created } }
+          ? {
+              status: "error",
+              input,
+              error: text !== "" ? text : `tool ${part.tool} failed`,
+              metadata,
+              time: { start: startedAt, end: created },
+            }
           : {
               status: "completed",
               input,
@@ -1814,11 +2064,17 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
   const lastAssistant = [...chain].reverse().find((entry) => entry.message?.role === "assistant");
   const stopReason = lastAssistant?.message?.stopReason;
   if (lastAssistant !== undefined && ["stop", "length", "error", "aborted"].includes(stopReason ?? "")) {
-    finishProviderToolParts([...toolParts.values()].flat(), entryTime(lastAssistant),
-      stopReason === "aborted" ? "Cancelled" : "No result");
+    finishProviderToolParts(
+      [...toolParts.values()].flat(),
+      entryTime(lastAssistant),
+      stopReason === "aborted" ? "Cancelled" : "No result",
+    );
   }
   s.todoBridge = new TodoBridge(sessionID);
-  s.todoBridge.restore(entries, new Map([...toolParts].flatMap(([callID, parts]) => (parts[0] ? [[callID, parts[0]] as const] : []))));
+  s.todoBridge.restore(
+    entries,
+    new Map([...toolParts].flatMap(([callID, parts]) => (parts[0] ? [[callID, parts[0]] as const] : []))),
+  );
   // Completions can be appended after the newest message, outside its ancestor chain.
   for (const entry of entries) {
     if (entry.customType !== "omo-senpi:wake") continue;

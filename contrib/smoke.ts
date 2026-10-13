@@ -155,7 +155,22 @@ async function main(): Promise<void> {
   console.log("— bootstrap probes —");
   const health = await api<{ healthy: boolean }>(url, "/global/health");
   ok("GET /global/health", health.status === 200 && health.body.healthy === true);
-  for (const probe of ["/provider", "/question", "/permission", "/lsp", "/formatter", "/experimental/session", "/path", "/vcs", "/agent", "/command", "/mcp", "/config", "/project", "/project/current"]) {
+  for (const probe of [
+    "/provider",
+    "/question",
+    "/permission",
+    "/lsp",
+    "/formatter",
+    "/experimental/session",
+    "/path",
+    "/vcs",
+    "/agent",
+    "/command",
+    "/mcp",
+    "/config",
+    "/project",
+    "/project/current",
+  ]) {
     const r = await api<unknown>(url, probe);
     ok(`GET ${probe}`, r.status === 200, `status ${r.status}`);
   }
@@ -172,7 +187,15 @@ async function main(): Promise<void> {
     // OpenChamber sends a client-generated messageID (optimistic insert) —
     // the adapter must reuse it and echo the user part, or the UI renders
     // the message twice (verified against OpenChamber's event-reducer).
-    body: JSON.stringify({ messageID: "msg_piclientecho0001", parts: [{ type: "text", text: 'Use your bash tool to run exactly this command: echo tool-pi-smoke. Then reply with exactly: PI-TOOLS-DONE' }] }),
+    body: JSON.stringify({
+      messageID: "msg_piclientecho0001",
+      parts: [
+        {
+          type: "text",
+          text: "Use your bash tool to run exactly this command: echo tool-pi-smoke. Then reply with exactly: PI-TOOLS-DONE",
+        },
+      ],
+    }),
   });
   ok("POST /prompt_async accepted", asyncRes.status === 204, `status ${asyncRes.status}`);
 
@@ -184,7 +207,11 @@ async function main(): Promise<void> {
     10_000,
     "user part echo",
   );
-  ok("client messageID reused + user part echoed", true, JSON.stringify((userPartEcho.properties as { part: unknown }).part).slice(0, 120));
+  ok(
+    "client messageID reused + user part echoed",
+    true,
+    JSON.stringify((userPartEcho.properties as { part: unknown }).part).slice(0, 120),
+  );
 
   const toolEv = await sse.waitFor(
     (e) => e.type === "message.part.updated" && (e.properties as { part?: { type?: string } }).part?.type === "tool",
@@ -192,7 +219,11 @@ async function main(): Promise<void> {
     "streaming tool part",
   );
   ok("SSE streams a tool part", true, JSON.stringify((toolEv.properties as { part: unknown }).part).slice(0, 120));
-  await sse.waitFor((e) => e.type === "session.idle" && (e.properties as { sessionID: string }).sessionID === sessionId, 240_000, "session.idle");
+  await sse.waitFor(
+    (e) => e.type === "session.idle" && (e.properties as { sessionID: string }).sessionID === sessionId,
+    240_000,
+    "session.idle",
+  );
   ok("SSE session.idle after turn", true);
 
   const messages = await api<OCMessageWithParts[]>(url, `/session/${sessionId}/message`);
@@ -216,13 +247,24 @@ async function main(): Promise<void> {
     JSON.stringify(toolPart?.state?.output)?.slice(0, 160),
   );
   const assistants = (messages.body ?? []).filter((m) => m.info.role === "assistant");
-  ok("assistant text answer after tools", assistants.some((m) => textOf(m).includes("PI-TOOLS-DONE")), assistants.map(textOf).join(" | ").slice(0, 160));
+  ok(
+    "assistant text answer after tools",
+    assistants.some((m) => textOf(m).includes("PI-TOOLS-DONE")),
+    assistants.map(textOf).join(" | ").slice(0, 160),
+  );
   const userStored = (messages.body ?? []).find((m) => m.info.role === "user");
   ok("user message keeps the client messageID", userStored?.info.id === "msg_piclientecho0001", userStored?.info.id);
 
   // 3. sync prompt
-  const syncRes = await api<OCMessageWithParts>(url, `/session/${sessionId}/message`, { method: "POST", body: promptBody("Reply with exactly: PI-SYNC-OK") });
-  ok("POST /message (sync)", syncRes.status === 200 && textOf(syncRes.body).includes("PI-SYNC-OK"), textOf(syncRes.body).slice(0, 120));
+  const syncRes = await api<OCMessageWithParts>(url, `/session/${sessionId}/message`, {
+    method: "POST",
+    body: promptBody("Reply with exactly: PI-SYNC-OK"),
+  });
+  ok(
+    "POST /message (sync)",
+    syncRes.status === 200 && textOf(syncRes.body).includes("PI-SYNC-OK"),
+    textOf(syncRes.body).slice(0, 120),
+  );
 
   // 4. abort mid-run, then prove the session is still usable
   console.log("— abort mid-run + reuse —");
@@ -231,19 +273,38 @@ async function main(): Promise<void> {
     180_000,
     "first delta of long run",
   );
-  await api<unknown>(url, `/session/${sessionId}/prompt_async`, { method: "POST", body: promptBody("Write a very detailed 4000-word essay about the history of computing, starting from the abacus. Do not summarize.") });
+  await api<unknown>(url, `/session/${sessionId}/prompt_async`, {
+    method: "POST",
+    body: promptBody(
+      "Write a very detailed 4000-word essay about the history of computing, starting from the abacus. Do not summarize.",
+    ),
+  });
   await firstDelta;
-  const idleAfterAbort = sse.waitForNext((e) => e.type === "session.idle" && (e.properties as { sessionID: string }).sessionID === sessionId, 60_000, "idle after abort");
+  const idleAfterAbort = sse.waitForNext(
+    (e) => e.type === "session.idle" && (e.properties as { sessionID: string }).sessionID === sessionId,
+    60_000,
+    "idle after abort",
+  );
   const abortRes = await api<unknown>(url, `/session/${sessionId}/abort`, { method: "POST" });
   ok("POST /abort", abortRes.status === 200);
   await idleAfterAbort;
   ok("idle after abort", true);
 
-  const syncRes2 = await api<OCMessageWithParts>(url, `/session/${sessionId}/message`, { method: "POST", body: promptBody("Reply with exactly: PI-AFTER-ABORT-OK") });
-  ok("sync prompt after abort still works", syncRes2.status === 200 && textOf(syncRes2.body).includes("PI-AFTER-ABORT-OK"), textOf(syncRes2.body).slice(0, 120));
+  const syncRes2 = await api<OCMessageWithParts>(url, `/session/${sessionId}/message`, {
+    method: "POST",
+    body: promptBody("Reply with exactly: PI-AFTER-ABORT-OK"),
+  });
+  ok(
+    "sync prompt after abort still works",
+    syncRes2.status === 200 && textOf(syncRes2.body).includes("PI-AFTER-ABORT-OK"),
+    textOf(syncRes2.body).slice(0, 120),
+  );
 
   // 5. rename + delete
-  const renamed = await api<OCSession>(url, `/session/${sessionId}`, { method: "PATCH", body: JSON.stringify({ title: "pi-smoke-renamed" }) });
+  const renamed = await api<OCSession>(url, `/session/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title: "pi-smoke-renamed" }),
+  });
   ok("PATCH rename", renamed.status === 200 && renamed.body.title === "pi-smoke-renamed");
   const del = await api<unknown>(url, `/session/${sessionId}`, { method: "DELETE" });
   ok("DELETE session", del.status === 200);

@@ -38,9 +38,15 @@ const port = Number(arg("port", "4096"));
 const host = arg("host", arg("hostname", "127.0.0.1"));
 const directory = arg("directory", process.cwd());
 
-if (!isLoopbackHost(host) && serverPassword() === undefined &&
-    !process.argv.includes("--insecure-no-auth") && envSetting("ALLOW_INSECURE") !== "1") {
-  console.error(`antechamber: refusing to bind ${host} without authentication. Set OPENCODE_SERVER_PASSWORD or ANTECHAMBER_SERVER_PASSWORD, or explicitly use --insecure-no-auth (ANTECHAMBER_ALLOW_INSECURE=1).`);
+if (
+  !isLoopbackHost(host) &&
+  serverPassword() === undefined &&
+  !process.argv.includes("--insecure-no-auth") &&
+  envSetting("ALLOW_INSECURE") !== "1"
+) {
+  console.error(
+    `antechamber: refusing to bind ${host} without authentication. Set OPENCODE_SERVER_PASSWORD or ANTECHAMBER_SERVER_PASSWORD, or explicitly use --insecure-no-auth (ANTECHAMBER_ALLOW_INSECURE=1).`,
+  );
   process.exit(1);
 }
 
@@ -56,10 +62,13 @@ if (serveMode) {
 }
 
 const shutdown = (): void => {
-  void server.stop().then(() => process.exit(0), (error: unknown) => {
-    console.error("antechamber: shutdown failed:", error);
-    process.exit(1);
-  });
+  void server.stop().then(
+    () => process.exit(0),
+    (error: unknown) => {
+      console.error("antechamber: shutdown failed:", error);
+      process.exit(1);
+    },
+  );
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

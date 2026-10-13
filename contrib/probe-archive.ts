@@ -85,8 +85,14 @@ async function main(): Promise<void> {
   const bound = await waitForRegistry(sessionId);
   ok("registry entry bound (piPath persisted)", bound);
 
-  const live0 = await api<OCSession[]>(url, `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=false`);
-  ok("new session in archived=false list", live0.body.some((s) => s.id === sessionId));
+  const live0 = await api<OCSession[]>(
+    url,
+    `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=false`,
+  );
+  ok(
+    "new session in archived=false list",
+    live0.body.some((s) => s.id === sessionId),
+  );
 
   // 2. archive it the way OpenChamber does (SDK v2 session.update)
   const archivedAt = Date.now();
@@ -101,9 +107,18 @@ async function main(): Promise<void> {
   );
   ok("archive-only PATCH preserves title", archived.body.title === "New session", JSON.stringify(archived.body.title));
 
-  const archList = await api<OCSession[]>(url, `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=true`);
-  ok("archived session in archived=true list", archList.body.some((s) => s.id === sessionId && s.time.archived === archivedAt));
-  const liveList = await api<OCSession[]>(url, `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=false`);
+  const archList = await api<OCSession[]>(
+    url,
+    `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=true`,
+  );
+  ok(
+    "archived session in archived=true list",
+    archList.body.some((s) => s.id === sessionId && s.time.archived === archivedAt),
+  );
+  const liveList = await api<OCSession[]>(
+    url,
+    `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=false`,
+  );
   ok("archived session gone from archived=false list", !liveList.body.some((s) => s.id === sessionId));
 
   // 3. unarchive (OpenChamber sends 0)
@@ -111,9 +126,19 @@ async function main(): Promise<void> {
     method: "PATCH",
     body: JSON.stringify({ time: { archived: 0 } }),
   });
-  ok("PATCH unarchive clears time.archived", unarchived.status === 200 && unarchived.body.time.archived === undefined, JSON.stringify(unarchived.body.time));
-  const liveAgain = await api<OCSession[]>(url, `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=false`);
-  ok("unarchived session back in live list", liveAgain.body.some((s) => s.id === sessionId));
+  ok(
+    "PATCH unarchive clears time.archived",
+    unarchived.status === 200 && unarchived.body.time.archived === undefined,
+    JSON.stringify(unarchived.body.time),
+  );
+  const liveAgain = await api<OCSession[]>(
+    url,
+    `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=false`,
+  );
+  ok(
+    "unarchived session back in live list",
+    liveAgain.body.some((s) => s.id === sessionId),
+  );
 
   // 4. re-archive, restart the adapter — state must survive.
   //    pi persists lazily (no JSONL until the first prompt), so a promptless
@@ -125,17 +150,26 @@ async function main(): Promise<void> {
     method: "PATCH",
     body: JSON.stringify({ time: { archived: archivedAt2 } }),
   });
-  const reg = JSON.parse(readFileSync(join(STATE_DIR, "sessions.json"), "utf8")) as Record<string, { piSessionId: string }>;
+  const reg = JSON.parse(readFileSync(join(STATE_DIR, "sessions.json"), "utf8")) as Record<
+    string,
+    { piSessionId: string }
+  >;
   const piSessionId = reg[sessionId]!.piSessionId;
   const piDir = piSessionDir(WORKSPACE);
   const piFile = join(piDir, `${Date.now()}_${piSessionId}.jsonl`);
   mkdirSync(piDir, { recursive: true });
-  writeFileSync(piFile, `${JSON.stringify({ type: "session", id: piSessionId, timestamp: new Date().toISOString(), cwd: WORKSPACE })}\n`);
+  writeFileSync(
+    piFile,
+    `${JSON.stringify({ type: "session", id: piSessionId, timestamp: new Date().toISOString(), cwd: WORKSPACE })}\n`,
+  );
   await server.stop();
 
   const server2 = await startServer();
   const url2 = server2.url;
-  const afterRestart = await api<OCSession[]>(url2, `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=true`);
+  const afterRestart = await api<OCSession[]>(
+    url2,
+    `/experimental/session?directory=${encodeURIComponent(WORKSPACE)}&archived=true`,
+  );
   ok(
     "archived state survives adapter restart",
     afterRestart.body.some((s) => s.id === sessionId && s.time.archived === archivedAt2),

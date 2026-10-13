@@ -72,7 +72,10 @@ function detect(): string {
   try {
     const raw = readFileSync(join(agentDir, "settings.json"), "utf8");
     const settings = JSON.parse(raw) as { packages?: unknown };
-    if (Array.isArray(settings.packages) && settings.packages.some((p) => typeof p === "string" && p.includes("oh-my-pi"))) {
+    if (
+      Array.isArray(settings.packages) &&
+      settings.packages.some((p) => typeof p === "string" && p.includes("oh-my-pi"))
+    ) {
       return "oh-my-pi";
     }
   } catch {

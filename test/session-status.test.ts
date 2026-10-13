@@ -12,8 +12,14 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("status regression timed out")), 5000);
     promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (error: unknown) => { clearTimeout(timer); reject(error); },
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
     );
   });
 }
@@ -24,15 +30,19 @@ function setup(t: TestContext) {
   process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
   const events = new EventEmitter();
   const snapshots: Array<{ event: string; reported: string | undefined }> = [];
-  const manager = new SessionManager((_directory, event) => {
-    if (event.type === "session.status" || event.type === "session.idle") {
-      snapshots.push({
-        event: event.type === "session.idle" ? "idle" : event.properties.status.type,
-        reported: manager.statuses()[event.properties.sessionID]?.type,
-      });
-    }
-    events.emit(event.type);
-  }, new SessionStore(join(dir, "state")), dir);
+  const manager = new SessionManager(
+    (_directory, event) => {
+      if (event.type === "session.status" || event.type === "session.idle") {
+        snapshots.push({
+          event: event.type === "session.idle" ? "idle" : event.properties.status.type,
+          reported: manager.statuses()[event.properties.sessionID]?.type,
+        });
+      }
+      events.emit(event.type);
+    },
+    new SessionStore(join(dir, "state")),
+    dir,
+  );
   const nextIdle = () => bounded(new Promise<void>((resolve) => events.once("session.idle", resolve)));
   t.after(async () => {
     await manager.disposeAll();
@@ -70,7 +80,9 @@ for (const pending of ["question", "permission", "turn"] as const) {
   });
 }
 
-test("abort reports idle while history refresh remains in flight and after it settles", { timeout: 15_000 }, async (t) => {
+test("abort reports idle while history refresh remains in flight and after it settles", {
+  timeout: 15_000,
+}, async (t) => {
   const { dir, manager, snapshots, nextIdle } = setup(t);
   const session = await manager.create(dir);
   await bounded(manager.prompt(session.id, "pending-turn"));
@@ -120,7 +132,11 @@ test("agent_end keeps busy through a continuation until authoritative agent_idle
 
   await pi.command({ type: "emit_event", event: { type: "agent_end" } }, 5000);
   assert.equal(manager.statuses()[session.id]?.type, "busy", "agent_end is not session idle");
-  assert.equal(snapshots.some((snapshot) => snapshot.event === "idle"), false, "no premature idle before deferred continuation");
+  assert.equal(
+    snapshots.some((snapshot) => snapshot.event === "idle"),
+    false,
+    "no premature idle before deferred continuation",
+  );
   await pi.command({ type: "emit_event", event: { type: "agent_start" } }, 5000);
   assert.equal(manager.statuses()[session.id]?.type, "busy");
   await pi.command({ type: "emit_event", event: { type: "agent_end", willRetry: true } }, 5000);

@@ -133,7 +133,10 @@ export interface OCMessageWithParts {
   parts: OCPart[];
 }
 
-export type OCSessionStatus = { type: "idle" } | { type: "busy" } | { type: "retry"; attempt: number; message: string; next: number };
+export type OCSessionStatus =
+  | { type: "idle" }
+  | { type: "busy" }
+  | { type: "retry"; attempt: number; message: string; next: number };
 
 export type OCEvent =
   | { type: "session.diff"; properties: { sessionID: string; diff: import("./session-diff.js").SessionFileDiff[] } }
@@ -159,7 +162,10 @@ export type OCEvent =
         tool?: { messageID: string; callID: string };
       };
     }
-  | { type: "permission.replied"; properties: { sessionID: string; requestID: string; reply: "once" | "always" | "reject" } }
+  | {
+      type: "permission.replied";
+      properties: { sessionID: string; requestID: string; reply: "once" | "always" | "reject" };
+    }
   | {
       type: "question.asked";
       properties: {

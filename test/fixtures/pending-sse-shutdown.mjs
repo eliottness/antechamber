@@ -15,13 +15,31 @@ await server.sessions.disposeAll();
 const manager = new SessionManager((directory, event) => server.broadcast(directory, event), new SessionStore(dir));
 server.sessions = manager;
 const cancelled = [];
-const approvals = new ApprovalBridge("ses_sse", (event) => server.broadcast(dir, event),
-  (response) => cancelled.push(response), () => undefined);
+const approvals = new ApprovalBridge(
+  "ses_sse",
+  (event) => server.broadcast(dir, event),
+  (response) => cancelled.push(response),
+  () => undefined,
+);
 manager.sessions.set("ses_sse", {
-  info: { id: "ses_sse", projectID: dir, directory: dir, title: "Pending", version: "test", time: { created: 0, updated: 0 } },
-  tree: { messageEntries: {} }, pi: undefined, messages: [], status: { type: "idle" }, model: undefined,
-  streaming: undefined, toolByCallId: new Map(), approvals,
-  hasPendingInteraction: () => true, hasRunningChildren: () => false,
+  info: {
+    id: "ses_sse",
+    projectID: dir,
+    directory: dir,
+    title: "Pending",
+    version: "test",
+    time: { created: 0, updated: 0 },
+  },
+  tree: { messageEntries: {} },
+  pi: undefined,
+  messages: [],
+  status: { type: "idle" },
+  model: undefined,
+  streaming: undefined,
+  toolByCallId: new Map(),
+  approvals,
+  hasPendingInteraction: () => true,
+  hasRunningChildren: () => false,
 });
 let stopping;
 let client;
@@ -36,11 +54,17 @@ try {
     if (process.argv[2] === "destroyed" && error.code === "ECONNRESET") return;
     throw error;
   });
-  const ended = process.argv[2] === "destroyed"
-    ? new Promise((resolve) => client.once("close", resolve))
-    : once(client, "end", { signal: AbortSignal.timeout(2000) });
-  approvals.handle({ type: "extension_ui_request", id: "permission", method: "select",
-    title: "Permission required: read", options: ["Allow once", "Allow always", "Deny", "Deny with feedback"] });
+  const ended =
+    process.argv[2] === "destroyed"
+      ? new Promise((resolve) => client.once("close", resolve))
+      : once(client, "end", { signal: AbortSignal.timeout(2000) });
+  approvals.handle({
+    type: "extension_ui_request",
+    id: "permission",
+    method: "select",
+    title: "Permission required: read",
+    options: ["Allow once", "Allow always", "Deny", "Deny with feedback"],
+  });
   assert.equal(approvals.permissions().length, 1);
   const response = [...server.sseClients.keys()][0];
   if (process.argv[2] === "ended") response.end();

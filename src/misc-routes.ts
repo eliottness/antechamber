@@ -14,8 +14,11 @@ const MAX_SEARCH_RESULTS = 1000;
 export function debugLog(line: string): void {
   if (!envSetting("DEBUG") || loggingDisabled) return;
   try {
-    appendFileSync(envSetting("DEBUG_LOG") ?? join(tmpdir(), `antechamber-debug-${process.getuid?.() ?? "user"}.log`),
-      line + "\n", { flag: "a", mode: 0o600 });
+    appendFileSync(
+      envSetting("DEBUG_LOG") ?? join(tmpdir(), `antechamber-debug-${process.getuid?.() ?? "user"}.log`),
+      line + "\n",
+      { flag: "a", mode: 0o600 },
+    );
   } catch (error) {
     loggingDisabled = true;
     console.error(`[debug] logging disabled: ${error instanceof Error ? error.message : String(error)}`);
@@ -49,18 +52,28 @@ async function confinedDirectory(root: string, path: string): Promise<string | u
   }
 }
 
-export async function miscRoute(method: string, path: string, url: URL, directory: string): Promise<RouteResult | undefined> {
+export async function miscRoute(
+  method: string,
+  path: string,
+  url: URL,
+  directory: string,
+): Promise<RouteResult | undefined> {
   if (method === "GET" && ["/skill", "/lsp", "/formatter", "/experimental/tool/ids"].includes(path)) {
     return { status: 200, body: [] };
   }
   if (method === "GET" && ["/provider/auth", "/mcp"].includes(path)) return { status: 200, body: {} };
-  if ((method === "PUT" && /^\/auth\/[^/]+$/.test(path)) ||
-      (method === "POST" && /^\/provider\/[^/]+\/oauth\/(authorize|callback)$/.test(path)) ||
-      (method === "PATCH" && path === "/config")) {
+  if (
+    (method === "PUT" && /^\/auth\/[^/]+$/.test(path)) ||
+    (method === "POST" && /^\/provider\/[^/]+\/oauth\/(authorize|callback)$/.test(path)) ||
+    (method === "PATCH" && path === "/config")
+  ) {
     return unsupported("Not supported with OmO; configure providers in OmO");
   }
-  if ((["POST", "DELETE"].includes(method) && /^\/mcp\/[^/]+\/(connect|disconnect|auth(?:\/(?:callback|authenticate))?)$/.test(path)) ||
-      (method === "POST" && path === "/experimental/control-plane/move-session")) {
+  if (
+    (["POST", "DELETE"].includes(method) &&
+      /^\/mcp\/[^/]+\/(connect|disconnect|auth(?:\/(?:callback|authenticate))?)$/.test(path)) ||
+    (method === "POST" && path === "/experimental/control-plane/move-session")
+  ) {
     return unsupported("Not supported with OmO; configure MCP and session directories in OmO");
   }
   if (method !== "GET" || !["/file", "/find/file"].includes(path)) return undefined;
@@ -74,15 +87,23 @@ export async function miscRoute(method: string, path: string, url: URL, director
       if (++scanned > MAX_DIRECTORY_ENTRIES) break;
       if (entry.isSymbolicLink() || entry.name === ".git" || (!entry.isFile() && !entry.isDirectory())) continue;
       const absolute = resolve(target, entry.name);
-      body.push({ name: entry.name, path: relative(root, absolute).split(sep).join("/"), absolute,
-        type: entry.isDirectory() ? "directory" : "file", ignored: false });
+      body.push({
+        name: entry.name,
+        path: relative(root, absolute).split(sep).join("/"),
+        absolute,
+        type: entry.isDirectory() ? "directory" : "file",
+        ignored: false,
+      });
     }
     body.sort((a, b) => a.path.localeCompare(b.path));
     return { status: 200, body };
   }
   const query = url.searchParams.get("query") ?? "";
-  if (isAbsolute(query) || query.split(/[\\/]/).includes("..") ||
-      (url.searchParams.has("path") && await confinedDirectory(root, url.searchParams.get("path") ?? "") === undefined)) {
+  if (
+    isAbsolute(query) ||
+    query.split(/[\\/]/).includes("..") ||
+    (url.searchParams.has("path") && (await confinedDirectory(root, url.searchParams.get("path") ?? "")) === undefined)
+  ) {
     return unsupported("Path must remain inside the session directory");
   }
   const limitValue = Number(url.searchParams.get("limit") ?? "100");
@@ -101,8 +122,8 @@ export async function miscRoute(method: string, path: string, url: URL, director
       if (entry.isSymbolicLink() || entry.name === ".git") continue;
       const absolute = resolve(directory, entry.name);
       const path = relative(root, absolute).split(sep).join("/");
-      if (((entry.isFile() && !onlyDirs) || (entry.isDirectory() && dirs)) &&
-          path.toLowerCase().includes(lowerQuery)) files.push(path);
+      if (((entry.isFile() && !onlyDirs) || (entry.isDirectory() && dirs)) && path.toLowerCase().includes(lowerQuery))
+        files.push(path);
       if (entry.isDirectory() && entry.name !== "node_modules") await visit(absolute, depth + 1);
     }
   }

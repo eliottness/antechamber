@@ -31,7 +31,9 @@ try {
   context = new SmokeContext(binary, shutdown.signal);
   const registry = new SmokeRegistry();
   const directory = new URL("./smoke/checks/", import.meta.url);
-  for (const file of readdirSync(directory).filter((file) => file.endsWith(".ts")).sort()) {
+  for (const file of readdirSync(directory)
+    .filter((file) => file.endsWith(".ts"))
+    .sort()) {
     const module = await import(new URL(file, directory).href);
     if (typeof module.register !== "function") throw new Error(`${file} must export register(check, context)`);
     module.register(registry.check, context, isolatedShutdown);

@@ -19,13 +19,38 @@ function temp(t: TestContext) {
 }
 
 function tool(filePath: string, name = "edit"): OCToolPart {
-  return { type: "tool", id: "part", sessionID: "session", messageID: "message", callID: filePath, tool: name,
-    state: { status: "completed", input: { filePath }, output: "", title: "", metadata: {}, time: { start: 0, end: 1 } } };
+  return {
+    type: "tool",
+    id: "part",
+    sessionID: "session",
+    messageID: "message",
+    callID: filePath,
+    tool: name,
+    state: {
+      status: "completed",
+      input: { filePath },
+      output: "",
+      title: "",
+      metadata: {},
+      time: { start: 0, end: 1 },
+    },
+  };
 }
 
 function messages(...paths: string[]): OCMessageWithParts[] {
-  return [{ info: { role: "user", id: "message", sessionID: "session", time: { created: 0 }, agent: "OmO",
-    model: { providerID: "fake", modelID: "fake" } }, parts: paths.map((path) => tool(path)) }];
+  return [
+    {
+      info: {
+        role: "user",
+        id: "message",
+        sessionID: "session",
+        time: { created: 0 },
+        agent: "OmO",
+        model: { providerID: "fake", modelID: "fake" },
+      },
+      parts: paths.map((path) => tool(path)),
+    },
+  ];
 }
 
 function git(dir: string, ...args: string[]) {
@@ -70,7 +95,10 @@ test("non-git files list without hunks and escaping paths never disclose content
   writeFileSync(join(dir, "local"), "local\n");
   symlinkSync(join(base, "secret"), join(dir, "link"));
   const diff = await sessionDiff(dir, messages("local", "../secret", join(base, "secret"), "link"));
-  assert.deepEqual(diff.map((d) => d.file), ["local"]);
+  assert.deepEqual(
+    diff.map((d) => d.file),
+    ["local"],
+  );
   assert.equal(diff[0]?.before, "");
   assert.equal(diff[0]?.after, "local\n");
   assert.equal(diff[0]?.patch, "");
@@ -88,37 +116,58 @@ test("connector patches ignore external diff for tracked and untracked files", a
   writeFileSync(join(dir, "new.txt"), "created\n");
   assert.doesNotMatch(git(dir, "diff", "--", "tracked.txt"), /^@@/m);
   const diffs = await sessionDiff(dir, messages("tracked.txt", "new.txt"));
-  assert.deepEqual(diffs.map(({ before, after, additions, deletions }) => ({ before, after, additions, deletions })), [
-    { before: "before\n", after: "after\n", additions: 1, deletions: 1 },
-    { before: "", after: "created\n", additions: 1, deletions: 0 },
-  ]);
+  assert.deepEqual(
+    diffs.map(({ before, after, additions, deletions }) => ({ before, after, additions, deletions })),
+    [
+      { before: "before\n", after: "after\n", additions: 1, deletions: 1 },
+      { before: "", after: "created\n", additions: 1, deletions: 0 },
+    ],
+  );
   for (const diff of diffs) assert.match(diff.patch, /^@@ /m);
 });
 
 test("only completed mapped editing tools contribute files", () => {
   const failed = tool("failed");
   failed.state = { status: "error", input: { filePath: "failed" }, error: "", time: { start: 0, end: 1 } };
-  assert.deepEqual(touchedFiles([tool("w", "write"), tool("e"), tool("m", "multiedit"), tool("read", "read"), failed]), ["w", "e", "m"]);
+  assert.deepEqual(
+    touchedFiles([tool("w", "write"), tool("e"), tool("m", "multiedit"), tool("read", "read"), failed]),
+    ["w", "e", "m"],
+  );
 });
 
-test("real RPC editing turns emit diff events and both HTTP diff contracts return fresh data", { timeout: 15_000 }, async (t) => {
+test("real RPC editing turns emit diff events and both HTTP diff contracts return fresh data", {
+  timeout: 15_000,
+}, async (t) => {
   const dir = temp(t);
-  const prior = { binary: process.env.ANTECHAMBER_PI_BINARY, state: process.env.ANTECHAMBER_STATE_DIR, agent: process.env.PI_CODING_AGENT_DIR };
+  const prior = {
+    binary: process.env.ANTECHAMBER_PI_BINARY,
+    state: process.env.ANTECHAMBER_STATE_DIR,
+    agent: process.env.PI_CODING_AGENT_DIR,
+  };
   process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/diff-omo.mjs");
   process.env.ANTECHAMBER_STATE_DIR = join(dir, "state");
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
   const events: Array<OCEvent | TodoUpdated> = [];
   let accept: ((diff: SessionFileDiff[]) => void) | undefined;
-  const manager = new SessionManager((_, event) => {
-    events.push(structuredClone(event));
-    if (event.type === "session.diff") accept?.(event.properties.diff);
-  }, new SessionStore(join(dir, "state")), dir);
+  const manager = new SessionManager(
+    (_, event) => {
+      events.push(structuredClone(event));
+      if (event.type === "session.diff") accept?.(event.properties.diff);
+    },
+    new SessionStore(join(dir, "state")),
+    dir,
+  );
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
   t.after(async () => {
     await manager.disposeAll();
     await server.stop();
-    for (const [key, value] of [["ANTECHAMBER_PI_BINARY", prior.binary], ["ANTECHAMBER_STATE_DIR", prior.state], ["PI_CODING_AGENT_DIR", prior.agent]] as const) {
-      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    for (const [key, value] of [
+      ["ANTECHAMBER_PI_BINARY", prior.binary],
+      ["ANTECHAMBER_STATE_DIR", prior.state],
+      ["PI_CODING_AGENT_DIR", prior.agent],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
   });
   const info = await manager.create(dir);
@@ -136,8 +185,8 @@ test("real RPC editing turns emit diff events and both HTTP diff contracts retur
   const base = server.url + "/session/" + info.id;
   const response = await fetch(base + "/diff");
   assert.equal(response.status, 200);
-  assert.equal((await response.json() as SessionFileDiff[])[0]?.after, "RPC content\n");
+  assert.equal(((await response.json()) as SessionFileDiff[])[0]?.after, "RPC content\n");
   const alternate = await fetch(server.url + "/api/session/" + info.id + "/diff");
   assert.equal(alternate.status, 200);
-  assert.equal((await alternate.json() as { data: SessionFileDiff[] }).data[0]?.after, "RPC content\n");
+  assert.equal(((await alternate.json()) as { data: SessionFileDiff[] }).data[0]?.after, "RPC content\n");
 });

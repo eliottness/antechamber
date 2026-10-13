@@ -111,7 +111,12 @@ async function scanFile(file: string, byTool: Map<string, Sample[]>, todos: Todo
     }
     if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
-    if (record.type === "custom" && record.customType === "senpi.todo-state" && todos.length < 3 && !containsForbidden(record.data)) {
+    if (
+      record.type === "custom" &&
+      record.customType === "senpi.todo-state" &&
+      todos.length < 3 &&
+      !containsForbidden(record.data)
+    ) {
       todos.push({ customType: "senpi.todo-state", data: redact(record.data) });
       continue;
     }
@@ -132,10 +137,17 @@ async function scanFile(file: string, byTool: Map<string, Sample[]>, todos: Todo
       }
       continue;
     }
-    if (message.role !== "toolResult" || typeof message.toolCallId !== "string" || typeof message.toolName !== "string") continue;
+    if (message.role !== "toolResult" || typeof message.toolCallId !== "string" || typeof message.toolName !== "string")
+      continue;
     const result = message as unknown as ToolResult;
     const call = calls.get(result.toolCallId);
-    if (!call || containsForbidden(call.arguments) || containsForbidden(result.content) || containsForbidden(result.details)) continue;
+    if (
+      !call ||
+      containsForbidden(call.arguments) ||
+      containsForbidden(result.content) ||
+      containsForbidden(result.details)
+    )
+      continue;
     addSample(byTool, call.name, {
       arguments: redact(call.arguments) ?? null,
       content: redact(result.content) ?? null,
@@ -159,12 +171,17 @@ async function main(): Promise<void> {
   rmSync(OUTPUT_DIR, { recursive: true, force: true });
   mkdirSync(OUTPUT_DIR, { recursive: true });
   for (const [tool, samples] of [...byTool.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    writeFileSync(join(OUTPUT_DIR, `${tool}.json`), `${JSON.stringify({ tool, samples } satisfies ToolFixture, null, 2)}\n`);
+    writeFileSync(
+      join(OUTPUT_DIR, `${tool}.json`),
+      `${JSON.stringify({ tool, samples } satisfies ToolFixture, null, 2)}\n`,
+    );
   }
   if (todos.length > 0) {
     writeFileSync(join(OUTPUT_DIR, "todo-state.json"), `${JSON.stringify({ entries: todos }, null, 2)}\n`);
   }
-  console.log(`Wrote ${byTool.size} tool fixture files and ${todos.length} todo-state entries to ${dirname(OUTPUT_DIR)}.`);
+  console.log(
+    `Wrote ${byTool.size} tool fixture files and ${todos.length} todo-state entries to ${dirname(OUTPUT_DIR)}.`,
+  );
   console.log(`Tools: ${[...byTool.keys()].sort().join(", ")}`);
 }
 

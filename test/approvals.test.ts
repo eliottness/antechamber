@@ -21,7 +21,12 @@ function harness(): Harness {
   return {
     events,
     responses,
-    bridge: new ApprovalBridge("ses_test", (event) => events.push(event), (response) => responses.push(response), () => "msg_test"),
+    bridge: new ApprovalBridge(
+      "ses_test",
+      (event) => events.push(event),
+      (response) => responses.push(response),
+      () => "msg_test",
+    ),
   };
 }
 
@@ -51,7 +56,12 @@ test("classifies fixture permission request without auto-cancelling", () => {
     .split("\n")
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line) as Record<string, unknown>)
-    .find((entry) => entry.type === "extension_ui_request" && entry.method === "select" && String(entry.title).startsWith("Permission required:"));
+    .find(
+      (entry) =>
+        entry.type === "extension_ui_request" &&
+        entry.method === "select" &&
+        String(entry.title).startsWith("Permission required:"),
+    );
   assert.ok(line);
   const h = harness();
   h.bridge.handle(request(line));
@@ -74,26 +84,30 @@ test("maps every permission reply and feedback follow-up", () => {
     ["reject", "Deny"],
   ] as const) {
     const h = harness();
-    h.bridge.handle(request({
-      id: `p-${reply}`,
-      method: "select",
-      title: "Permission required: bash\n\nTool: bash\n\nPatterns:\n  - *",
-      options: ["Allow once", "Allow always", "Deny", "Deny with feedback"],
-      toolCallId: "call",
-    }));
+    h.bridge.handle(
+      request({
+        id: `p-${reply}`,
+        method: "select",
+        title: "Permission required: bash\n\nTool: bash\n\nPatterns:\n  - *",
+        options: ["Allow once", "Allow always", "Deny", "Deny with feedback"],
+        toolCallId: "call",
+      }),
+    );
     assert.equal(h.bridge.replyPermission(`p-${reply}`, reply), true);
     assert.deepEqual(h.responses, [{ type: "extension_ui_response", id: `p-${reply}`, value: expected }]);
     assert.equal(h.events.at(-1)?.type, "permission.replied");
   }
 
   const h = harness();
-  h.bridge.handle(request({
-    id: "feedback",
-    method: "select",
-    title: "Permission required: bash",
-    options: ["Allow once", "Allow always", "Deny", "Deny with feedback"],
-    toolCallId: "call",
-  }));
+  h.bridge.handle(
+    request({
+      id: "feedback",
+      method: "select",
+      title: "Permission required: bash",
+      options: ["Allow once", "Allow always", "Deny", "Deny with feedback"],
+      toolCallId: "call",
+    }),
+  );
   assert.equal(h.bridge.replyPermission("feedback", "reject", "stop after listing files"), true);
   h.bridge.handle(request({ id: "feedback-input", method: "input", toolCallId: "call" }));
   assert.deepEqual(h.responses, [
@@ -115,7 +129,15 @@ test("maps ask_user_question select Other input and trailing input", () => {
       },
     ],
   });
-  h.bridge.handle(request({ id: "select", method: "select", title: "Choose a color?", options: ["Blue", "Other (type an answer)"], toolCallId: "ask-call" }));
+  h.bridge.handle(
+    request({
+      id: "select",
+      method: "select",
+      title: "Choose a color?",
+      options: ["Blue", "Other (type an answer)"],
+      toolCallId: "ask-call",
+    }),
+  );
   assert.deepEqual(h.bridge.questions()[0]?.questions[0], {
     question: "Choose a color?",
     header: "Color",
@@ -125,7 +147,9 @@ test("maps ask_user_question select Other input and trailing input", () => {
   });
   assert.equal(h.bridge.replyQuestion("select", [["Cerulean"]]), true);
   h.bridge.handle(request({ id: "custom-input", method: "input", toolCallId: "ask-call" }));
-  h.bridge.handle(request({ id: "anything", method: "input", title: "Anything else? (optional)", toolCallId: "ask-call" }));
+  h.bridge.handle(
+    request({ id: "anything", method: "input", title: "Anything else? (optional)", toolCallId: "ask-call" }),
+  );
   assert.deepEqual(h.responses.slice(0, 2), [
     { type: "extension_ui_response", id: "select", value: "Other (type an answer)" },
     { type: "extension_ui_response", id: "custom-input", value: "Cerulean" },

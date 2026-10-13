@@ -22,12 +22,18 @@ async function start(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "antechamber-security-"));
   setting(t, "ANTECHAMBER_STATE_DIR", join(directory, "state"));
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
-  t.after(async () => { await server.stop(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(async () => {
+    await server.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   await server.start();
   return { server, directory };
 }
 
-interface ErrorBody { name: string; data: { message: string } }
+interface ErrorBody {
+  name: string;
+  data: { message: string };
+}
 const errorOf = async (response: Response) => (await response.json()) as ErrorBody;
 const listOf = async (response: Response) => (await response.json()) as string[];
 
@@ -62,15 +68,28 @@ test("OpenCode password takes precedence and username can be overridden", async 
   setting(t, "OPENCODE_SERVER_USERNAME", "operator");
   const { server } = await start(t);
   for (const [user, password, status] of [
-    ["operator", "primary", 200], ["opencode", "primary", 401], ["operator", "fallback", 401],
+    ["operator", "primary", 200],
+    ["opencode", "primary", 401],
+    ["operator", "fallback", 401],
   ] as const) {
-    assert.equal((await fetch(server.url + "/global/health", {
-      headers: { Authorization: basic(user, password) },
-    })).status, status);
+    assert.equal(
+      (
+        await fetch(server.url + "/global/health", {
+          headers: { Authorization: basic(user, password) },
+        })
+      ).status,
+      status,
+    );
   }
 });
 
-for (const origin of ["http://localhost:5173", "https://127.0.0.1:9999", "http://[::1]:3000", "http://localhost:80", "https://127.0.0.1:443"]) {
+for (const origin of [
+  "http://localhost:5173",
+  "https://127.0.0.1:9999",
+  "http://[::1]:3000",
+  "http://localhost:80",
+  "https://127.0.0.1:443",
+]) {
   test(`loopback origin ${origin} is echoed rather than wildcarded`, async (t) => {
     const { server } = await start(t);
     const response = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
@@ -80,7 +99,14 @@ for (const origin of ["http://localhost:5173", "https://127.0.0.1:9999", "http:/
   });
 }
 
-for (const origin of ["https://evil.example", "http://localhost.evil.example", "null", "http://localhost/path", "file://localhost", "http://evil@localhost"]) {
+for (const origin of [
+  "https://evil.example",
+  "http://localhost.evil.example",
+  "null",
+  "http://localhost/path",
+  "file://localhost",
+  "http://evil@localhost",
+]) {
   test(`untrusted origin ${origin} is rejected`, async (t) => {
     const { server } = await start(t);
     const response = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
@@ -94,7 +120,8 @@ test("allowlist and authorized preflight use explicit CORS origins", async (t) =
   setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
   const { server } = await start(t);
   const response = await fetch(server.url + "/event", {
-    method: "OPTIONS", headers: { Origin: "https://trusted.example", Authorization: basic("opencode", "secret") },
+    method: "OPTIONS",
+    headers: { Origin: "https://trusted.example", Authorization: basic("opencode", "secret") },
   });
   assert.equal(response.status, 204);
   assert.equal(response.headers.get("access-control-allow-origin"), "https://trusted.example");
@@ -125,9 +152,17 @@ test("Content-Length limit rejects before the client sends its body", { timeout:
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "16");
   const { server } = await start(t);
   const status = await new Promise<number>((resolve, reject) => {
-    const req = request(server.url + "/api/project/example", {
-      method: "PATCH", headers: { "Content-Length": "17" },
-    }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+    const req = request(
+      server.url + "/api/project/example",
+      {
+        method: "PATCH",
+        headers: { "Content-Length": "17" },
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      },
+    );
     req.once("error", reject);
     t.after(() => req.destroy());
     req.flushHeaders();
@@ -140,7 +175,8 @@ test("chunked body limit rejects while streaming and leaves health working", { t
   const { server } = await start(t);
   const status = await new Promise<number>((resolve, reject) => {
     const req = request(server.url + "/api/project/example", { method: "PATCH" }, (res) => {
-      res.resume(); resolve(res.statusCode ?? 0);
+      res.resume();
+      resolve(res.statusCode ?? 0);
     });
     req.once("error", reject);
     t.after(() => req.destroy());
@@ -162,7 +198,8 @@ test("body limits count UTF-8 bytes rather than characters", async (t) => {
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "16");
   const { server } = await start(t);
   const response = await fetch(server.url + "/api/project/example", {
-    method: "PATCH", body: JSON.stringify({ x: "\u00e9".repeat(5) }),
+    method: "PATCH",
+    body: JSON.stringify({ x: "\u00e9".repeat(5) }),
   });
   assert.equal(response.status, 413);
 });
@@ -203,9 +240,13 @@ for (const path of ["/event", "/api/event"]) {
     res.cork();
     const closed = once(res, "close");
     for (let i = 0; i < 12 && !res.destroyed; i++) {
-      server["broadcast"]("", { type: "session.error", properties: {
-        sessionID: "missing", error: { name: "TestError", data: { message: "x".repeat(1024 * 1024) } },
-      } });
+      server["broadcast"]("", {
+        type: "session.error",
+        properties: {
+          sessionID: "missing",
+          error: { name: "TestError", data: { message: "x".repeat(1024 * 1024) } },
+        },
+      });
     }
     assert.equal(res.destroyed, true);
     await closed;
@@ -230,7 +271,10 @@ test("SSE drops a subscriber when HTTP framing takes its pending bytes over the 
 test("file search stops beyond the maximum directory depth", async (t) => {
   const { server, directory } = await start(t);
   let nested = directory;
-  for (let depth = 0; depth < 34; depth++) { nested = join(nested, "d"); mkdirSync(nested); }
+  for (let depth = 0; depth < 34; depth++) {
+    nested = join(nested, "d");
+    mkdirSync(nested);
+  }
   writeFileSync(join(nested, "too-deep.txt"), "");
   const response = await fetch(server.url + "/find/file?query=too-deep&dirs=false");
   assert.deepEqual(await response.json(), []);
@@ -290,14 +334,26 @@ test("debug logs are private and omit request query strings", async (t) => {
 });
 
 test("CLI refuses a non-loopback listener without explicit authorization", { timeout: 5000 }, async () => {
-  const child = spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "serve", "--hostname", "0.0.0.0", "--port", "0"], {
-    env: { ...process.env, OPENCODE_SERVER_PASSWORD: "", ANTECHAMBER_SERVER_PASSWORD: "", OCPI_SERVER_PASSWORD: "",
-      ANTECHAMBER_ALLOW_INSECURE: "", OCPI_ALLOW_INSECURE: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "src/cli.ts", "serve", "--hostname", "0.0.0.0", "--port", "0"],
+    {
+      env: {
+        ...process.env,
+        OPENCODE_SERVER_PASSWORD: "",
+        ANTECHAMBER_SERVER_PASSWORD: "",
+        OCPI_SERVER_PASSWORD: "",
+        ANTECHAMBER_ALLOW_INSECURE: "",
+        OCPI_ALLOW_INSECURE: "",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   const exited = once(child, "exit");
   let stderr = "";
-  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
   // Abort is a failure bound, not a timing assertion.
   const deadline = AbortSignal.timeout(4000);
   deadline.addEventListener("abort", () => child.kill("SIGTERM"), { once: true });
@@ -308,23 +364,39 @@ test("CLI refuses a non-loopback listener without explicit authorization", { tim
 });
 
 for (const mode of ["opencode-password", "adapter-password", "insecure-env", "insecure-flag"]) {
-  test(`CLI admits a non-loopback listener with ${mode} and uses a private default log`, { timeout: 10_000 }, async (t) => {
+  test(`CLI admits a non-loopback listener with ${mode} and uses a private default log`, {
+    timeout: 10_000,
+  }, async (t) => {
     const directory = mkdtempSync(join(tmpdir(), "antechamber-security-cli-"));
     const args = ["--import", "tsx", "src/cli.ts", "serve", "--hostname", "0.0.0.0", "--port", "0"];
     if (mode === "insecure-flag") args.push("--insecure-no-auth");
     const child = spawn(process.execPath, args, {
-      env: { ...process.env, TMPDIR: directory, ANTECHAMBER_STATE_DIR: join(directory, "state"),
+      env: {
+        ...process.env,
+        TMPDIR: directory,
+        ANTECHAMBER_STATE_DIR: join(directory, "state"),
         OPENCODE_SERVER_PASSWORD: mode === "opencode-password" ? "secret" : "",
         OPENCODE_SERVER_USERNAME: "opencode",
         ANTECHAMBER_SERVER_PASSWORD: mode === "adapter-password" ? "secret" : "",
-        OCPI_SERVER_PASSWORD: "", OCPI_ALLOW_INSECURE: "", ANTECHAMBER_DEBUG_LOG: "", OCPI_DEBUG_LOG: "",
-        ANTECHAMBER_ALLOW_INSECURE: mode === "insecure-env" ? "1" : "", ANTECHAMBER_DEBUG: "1" },
+        OCPI_SERVER_PASSWORD: "",
+        OCPI_ALLOW_INSECURE: "",
+        ANTECHAMBER_DEBUG_LOG: "",
+        OCPI_DEBUG_LOG: "",
+        ANTECHAMBER_ALLOW_INSECURE: mode === "insecure-env" ? "1" : "",
+        ANTECHAMBER_DEBUG: "1",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const exited = once(child, "exit");
     let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
-    t.after(async () => { child.kill("SIGTERM"); await exited; rmSync(directory, { recursive: true, force: true }); });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    t.after(async () => {
+      child.kill("SIGTERM");
+      await exited;
+      rmSync(directory, { recursive: true, force: true });
+    });
     const url = await new Promise<string>((resolve, reject) => {
       let stdout = "";
       child.stdout.on("data", (chunk) => {
@@ -333,7 +405,9 @@ for (const mode of ["opencode-password", "adapter-password", "insecure-env", "in
         if (match?.[1]) resolve(match[1].replace("0.0.0.0", "127.0.0.1"));
       });
       child.once("exit", () => reject(new Error(`CLI exited before listening: ${stderr}`)));
-      AbortSignal.timeout(5000).addEventListener("abort", () => reject(new Error("CLI startup deadline")), { once: true });
+      AbortSignal.timeout(5000).addEventListener("abort", () => reject(new Error("CLI startup deadline")), {
+        once: true,
+      });
     });
     const response = await fetch(url + "/global/health?token=PRIVATE_QUERY", {
       headers: { Authorization: basic("opencode", "secret") },

@@ -12,12 +12,16 @@ export function register(check: Check, context: SmokeContext, isolated = false):
       assert.ok(context.agentPids().length > 0, "isolated shutdown must create a live OmO RPC session");
     });
   }
-  check("shutdown", async (signal) => {
-    const pids = context.agentPids();
-    assert.ok(pids.length > 0, "SIGTERM check must begin with a live OmO process");
-    const death = context.waitForDeath(pids, 15_000, signal);
-    await context.stop(signal);
-    await death;
-    await context.assertShutdownProcesses();
-  }, { dependsOn: [isolated ? "shutdown-start" : "routes"] });
+  check(
+    "shutdown",
+    async (signal) => {
+      const pids = context.agentPids();
+      assert.ok(pids.length > 0, "SIGTERM check must begin with a live OmO process");
+      const death = context.waitForDeath(pids, 15_000, signal);
+      await context.stop(signal);
+      await death;
+      await context.assertShutdownProcesses();
+    },
+    { dependsOn: [isolated ? "shutdown-start" : "routes"] },
+  );
 }

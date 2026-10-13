@@ -31,19 +31,20 @@ for (const fields of [
   { success: undefined },
   { success: true, command: 12 },
   { success: false, error: {} },
-]) test("rejects malformed correlated RPC responses", { timeout: 5_000 }, async (t) => {
-  const { pi, stdin, stdout } = transport(t);
-  const logged = t.mock.method(console, "error", () => {});
-  const sent = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
-  const pending = pi.command({ type: "get_state" }, 1_000);
-  const [chunk] = await sent;
-  const command = JSON.parse(String(chunk));
-  const rejected = assert.rejects(pending, /malformed.*response/i);
-  stdout.write(JSON.stringify({ type: "response", id: command.id, command: "get_state", ...fields }) + "\n");
-  await rejected;
-  assert.equal(pi.isBusy, false);
-  assert.equal(logged.mock.callCount(), 1);
-});
+])
+  test("rejects malformed correlated RPC responses", { timeout: 5_000 }, async (t) => {
+    const { pi, stdin, stdout } = transport(t);
+    const logged = t.mock.method(console, "error", () => {});
+    const sent = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
+    const pending = pi.command({ type: "get_state" }, 1_000);
+    const [chunk] = await sent;
+    const command = JSON.parse(String(chunk));
+    const rejected = assert.rejects(pending, /malformed.*response/i);
+    stdout.write(JSON.stringify({ type: "response", id: command.id, command: "get_state", ...fields }) + "\n");
+    await rejected;
+    assert.equal(pi.isBusy, false);
+    assert.equal(logged.mock.callCount(), 1);
+  });
 
 test("ignores non-object JSON and invalid response IDs without losing valid frames", async (t) => {
   const { pi, stdin, stdout } = transport(t);
@@ -53,7 +54,9 @@ test("ignores non-object JSON and invalid response IDs without losing valid fram
   const [chunk] = await sent;
   const command = JSON.parse(String(chunk));
   stdout.write('null\n[]\n{"type":"response","id":12,"command":"get_state","success":true}\n');
-  stdout.write(JSON.stringify({ type: "response", id: command.id, command: "get_state", success: true, data: "valid" }) + "\n");
+  stdout.write(
+    JSON.stringify({ type: "response", id: command.id, command: "get_state", success: true, data: "valid" }) + "\n",
+  );
   assert.equal((await pending).data, "valid");
 });
 
@@ -73,19 +76,20 @@ test("kills oversized unterminated frames and rejects all pending commands", asy
   await assert.rejects(pi.command({ type: "get_state" }), /not running/);
 });
 
-for (const debug of [false, true]) test(`process exit stderr is ${debug ? "visible in debug" : "private by default"}`, async (t) => {
-  const previous = process.env.ANTECHAMBER_DEBUG;
-  if (debug) process.env.ANTECHAMBER_DEBUG = "1";
-  else delete process.env.ANTECHAMBER_DEBUG;
-  t.after(() => {
-    if (previous === undefined) delete process.env.ANTECHAMBER_DEBUG;
-    else process.env.ANTECHAMBER_DEBUG = previous;
+for (const debug of [false, true])
+  test(`process exit stderr is ${debug ? "visible in debug" : "private by default"}`, async (t) => {
+    const previous = process.env.ANTECHAMBER_DEBUG;
+    if (debug) process.env.ANTECHAMBER_DEBUG = "1";
+    else delete process.env.ANTECHAMBER_DEBUG;
+    t.after(() => {
+      if (previous === undefined) delete process.env.ANTECHAMBER_DEBUG;
+      else process.env.ANTECHAMBER_DEBUG = previous;
+    });
+    const { proc, stderr } = transport(t);
+    const logged = t.mock.method(console, "error", () => {});
+    stderr.write("private provider credentials");
+    proc.emit("exit", 0, null);
+    const output = logged.mock.calls.map((call) => call.arguments.join(" ")).join("\n");
+    assert.match(output, /code=0 signal=null/);
+    assert.equal(output.includes("private provider credentials"), debug);
   });
-  const { proc, stderr } = transport(t);
-  const logged = t.mock.method(console, "error", () => {});
-  stderr.write("private provider credentials");
-  proc.emit("exit", 0, null);
-  const output = logged.mock.calls.map((call) => call.arguments.join(" ")).join("\n");
-  assert.match(output, /code=0 signal=null/);
-  assert.equal(output.includes("private provider credentials"), debug);
-});

@@ -125,15 +125,17 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
 
     // get_state occasionally races pi's own startup. One retry beats resolving
     // no active model, which is precisely what leaves the UI picker guessing.
-    let active = firstState.success ? firstState.data?.model ?? null : null;
+    let active = firstState.success ? (firstState.data?.model ?? null) : null;
     let thinkingLevel = firstState.success ? firstState.data?.thinkingLevel : undefined;
     if (active === null) {
       const retry = await pi.command<{ model: PiModelInfo | null; thinkingLevel?: string }>({ type: "get_state" });
-      active = retry.success ? retry.data?.model ?? null : null;
+      active = retry.success ? (retry.data?.model ?? null) : null;
       thinkingLevel = retry.success ? retry.data?.thinkingLevel : undefined;
     }
     if (active === null) {
-      console.error("[catalog] warning: pi reported no active model — /api/model/default will be null and the UI picker falls back to its own default");
+      console.error(
+        "[catalog] warning: pi reported no active model — /api/model/default will be null and the UI picker falls back to its own default",
+      );
     }
 
     const defaults: Record<string, string> = {};

@@ -5,10 +5,26 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 const sessionId = randomUUID();
-const sessionDirectory = join(process.env.PI_CODING_AGENT_DIR, "sessions", `--${process.cwd().replace(/^[/\\]+/, "").replace(/[\\/:\u0000]/g, "-")}--`);
+const sessionDirectory = join(
+  process.env.PI_CODING_AGENT_DIR,
+  "sessions",
+  `--${process
+    .cwd()
+    .replace(/^[/\\]+/, "")
+    .replace(/[\\/:\u0000]/g, "-")}--`,
+);
 mkdirSync(sessionDirectory, { recursive: true });
 const sessionFile = join(sessionDirectory, `${sessionId}.jsonl`);
-writeFileSync(sessionFile, JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: process.cwd(), timestamp: new Date().toISOString() }) + "\n");
+writeFileSync(
+  sessionFile,
+  JSON.stringify({
+    type: "session",
+    version: 3,
+    id: sessionId,
+    cwd: process.cwd(),
+    timestamp: new Date().toISOString(),
+  }) + "\n",
+);
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
 let leaf = null;
 const entries = [];
@@ -30,20 +46,36 @@ input.on("line", (line) => {
     const changes = JSON.parse(command.message);
     send({ type: "agent_start" });
     const content = changes.map((change, index) => ({
-      type: "toolCall", id: `call-${index}`, name: change.tool ?? "write",
+      type: "toolCall",
+      id: `call-${index}`,
+      name: change.tool ?? "write",
       arguments: { path: change.path, content: change.content },
     }));
     send({ type: "message_start", message: { role: "assistant", content: [], provider: "fake", model: "fake" } });
     for (const [index, call] of content.entries()) {
-      send({ type: "message_update", assistantMessageEvent: { type: "toolcall_end", contentIndex: index, toolCall: call } });
+      send({
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_end", contentIndex: index, toolCall: call },
+      });
       writeFileSync(join(process.cwd(), call.arguments.path), call.arguments.content);
-      send({ type: "tool_execution_end", toolCallId: call.id, isError: false, result: { content: [{ type: "text", text: "written" }] } });
+      send({
+        type: "tool_execution_end",
+        toolCallId: call.id,
+        isError: false,
+        result: { content: [{ type: "text", text: "written" }] },
+      });
     }
     send({ type: "turn_end", toolResults: [] });
     send({ type: "message_end", message: { role: "assistant", content } });
     record({ role: "assistant", content, provider: "fake", model: "fake" });
-    for (const call of content) record({ role: "toolResult", toolCallId: call.id, toolName: call.name, isError: false,
-      content: [{ type: "text", text: "written" }] });
+    for (const call of content)
+      record({
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.name,
+        isError: false,
+        content: [{ type: "text", text: "written" }],
+      });
     send({ type: "agent_end" });
     send({ type: "agent_idle" });
   }

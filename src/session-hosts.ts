@@ -7,10 +7,16 @@ import { basename, delimiter, resolve } from "node:path";
 function findPidfdPython(): string | undefined {
   const candidates = new Set([
     ...(process.env.PATH ?? "").split(delimiter).map((directory) => resolve(directory, "python3")),
-    "/bin/python3", "/usr/bin/python3",
+    "/bin/python3",
+    "/usr/bin/python3",
   ]);
   for (const binary of candidates) {
-    const result = spawnSync(binary, ["-I", "-c", String.raw`
+    const result = spawnSync(
+      binary,
+      [
+        "-I",
+        "-c",
+        String.raw`
 import os, selectors, signal
 fd = os.pidfd_open(os.getpid())
 try:
@@ -19,7 +25,10 @@ try:
         selector.register(fd, selectors.EVENT_READ)
 finally:
     os.close(fd)
-`], { stdio: "ignore", timeout: 1_000, killSignal: "SIGKILL" });
+`,
+      ],
+      { stdio: "ignore", timeout: 1_000, killSignal: "SIGKILL" },
+    );
     if (!result.error && result.status === 0) return binary;
   }
   return undefined;
@@ -37,7 +46,9 @@ export function createSessionHostStopper(
     if (python === undefined) {
       if (!warned) {
         warned = true;
-        console.warn("Private OmO host teardown skipped: requires Linux and python3 with working pidfd support (PATH, /bin/python3 or /usr/bin/python3). Hosts are not tracked; nothing is signalled.");
+        console.warn(
+          "Private OmO host teardown skipped: requires Linux and python3 with working pidfd support (PATH, /bin/python3 or /usr/bin/python3). Hosts are not tracked; nothing is signalled.",
+        );
       }
       return;
     }
@@ -65,7 +76,11 @@ function processInfo(pid: number): HostProcess | undefined {
     const stat = readFileSync(`/proc/self/fd/${fd}/stat`, "utf8");
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     return {
-      fd, pid, group: Number(fields[2]), start: fields[19] ?? "", state: fields[0] ?? "",
+      fd,
+      pid,
+      group: Number(fields[2]),
+      start: fields[19] ?? "",
+      state: fields[0] ?? "",
       argv: readFileSync(`/proc/self/fd/${fd}/cmdline`, "utf8").split("\0").filter(Boolean),
     };
   } catch (error) {
@@ -144,37 +159,51 @@ with contextlib.ExitStack() as resources:
  */
 async function stopSupportedSessionHosts(created: ReadonlyMap<string, string>, python: string): Promise<void> {
   if (created.size === 0) return;
-  const sockets = new Map([...created].map(([id, directory]) => [
-    `p-${createHash("sha256").update(`p:${id}`).digest("hex").slice(0, 16)}.sock`, directory,
-  ]));
+  const sockets = new Map(
+    [...created].map(([id, directory]) => [
+      `p-${createHash("sha256").update(`p:${id}`).digest("hex").slice(0, 16)}.sock`,
+      directory,
+    ]),
+  );
   const processes: HostProcess[] = [];
   try {
     for (const name of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
       const info = processInfo(Number(name));
       if (info) processes.push(info);
     }
-    const groups = new Set(processes.filter((info) => {
-      if (info.state === "Z" || info.group !== info.pid) return false;
-      if (!info.argv.includes("--internal-rpc-host-supervisor") &&
-          !info.argv.some((arg) => arg.endsWith("/host-lifecycle.js"))) return false;
-      const socketIndex = info.argv.indexOf("--socket");
-      const socket = socketIndex < 0 ? undefined : info.argv[socketIndex + 1];
-      if (!socket) return false;
-      const directory = sockets.get(basename(socket));
-      if (directory === undefined) return false;
-      try {
-        // The original leader must still exist after the process-table scan:
-        // a recycled group number cannot confer its ownership on new members.
-        return readlinkSync(`/proc/self/fd/${info.fd}/cwd`) === directory;
-      } catch (error) {
-        if (error instanceof Error && "code" in error && ["ENOENT", "ESRCH"].includes(String(error.code))) return false;
-        throw error;
-      }
-    }).map((info) => info.group));
+    const groups = new Set(
+      processes
+        .filter((info) => {
+          if (info.state === "Z" || info.group !== info.pid) return false;
+          if (
+            !info.argv.includes("--internal-rpc-host-supervisor") &&
+            !info.argv.some((arg) => arg.endsWith("/host-lifecycle.js"))
+          )
+            return false;
+          const socketIndex = info.argv.indexOf("--socket");
+          const socket = socketIndex < 0 ? undefined : info.argv[socketIndex + 1];
+          if (!socket) return false;
+          const directory = sockets.get(basename(socket));
+          if (directory === undefined) return false;
+          try {
+            // The original leader must still exist after the process-table scan:
+            // a recycled group number cannot confer its ownership on new members.
+            return readlinkSync(`/proc/self/fd/${info.fd}/cwd`) === directory;
+          } catch (error) {
+            if (error instanceof Error && "code" in error && ["ENOENT", "ESRCH"].includes(String(error.code)))
+              return false;
+            throw error;
+          }
+        })
+        .map((info) => info.group),
+    );
     const members = processes.filter((info) => groups.has(info.group) && info.state !== "Z");
     if (members.length === 0) return;
     const identities = members.map((info, index) => ({
-      fd: index + 3, pid: info.pid, start: info.start, group: info.group,
+      fd: index + 3,
+      pid: info.pid,
+      start: info.start,
+      group: info.group,
     }));
     // Ownership is the parent-session shard + cwd + supervisor + private group,
     // never the service cgroup (production hosts share it with the connector).
@@ -182,11 +211,14 @@ async function stopSupportedSessionHosts(created: ReadonlyMap<string, string>, p
       stdio: ["ignore", "ignore", "pipe", ...members.map((info) => info.fd)],
     });
     let stderr = "";
-    helper.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-8192); });
+    helper.stderr?.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-8192);
+    });
     const timeout = setTimeout(() => helper.kill("SIGKILL"), 15_000);
     try {
       const [code, signal] = await once(helper, "close");
-      if (code !== 0) throw new Error(`private OmO host pidfd teardown failed (code=${code}, signal=${signal}): ${stderr}`);
+      if (code !== 0)
+        throw new Error(`private OmO host pidfd teardown failed (code=${code}, signal=${signal}): ${stderr}`);
     } finally {
       clearTimeout(timeout);
     }

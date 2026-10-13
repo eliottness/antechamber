@@ -14,23 +14,16 @@ import { getAgentName, getExposedAgentNames } from "./agent-name.js";
 import { agentDefaults, loadCatalog, type Catalog } from "./catalog.js";
 import type { ModelSelection } from "./thinking-levels.js";
 import {
-	announceSessionError,
-	compactSession,
-	getCommands,
-	parseShellCommand,
-	parseSlashCommand,
-	runShellCommand,
-	runSlashCommand,
-	unsupportedShare,
+  announceSessionError,
+  compactSession,
+  getCommands,
+  parseShellCommand,
+  parseSlashCommand,
+  runShellCommand,
+  runSlashCommand,
+  unsupportedShare,
 } from "./session-commands.js";
-import {
-	defaultV2Model,
-	flattenModels,
-	toV2Message,
-	toV2Session,
-	V2EventTranslator,
-	type V2Session,
-} from "./v2.js";
+import { defaultV2Model, flattenModels, toV2Message, toV2Session, V2EventTranslator, type V2Session } from "./v2.js";
 import type { OCEvent, OCPromptBody, OCSession } from "./types.js";
 import { envSetting } from "./config.js";
 
@@ -47,31 +40,43 @@ const MAX_SSE_SUBSCRIBERS = 64;
 const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
 
 class RequestBodyError extends Error {
-	constructor(readonly status: 400 | 413, message: string) {
-		super(message);
-		this.name = status === 413 ? "PayloadTooLargeError" : "InvalidRequestError";
-	}
+  constructor(
+    readonly status: 400 | 413,
+    message: string,
+  ) {
+    super(message);
+    this.name = status === 413 ? "PayloadTooLargeError" : "InvalidRequestError";
+  }
 }
 
 export function serverPassword(): string | undefined {
-	return process.env.OPENCODE_SERVER_PASSWORD || envSetting("SERVER_PASSWORD");
+  return process.env.OPENCODE_SERVER_PASSWORD || envSetting("SERVER_PASSWORD");
 }
 
 export function isLoopbackHost(host: string): boolean {
-	if (["localhost", "::1", "[::1]"].includes(host.toLowerCase())) return true;
-	return /^127(?:\.\d{1,3}){3}$/.test(host) && host.split(".").every((part) => Number(part) <= 255);
+  if (["localhost", "::1", "[::1]"].includes(host.toLowerCase())) return true;
+  return /^127(?:\.\d{1,3}){3}$/.test(host) && host.split(".").every((part) => Number(part) <= 255);
 }
 
 function allowedOrigin(origin: string): boolean {
-	try {
-		const url = new URL(origin);
-		if (!/^https?:\/\/[^/?#]+$/.test(origin) || url.pathname !== "/" ||
-			url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") return false;
-		return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
-			(envSetting("ALLOWED_ORIGINS") ?? "").split(",").some((entry) => entry.trim() === origin);
-	} catch {
-		return false;
-	}
+  try {
+    const url = new URL(origin);
+    if (
+      !/^https?:\/\/[^/?#]+$/.test(origin) ||
+      url.pathname !== "/" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== ""
+    )
+      return false;
+    return (
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+      (envSetting("ALLOWED_ORIGINS") ?? "").split(",").some((entry) => entry.trim() === origin)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -79,1108 +84,1211 @@ function allowedOrigin(origin: string): boolean {
  * "true" keeps only archived sessions, "false" only live ones, absent = all.
  */
 function applyArchivedFilter(sessions: OCSession[], archived: string | null) {
-	if (archived === "true") return sessions.filter((s) => s.time.archived !== undefined);
-	if (archived === "false") return sessions.filter((s) => s.time.archived === undefined);
-	return sessions;
+  if (archived === "true") return sessions.filter((s) => s.time.archived !== undefined);
+  if (archived === "false") return sessions.filter((s) => s.time.archived === undefined);
+  return sessions;
 }
 
 function numberParam(value: string | null): number | undefined {
-	if (value === null || value === "") return undefined;
-	const n = Number(value);
-	return Number.isFinite(n) && n >= 0 ? n : undefined;
+  if (value === null || value === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /** v2 prompt bodies carry `model:{providerID, id|modelID}`; adapt to OCModelRef. */
-function modelRefFromBody(model: { providerID?: string; id?: string; modelID?: string; variant?: string } | undefined, variant?: string): ModelSelection | undefined {
-	if (!model || typeof model.providerID !== "string") return undefined;
-	const modelID = typeof model.id === "string" ? model.id : typeof model.modelID === "string" ? model.modelID : undefined;
-	if (modelID === undefined) return undefined;
-	const level = variant ?? model.variant;
-	return { providerID: model.providerID, modelID, ...(typeof level === "string" ? { variant: level } : {}) };
+function modelRefFromBody(
+  model: { providerID?: string; id?: string; modelID?: string; variant?: string } | undefined,
+  variant?: string,
+): ModelSelection | undefined {
+  if (!model || typeof model.providerID !== "string") return undefined;
+  const modelID =
+    typeof model.id === "string" ? model.id : typeof model.modelID === "string" ? model.modelID : undefined;
+  if (modelID === undefined) return undefined;
+  const level = variant ?? model.variant;
+  return { providerID: model.providerID, modelID, ...(typeof level === "string" ? { variant: level } : {}) };
 }
 
 export interface AdapterServerOptions {
-	port: number;
-	host: string;
-	/** Fallback directory when requests carry no ?directory= param. */
-	defaultDirectory: string;
+  port: number;
+  host: string;
+  /** Fallback directory when requests carry no ?directory= param. */
+  defaultDirectory: string;
 }
 
 export class AdapterServer {
-	private server: Server;
-	private sessions: SessionManager;
-	/** SSE subscribers tagged by protocol flavor: v1 (`/event`) or v2 (`/api/event`). */
-	private sseClients = new Map<ServerResponse, "v1" | "v2">();
-	private v2events = new V2EventTranslator();
-	private catalogPromise: Promise<Catalog> | undefined;
-	private actualPort: number | undefined;
-	private readonly credentials: Buffer | undefined;
-	private readonly maxBodyBytes: number;
+  private server: Server;
+  private sessions: SessionManager;
+  /** SSE subscribers tagged by protocol flavor: v1 (`/event`) or v2 (`/api/event`). */
+  private sseClients = new Map<ServerResponse, "v1" | "v2">();
+  private v2events = new V2EventTranslator();
+  private catalogPromise: Promise<Catalog> | undefined;
+  private actualPort: number | undefined;
+  private readonly credentials: Buffer | undefined;
+  private readonly maxBodyBytes: number;
 
-	constructor(private options: AdapterServerOptions) {
-		const maxBodyBytes = Number(envSetting("MAX_BODY_BYTES"));
-		this.maxBodyBytes = Number.isSafeInteger(maxBodyBytes) && maxBodyBytes > 0
-			? maxBodyBytes : DEFAULT_MAX_BODY_BYTES;
-		const password = serverPassword();
-		this.credentials = password === undefined ? undefined : createHash("sha256")
-			.update(`${process.env.OPENCODE_SERVER_USERNAME || "opencode"}:${password}`).digest();
-		this.sessions = new SessionManager((directory, event) => this.broadcast(directory, event), undefined, options.defaultDirectory);
-		this.server = createServer((req, res) => void this.route(req, res));
-	}
+  constructor(private options: AdapterServerOptions) {
+    const maxBodyBytes = Number(envSetting("MAX_BODY_BYTES"));
+    this.maxBodyBytes = Number.isSafeInteger(maxBodyBytes) && maxBodyBytes > 0 ? maxBodyBytes : DEFAULT_MAX_BODY_BYTES;
+    const password = serverPassword();
+    this.credentials =
+      password === undefined
+        ? undefined
+        : createHash("sha256")
+            .update(`${process.env.OPENCODE_SERVER_USERNAME || "opencode"}:${password}`)
+            .digest();
+    this.sessions = new SessionManager(
+      (directory, event) => this.broadcast(directory, event),
+      undefined,
+      options.defaultDirectory,
+    );
+    this.server = createServer((req, res) => void this.route(req, res));
+  }
 
-	private catalog(): Promise<Catalog> {
-		this.catalogPromise ??= loadCatalog(this.options.defaultDirectory).catch((err) => {
-			console.error("[catalog] failed to load models from pi:", err);
-			return { providers: [], defaults: {} };
-		});
-		return this.catalogPromise;
-	}
+  private catalog(): Promise<Catalog> {
+    this.catalogPromise ??= loadCatalog(this.options.defaultDirectory).catch((err) => {
+      console.error("[catalog] failed to load models from pi:", err);
+      return { providers: [], defaults: {} };
+    });
+    return this.catalogPromise;
+  }
 
-	async start(): Promise<void> {
-		await new Promise<void>((resolve, reject) => {
-			this.server.once("error", reject);
-			this.server.listen(this.options.port, this.options.host, () => resolve());
-		});
-		const addr = this.server.address();
-		this.actualPort = typeof addr === "object" && addr !== null ? addr.port : this.options.port;
-	}
+  async start(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(this.options.port, this.options.host, () => resolve());
+    });
+    const addr = this.server.address();
+    this.actualPort = typeof addr === "object" && addr !== null ? addr.port : this.options.port;
+  }
 
-	get url(): string {
-		const port = this.actualPort ?? this.options.port;
-		const host = this.options.host.includes(":") && !this.options.host.startsWith("[")
-			? `[${this.options.host}]` : this.options.host;
-		return `http://${host}:${port}`;
-	}
+  get url(): string {
+    const port = this.actualPort ?? this.options.port;
+    const host =
+      this.options.host.includes(":") && !this.options.host.startsWith("[")
+        ? `[${this.options.host}]`
+        : this.options.host;
+    return `http://${host}:${port}`;
+  }
 
-	async stop(): Promise<void> {
-		// Stop admission before ending SSE: its clients can reconnect while the
-		// session RPC groups and private task hosts are still being disposed.
-		const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
-		for (const res of this.sseClients.keys()) {
-			this.sseClients.delete(res);
-			res.end();
-		}
-		try {
-			await this.sessions.disposeAll();
-		} finally {
-			// An in-flight HTTP request must not hold shutdown open after teardown.
-			this.server.closeAllConnections();
-			await closed;
-		}
-	}
+  async stop(): Promise<void> {
+    // Stop admission before ending SSE: its clients can reconnect while the
+    // session RPC groups and private task hosts are still being disposed.
+    const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
+    for (const res of this.sseClients.keys()) {
+      this.sseClients.delete(res);
+      res.end();
+    }
+    try {
+      await this.sessions.disposeAll();
+    } finally {
+      // An in-flight HTTP request must not hold shutdown open after teardown.
+      this.server.closeAllConnections();
+      await closed;
+    }
+  }
 
-	/** Both async APIs acknowledge admission; failures must reach SSE and history. */
-	private promptAsync(session: ManagedSession, text: string, model?: ModelSelection, noReply = false, messageID?: string): void {
-		void this.sessions.prompt(session.info.id, text, model, noReply, messageID).catch((error: unknown) => {
-			announceSessionError(
-				{ sessions: this.sessions, session, emit: this.broadcast.bind(this) },
-				error instanceof Error ? error.name : "UnknownError",
-				error instanceof Error ? error.message : String(error),
-			);
-		});
-	}
+  /** Both async APIs acknowledge admission; failures must reach SSE and history. */
+  private promptAsync(
+    session: ManagedSession,
+    text: string,
+    model?: ModelSelection,
+    noReply = false,
+    messageID?: string,
+  ): void {
+    void this.sessions.prompt(session.info.id, text, model, noReply, messageID).catch((error: unknown) => {
+      announceSessionError(
+        { sessions: this.sessions, session, emit: this.broadcast.bind(this) },
+        error instanceof Error ? error.name : "UnknownError",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
+  }
 
-	// ---------------------------------------------------------------
-	// SSE
-	// ---------------------------------------------------------------
+  // ---------------------------------------------------------------
+  // SSE
+  // ---------------------------------------------------------------
 
-	private broadcast(_directory: string, event: OCEvent | TodoUpdated): void {
-		const v1Frame = `data: ${JSON.stringify(event)}\n\n`;
-		const frames = event.type === "todo.updated"
-			? [{ id: `evt_${randomUUID()}`, type: event.type, location: { directory: _directory }, data: event.properties }]
-			: this.v2events.translate(_directory, event);
-		const v2Frames = frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`);
-		for (const [res, flavor] of this.sseClients) {
-			if (res.writableEnded || res.destroyed) {
-				this.sseClients.delete(res);
-				continue;
-			}
-			if (flavor === "v2") {
-				for (const frame of v2Frames) {
-					if (!this.writeSSE(res, frame)) break;
-				}
-			} else {
-				this.writeSSE(res, v1Frame);
-			}
-		}
-	}
+  private broadcast(_directory: string, event: OCEvent | TodoUpdated): void {
+    const v1Frame = `data: ${JSON.stringify(event)}\n\n`;
+    const frames =
+      event.type === "todo.updated"
+        ? [{ id: `evt_${randomUUID()}`, type: event.type, location: { directory: _directory }, data: event.properties }]
+        : this.v2events.translate(_directory, event);
+    const v2Frames = frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`);
+    for (const [res, flavor] of this.sseClients) {
+      if (res.writableEnded || res.destroyed) {
+        this.sseClients.delete(res);
+        continue;
+      }
+      if (flavor === "v2") {
+        for (const frame of v2Frames) {
+          if (!this.writeSSE(res, frame)) break;
+        }
+      } else {
+        this.writeSSE(res, v1Frame);
+      }
+    }
+  }
 
-	private writeSSE(res: ServerResponse, frame: string): boolean {
-		if (res.writableEnded || res.destroyed) {
-			this.sseClients.delete(res);
-			return false;
-		}
-		if (res.writableLength + Buffer.byteLength(frame) <= MAX_SSE_PENDING_BYTES) {
-			res.write(frame);
-			if (res.writableLength <= MAX_SSE_PENDING_BYTES) return true;
-		}
-		this.sseClients.delete(res);
-		res.destroy();
-		return false;
-	}
+  private writeSSE(res: ServerResponse, frame: string): boolean {
+    if (res.writableEnded || res.destroyed) {
+      this.sseClients.delete(res);
+      return false;
+    }
+    if (res.writableLength + Buffer.byteLength(frame) <= MAX_SSE_PENDING_BYTES) {
+      res.write(frame);
+      if (res.writableLength <= MAX_SSE_PENDING_BYTES) return true;
+    }
+    this.sseClients.delete(res);
+    res.destroy();
+    return false;
+  }
 
-	private handleSSE(res: ServerResponse, flavor: "v1" | "v2"): void {
-		if (this.sseClients.size >= MAX_SSE_SUBSCRIBERS) {
-			this.json(res, 503, errorBody("ServiceUnavailableError", "Too many SSE subscribers"));
-			return;
-		}
-		res.writeHead(200, {
-			"Content-Type": "text/event-stream",
-			"Cache-Control": "no-cache",
-			Connection: "keep-alive",
-		});
-		this.sseClients.set(res, flavor);
-		// OpenChamber's SSE proxy aborts an upstream that is silent for 20s, so
-		// mirror real opencode's `: heartbeat` comment keepalive.
-		const heartbeat = setInterval(() => {
-			this.writeSSE(res, ": heartbeat\n\n");
-		}, 10_000);
-		heartbeat.unref?.();
-		res.on("close", () => {
-			clearInterval(heartbeat);
-			this.sseClients.delete(res);
-		});
-		// OpenCode emits server.connected on subscribe; OpenChamber waits for it.
-		const connected =
-			flavor === "v2"
-				? { id: `evt_${Date.now()}`, created: Date.now(), type: "server.connected", location: { directory: this.options.defaultDirectory }, data: {} }
-				: { type: "server.connected", properties: {} };
-		this.writeSSE(res, `data: ${JSON.stringify(connected)}\n\n`);
-	}
+  private handleSSE(res: ServerResponse, flavor: "v1" | "v2"): void {
+    if (this.sseClients.size >= MAX_SSE_SUBSCRIBERS) {
+      this.json(res, 503, errorBody("ServiceUnavailableError", "Too many SSE subscribers"));
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    this.sseClients.set(res, flavor);
+    // OpenChamber's SSE proxy aborts an upstream that is silent for 20s, so
+    // mirror real opencode's `: heartbeat` comment keepalive.
+    const heartbeat = setInterval(() => {
+      this.writeSSE(res, ": heartbeat\n\n");
+    }, 10_000);
+    heartbeat.unref?.();
+    res.on("close", () => {
+      clearInterval(heartbeat);
+      this.sseClients.delete(res);
+    });
+    // OpenCode emits server.connected on subscribe; OpenChamber waits for it.
+    const connected =
+      flavor === "v2"
+        ? {
+            id: `evt_${Date.now()}`,
+            created: Date.now(),
+            type: "server.connected",
+            location: { directory: this.options.defaultDirectory },
+            data: {},
+          }
+        : { type: "server.connected", properties: {} };
+    this.writeSSE(res, `data: ${JSON.stringify(connected)}\n\n`);
+  }
 
-	// ---------------------------------------------------------------
-	// Router
-	// ---------------------------------------------------------------
+  // ---------------------------------------------------------------
+  // Router
+  // ---------------------------------------------------------------
 
-	private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-		debugLog(`[http] ${req.method} ${(req.url ?? "/").split("?")[0]}`);
-		res.setHeader("Vary", "Origin");
-		const origin = req.headers.origin;
-		if (origin !== undefined) {
-			if (!allowedOrigin(origin)) {
-				this.json(res, 403, errorBody("ForbiddenError", "Origin is not allowed"));
-				return;
-			}
-			res.setHeader("Access-Control-Allow-Origin", origin);
-			res.setHeader("Access-Control-Allow-Credentials", "true");
-		}
-		if (this.credentials !== undefined) {
-			const match = req.headers.authorization?.match(/^Basic\s+([A-Za-z0-9+/]+=*)$/i);
-			const supplied = createHash("sha256").update(Buffer.from(match?.[1] ?? "", "base64")).digest();
-			if (!match || !timingSafeEqual(this.credentials, supplied)) {
-				res.setHeader("WWW-Authenticate", 'Basic realm="OpenCode"');
-				this.json(res, 401, errorBody("UnauthorizedError", "Authentication required"));
-				return;
-			}
-		}
-		res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-		res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-opencode-directory");
-		if (req.method === "OPTIONS") {
-			res.writeHead(204).end();
-			return;
-		}
+  private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    debugLog(`[http] ${req.method} ${(req.url ?? "/").split("?")[0]}`);
+    res.setHeader("Vary", "Origin");
+    const origin = req.headers.origin;
+    if (origin !== undefined) {
+      if (!allowedOrigin(origin)) {
+        this.json(res, 403, errorBody("ForbiddenError", "Origin is not allowed"));
+        return;
+      }
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
+    if (this.credentials !== undefined) {
+      const match = req.headers.authorization?.match(/^Basic\s+([A-Za-z0-9+/]+=*)$/i);
+      const supplied = createHash("sha256")
+        .update(Buffer.from(match?.[1] ?? "", "base64"))
+        .digest();
+      if (!match || !timingSafeEqual(this.credentials, supplied)) {
+        res.setHeader("WWW-Authenticate", 'Basic realm="OpenCode"');
+        this.json(res, 401, errorBody("UnauthorizedError", "Authentication required"));
+        return;
+      }
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-opencode-directory");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204).end();
+      return;
+    }
 
-		try {
-			await this.handle(req, res);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			if (err instanceof RequestBodyError && err.status === 413) {
-				res.setHeader("Connection", "close");
-				res.once("finish", () => req.destroy());
-			}
-			this.json(res, err instanceof RequestBodyError ? err.status : err instanceof ApprovalInputError ? 400 : 500,
-				errorBody(err instanceof RequestBodyError ? err.name : err instanceof ApprovalInputError ? "InvalidRequestError" : "UnknownError", message));
-		}
-	}
+    try {
+      await this.handle(req, res);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof RequestBodyError && err.status === 413) {
+        res.setHeader("Connection", "close");
+        res.once("finish", () => req.destroy());
+      }
+      this.json(
+        res,
+        err instanceof RequestBodyError ? err.status : err instanceof ApprovalInputError ? 400 : 500,
+        errorBody(
+          err instanceof RequestBodyError
+            ? err.name
+            : err instanceof ApprovalInputError
+              ? "InvalidRequestError"
+              : "UnknownError",
+          message,
+        ),
+      );
+    }
+  }
 
-	private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-		const url = new URL(req.url ?? "/", this.url);
-		const path = url.pathname.replace(/\/+$/, "") || "/";
-		const method = req.method ?? "GET";
-		const directory =
-			url.searchParams.get("directory") ??
-			url.searchParams.get("location[directory]") ??
-			url.searchParams.get("location") ??
-			req.headers["x-opencode-directory"] as string | undefined ??
-			this.options.defaultDirectory;
+  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? "/", this.url);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const method = req.method ?? "GET";
+    const directory =
+      url.searchParams.get("directory") ??
+      url.searchParams.get("location[directory]") ??
+      url.searchParams.get("location") ??
+      (req.headers["x-opencode-directory"] as string | undefined) ??
+      this.options.defaultDirectory;
 
-		// SSE stream (v2 clients subscribe at /api/event; v1 at /event)
-		if (method === "GET" && (path === "/event" || path === "/global/event")) {
-			this.handleSSE(res, "v1");
-			return;
-		}
-		if (method === "GET" && path === "/api/event") {
-			this.handleSSE(res, "v2");
-			return;
-		}
+    // SSE stream (v2 clients subscribe at /api/event; v1 at /event)
+    if (method === "GET" && (path === "/event" || path === "/global/event")) {
+      this.handleSSE(res, "v1");
+      return;
+    }
+    if (method === "GET" && path === "/api/event") {
+      this.handleSSE(res, "v2");
+      return;
+    }
 
-		// --- opencode v2 API surface (called by OpenChamber 1.24.2 web UI) ---
-		if (path === "/api" || path.startsWith("/api/")) {
-			await this.handleV2(req, res, url, path, method, directory);
-			return;
-		}
+    // --- opencode v2 API surface (called by OpenChamber 1.24.2 web UI) ---
+    if (path === "/api" || path.startsWith("/api/")) {
+      await this.handleV2(req, res, url, path, method, directory);
+      return;
+    }
 
-		if (method === "GET" && path === "/global/health") {
-			this.json(res, 200, OPENCODE_COMPAT_VERSION === null
-				? { healthy: true }
-				: { healthy: true, version: OPENCODE_COMPAT_VERSION });
-			return;
-		}
+    if (method === "GET" && path === "/global/health") {
+      this.json(
+        res,
+        200,
+        OPENCODE_COMPAT_VERSION === null ? { healthy: true } : { healthy: true, version: OPENCODE_COMPAT_VERSION },
+      );
+      return;
+    }
 
-		// There is no opencode install behind this endpoint to upgrade: the adapter
-		// speaks the OpenCode API itself. Answer instead of 404 so a direct upgrade
-		// call gets a clear reason rather than a bare HTTP status.
-		if ((method === "POST" || method === "GET") && path === "/global/upgrade") {
-			this.json(res, 409, errorBody("UnsupportedError",
-				"This endpoint is served by antechamber (a pi adapter), not a real opencode install — there is nothing to upgrade."));
-			return;
-		}
+    // There is no opencode install behind this endpoint to upgrade: the adapter
+    // speaks the OpenCode API itself. Answer instead of 404 so a direct upgrade
+    // call gets a clear reason rather than a bare HTTP status.
+    if ((method === "POST" || method === "GET") && path === "/global/upgrade") {
+      this.json(
+        res,
+        409,
+        errorBody(
+          "UnsupportedError",
+          "This endpoint is served by antechamber (a pi adapter), not a real opencode install — there is nothing to upgrade.",
+        ),
+      );
+      return;
+    }
 
-		// --- sessions ---
-		const misc = await miscRoute(method, path, url, directory);
-		if (misc !== undefined) {
-			this.json(res, misc.status, misc.body);
-			return;
-		}
-		if (path === "/session" && method === "POST") {
-			const body = (await this.body(req)) as { parentID?: string; title?: string };
-			this.json(res, 200, await this.sessions.create(directory, body.title, body.parentID));
-			return;
-		}
-		if (path === "/session" && method === "GET") {
-			const dir = url.searchParams.get("directory") ?? undefined;
-			let sessions = this.sessions.list(dir);
-			sessions = applyArchivedFilter(sessions, url.searchParams.get("archived"));
-			this.json(res, 200, sessions);
-			return;
-		}
-		if (path === "/session/status" && method === "GET") {
-			this.json(res, 200, this.sessions.statuses());
-			return;
-		}
+    // --- sessions ---
+    const misc = await miscRoute(method, path, url, directory);
+    if (misc !== undefined) {
+      this.json(res, misc.status, misc.body);
+      return;
+    }
+    if (path === "/session" && method === "POST") {
+      const body = (await this.body(req)) as { parentID?: string; title?: string };
+      this.json(res, 200, await this.sessions.create(directory, body.title, body.parentID));
+      return;
+    }
+    if (path === "/session" && method === "GET") {
+      const dir = url.searchParams.get("directory") ?? undefined;
+      let sessions = this.sessions.list(dir);
+      sessions = applyArchivedFilter(sessions, url.searchParams.get("archived"));
+      this.json(res, 200, sessions);
+      return;
+    }
+    if (path === "/session/status" && method === "GET") {
+      this.json(res, 200, this.sessions.statuses());
+      return;
+    }
 
-		const sessionMatch = path.match(/^\/session\/([^/]+)(\/.*)?$/);
-		if (sessionMatch) {
-			const [, sessionId, sub] = sessionMatch;
-			if (sessionId === undefined) {
-				this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
-				return;
-			}
-			const managed = this.sessions.get(sessionId);
-			if (!managed) {
-				this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
-				return;
-			}
-			switch (`${method} ${sub ?? ""}`) {
-				case "GET /diff":
-					this.json(res, 200, await this.sessions.diff(sessionId!));
-					return;
-				case "GET ":
-					this.json(res, 200, managed.info);
-					return;
-				case "PATCH ": {
-					const body = (await this.body(req)) as { title?: string; time?: { archived?: number } };
-					this.json(res, 200, this.sessions.update(sessionId, { title: body.title, archived: body.time?.archived }));
-					return;
-				}
-				case "DELETE ":
-					this.json(res, 200, await this.sessions.remove(sessionId));
-					return;
-				case "GET /message":
-					this.json(res, 200, this.sessions.messages(sessionId));
-					return;
-				case "GET /todo":
-					this.json(res, 200, this.sessions.todos(sessionId!));
-					return;
-				case "POST /prompt_async": {
-					const body = (await this.body(req)) as OCPromptBody & { variant?: string };
-					const text = (body.parts ?? [])
-						.filter((p) => p.type === "text" && typeof p.text === "string")
-						.map((p) => p.text ?? "")
-						.join("\n");
-					const model = modelRefFromBody(body.model ?? (body.variant !== undefined ? managed.model : undefined), body.variant);
-					this.promptAsync(managed, text, model, body.noReply, body.messageID);
-					res.writeHead(204).end();
-					return;
-				}
-				case "POST /message": {
-					const body = (await this.body(req)) as OCPromptBody & { variant?: string };
-					const text = (body.parts ?? [])
-						.filter((p) => p.type === "text" && typeof p.text === "string")
-						.map((p) => p.text ?? "")
-						.join("\n");
-					const model = modelRefFromBody(body.model ?? (body.variant !== undefined ? managed.model : undefined), body.variant);
-					await this.sessions.prompt(sessionId, text, model, body.noReply, body.messageID);
-					const msgs = this.sessions.messages(sessionId) ?? [];
-					this.json(res, 200, msgs[msgs.length - 1] ?? null);
-					return;
-				}
-				case "POST /abort":
-					this.json(res, 200, await this.sessions.abort(sessionId));
-					return;
-				case "POST /fork":
-				case "POST /revert":
-				case "POST /unrevert": {
-					const body = await this.body(req);
-					const messageID = body !== null && typeof body === "object" && "messageID" in body ? body.messageID : undefined;
-					if ((sub === "/revert" && (typeof messageID !== "string" || messageID === "")) ||
-						(sub === "/fork" && messageID !== undefined && (typeof messageID !== "string" || messageID === ""))) {
-						this.json(res, 400, errorBody("InvalidRequest", "messageID must be a nonempty string"));
-						return;
-					}
-					try {
-						const info = sub === "/fork"
-							? await this.sessions.fork(sessionId!, typeof messageID === "string" ? messageID : undefined)
-							: sub === "/revert"
-								? await this.sessions.revert(sessionId!, String(messageID))
-								: await this.sessions.unrevert(sessionId!);
-						this.json(res, 200, info);
-					} catch (error) {
-						this.json(res, 400, errorBody("SessionTreeError", error instanceof Error ? error.message : String(error)));
-					}
-					return;
-				}
-				case "POST /summarize": {
-					await this.body(req);
-					const result = await compactSession(this.sessions, sessionId);
-					if (result.kind === "error") {
-						announceSessionError(
-							{ sessions: this.sessions, session: managed, emit: this.broadcast.bind(this) },
-							"BadRequestError",
-							result.message,
-						);
-						this.json(res, 400, errorBody("BadRequestError", result.message));
-						return;
-					}
-					this.json(res, 200, true);
-					return;
-				}
-				case "POST /shell": {
-					const command = parseShellCommand(await this.body(req));
-					if (command === undefined) {
-						this.json(res, 400, errorBody("BadRequestError", "command is required"));
-						return;
-					}
-					const managed = this.sessions.get(sessionId);
-					if (!managed) {
-						this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
-						return;
-					}
-					if (managed.status.type !== "idle") {
-						this.json(res, 409, errorBody("SessionBusyError", "session is busy"));
-						return;
-					}
-					const result = await runShellCommand({
-						sessions: this.sessions,
-						session: managed,
-						command,
-						emit: this.broadcast.bind(this),
-					});
-					if (result.kind === "error") {
-						this.json(res, 400, errorBody("BadRequestError", result.message));
-						return;
-					}
-					this.json(res, 200, result.message.info);
-					return;
-				}
-				case "POST /command": {
-					const input = parseSlashCommand(await this.body(req));
-					if (input === undefined) {
-						this.json(res, 400, errorBody("BadRequestError", "command is required"));
-						return;
-					}
-					const message = await runSlashCommand(this.sessions, sessionId, input);
-					this.json(res, 200, message === undefined ? { info: null, parts: [] } : { info: message.info, parts: message.parts });
-					return;
-				}
-				case "POST /share":
-				case "DELETE /share": {
-					const session = this.sessions.get(sessionId);
-					if (session) announceSessionError(
-						{ sessions: this.sessions, session, emit: this.broadcast.bind(this) },
-						unsupportedShare.name,
-						unsupportedShare.data.message,
-					);
-					this.json(res, 400, errorBody(unsupportedShare.name, unsupportedShare.data.message));
-					return;
-				}
-				default:
-					this.json(res, 501, errorBody("NotImplemented", `${method} ${path} not implemented (M1)`));
-					return;
-			}
-		}
+    const sessionMatch = path.match(/^\/session\/([^/]+)(\/.*)?$/);
+    if (sessionMatch) {
+      const [, sessionId, sub] = sessionMatch;
+      if (sessionId === undefined) {
+        this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
+        return;
+      }
+      const managed = this.sessions.get(sessionId);
+      if (!managed) {
+        this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
+        return;
+      }
+      switch (`${method} ${sub ?? ""}`) {
+        case "GET /diff":
+          this.json(res, 200, await this.sessions.diff(sessionId!));
+          return;
+        case "GET ":
+          this.json(res, 200, managed.info);
+          return;
+        case "PATCH ": {
+          const body = (await this.body(req)) as { title?: string; time?: { archived?: number } };
+          this.json(res, 200, this.sessions.update(sessionId, { title: body.title, archived: body.time?.archived }));
+          return;
+        }
+        case "DELETE ":
+          this.json(res, 200, await this.sessions.remove(sessionId));
+          return;
+        case "GET /message":
+          this.json(res, 200, this.sessions.messages(sessionId));
+          return;
+        case "GET /todo":
+          this.json(res, 200, this.sessions.todos(sessionId!));
+          return;
+        case "POST /prompt_async": {
+          const body = (await this.body(req)) as OCPromptBody & { variant?: string };
+          const text = (body.parts ?? [])
+            .filter((p) => p.type === "text" && typeof p.text === "string")
+            .map((p) => p.text ?? "")
+            .join("\n");
+          const model = modelRefFromBody(
+            body.model ?? (body.variant !== undefined ? managed.model : undefined),
+            body.variant,
+          );
+          this.promptAsync(managed, text, model, body.noReply, body.messageID);
+          res.writeHead(204).end();
+          return;
+        }
+        case "POST /message": {
+          const body = (await this.body(req)) as OCPromptBody & { variant?: string };
+          const text = (body.parts ?? [])
+            .filter((p) => p.type === "text" && typeof p.text === "string")
+            .map((p) => p.text ?? "")
+            .join("\n");
+          const model = modelRefFromBody(
+            body.model ?? (body.variant !== undefined ? managed.model : undefined),
+            body.variant,
+          );
+          await this.sessions.prompt(sessionId, text, model, body.noReply, body.messageID);
+          const msgs = this.sessions.messages(sessionId) ?? [];
+          this.json(res, 200, msgs[msgs.length - 1] ?? null);
+          return;
+        }
+        case "POST /abort":
+          this.json(res, 200, await this.sessions.abort(sessionId));
+          return;
+        case "POST /fork":
+        case "POST /revert":
+        case "POST /unrevert": {
+          const body = await this.body(req);
+          const messageID =
+            body !== null && typeof body === "object" && "messageID" in body ? body.messageID : undefined;
+          if (
+            (sub === "/revert" && (typeof messageID !== "string" || messageID === "")) ||
+            (sub === "/fork" && messageID !== undefined && (typeof messageID !== "string" || messageID === ""))
+          ) {
+            this.json(res, 400, errorBody("InvalidRequest", "messageID must be a nonempty string"));
+            return;
+          }
+          try {
+            const info =
+              sub === "/fork"
+                ? await this.sessions.fork(sessionId!, typeof messageID === "string" ? messageID : undefined)
+                : sub === "/revert"
+                  ? await this.sessions.revert(sessionId!, String(messageID))
+                  : await this.sessions.unrevert(sessionId!);
+            this.json(res, 200, info);
+          } catch (error) {
+            this.json(res, 400, errorBody("SessionTreeError", error instanceof Error ? error.message : String(error)));
+          }
+          return;
+        }
+        case "POST /summarize": {
+          await this.body(req);
+          const result = await compactSession(this.sessions, sessionId);
+          if (result.kind === "error") {
+            announceSessionError(
+              { sessions: this.sessions, session: managed, emit: this.broadcast.bind(this) },
+              "BadRequestError",
+              result.message,
+            );
+            this.json(res, 400, errorBody("BadRequestError", result.message));
+            return;
+          }
+          this.json(res, 200, true);
+          return;
+        }
+        case "POST /shell": {
+          const command = parseShellCommand(await this.body(req));
+          if (command === undefined) {
+            this.json(res, 400, errorBody("BadRequestError", "command is required"));
+            return;
+          }
+          const managed = this.sessions.get(sessionId);
+          if (!managed) {
+            this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
+            return;
+          }
+          if (managed.status.type !== "idle") {
+            this.json(res, 409, errorBody("SessionBusyError", "session is busy"));
+            return;
+          }
+          const result = await runShellCommand({
+            sessions: this.sessions,
+            session: managed,
+            command,
+            emit: this.broadcast.bind(this),
+          });
+          if (result.kind === "error") {
+            this.json(res, 400, errorBody("BadRequestError", result.message));
+            return;
+          }
+          this.json(res, 200, result.message.info);
+          return;
+        }
+        case "POST /command": {
+          const input = parseSlashCommand(await this.body(req));
+          if (input === undefined) {
+            this.json(res, 400, errorBody("BadRequestError", "command is required"));
+            return;
+          }
+          const message = await runSlashCommand(this.sessions, sessionId, input);
+          this.json(
+            res,
+            200,
+            message === undefined ? { info: null, parts: [] } : { info: message.info, parts: message.parts },
+          );
+          return;
+        }
+        case "POST /share":
+        case "DELETE /share": {
+          const session = this.sessions.get(sessionId);
+          if (session)
+            announceSessionError(
+              { sessions: this.sessions, session, emit: this.broadcast.bind(this) },
+              unsupportedShare.name,
+              unsupportedShare.data.message,
+            );
+          this.json(res, 400, errorBody(unsupportedShare.name, unsupportedShare.data.message));
+          return;
+        }
+        default:
+          this.json(res, 501, errorBody("NotImplemented", `${method} ${path} not implemented (M1)`));
+          return;
+      }
+    }
 
-		// --- project / config ---
-		if (path === "/project/current" && method === "GET") {
-			this.json(res, 200, { id: directory, worktree: directory, time: { created: Date.now() } });
-			return;
-		}
-		if (path === "/project" && method === "GET") {
-			this.json(res, 200, [{ id: directory, worktree: directory, time: { created: Date.now() } }]);
-			return;
-		}
-		if ((path === "/config" || path === "/global/config") && method === "GET") {
-			this.json(res, 200, { default_agent: getAgentName() });
-			return;
-		}
+    // --- project / config ---
+    if (path === "/project/current" && method === "GET") {
+      this.json(res, 200, { id: directory, worktree: directory, time: { created: Date.now() } });
+      return;
+    }
+    if (path === "/project" && method === "GET") {
+      this.json(res, 200, [{ id: directory, worktree: directory, time: { created: Date.now() } }]);
+      return;
+    }
+    if ((path === "/config" || path === "/global/config") && method === "GET") {
+      this.json(res, 200, { default_agent: getAgentName() });
+      return;
+    }
 
-		// --- model catalog (from pi) ---
-		if (path === "/provider" && method === "GET") {
-			const cat = await this.catalog();
-			this.json(res, 200, { all: cat.providers, default: cat.defaults, connected: cat.providers.map((p) => p.id) });
-			return;
-		}
-		if (path === "/config/providers" && method === "GET") {
-			const cat = await this.catalog();
-			this.json(res, 200, { providers: cat.providers, default: cat.defaults });
-			return;
-		}
+    // --- model catalog (from pi) ---
+    if (path === "/provider" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, { all: cat.providers, default: cat.defaults, connected: cat.providers.map((p) => p.id) });
+      return;
+    }
+    if (path === "/config/providers" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, { providers: cat.providers, default: cat.defaults });
+      return;
+    }
 
-		// --- bootstrap probes OpenChamber expects to exist ---
-		if (path === "/experimental/session" && method === "GET") {
-			// OpenChamber page-loads the sidebar through this route (not /session) with
-			// ?directory=…&archived=…&roots=…&limit=…. Honor directory/roots/archived:
-			// ignoring them left the sidebar with only live sessions, so restored
-			// history never appeared after a restart. archived=false excludes archived
-			// sessions; archived=true includes them so the UI can partition both lists.
-			const directoryParam =
-				url.searchParams.get("directory") ?? (req.headers["x-opencode-directory"] as string | undefined);
-			const rootsOnly = url.searchParams.get("roots") === "true";
-			let sessions =
-				directoryParam !== undefined && directoryParam !== ""
-					? this.sessions.list(directoryParam)
-					: this.sessions.listAll();
-			if (rootsOnly) sessions = sessions.filter((s) => s.parentID === undefined);
-			// Experimental lists use archived=true to INCLUDE archived sessions.
-			// The UI partitions this result itself; filtering to archived-only drops
-			// the current live session from the header's global metadata store.
-			if (url.searchParams.get("archived") === "false") {
-				sessions = sessions.filter((s) => s.time.archived === undefined);
-			}
-			this.json(res, 200, sessions);
-			return;
-		}
-		if (path === "/question" && method === "GET") {
-			this.json(res, 200, this.sessions.questions());
-			return;
-		}
-		if (path === "/permission" && method === "GET") {
-			this.json(res, 200, this.sessions.permissions());
-			return;
-		}
-		const questionReply = path.match(/^\/question\/([^/]+)\/reply$/);
-		if (questionReply && method === "POST") {
-			const requestID = decodeURIComponent(questionReply[1]!);
-			const body = (await this.body(req)) as { answers?: Array<string[]> };
-			const pending = this.sessions.questions().find((question) => question.id === requestID);
-			if (!pending || !this.sessions.replyQuestion(pending.sessionID, requestID, body.answers ?? [])) {
-				this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestID}`));
-				return;
-			}
-			this.json(res, 200, true);
-			return;
-		}
-		const questionReject = path.match(/^\/question\/([^/]+)\/reject$/);
-		if (questionReject && method === "POST") {
-			const requestID = decodeURIComponent(questionReject[1]!);
-			const pending = this.sessions.questions().find((question) => question.id === requestID);
-			if (!pending || !this.sessions.rejectQuestion(pending.sessionID, requestID)) {
-				this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestID}`));
-				return;
-			}
-			this.json(res, 200, true);
-			return;
-		}
-		const permissionReply = path.match(/^\/permission\/([^/]+)\/reply$/);
-		if (permissionReply && method === "POST") {
-			const requestID = decodeURIComponent(permissionReply[1]!);
-			const body = (await this.body(req)) as { reply?: "once" | "always" | "reject"; message?: string };
-			const pending = this.sessions.permissions().find((permission) => permission.id === requestID);
-			if (!pending || !body.reply || !this.sessions.replyPermission(pending.sessionID, requestID, body.reply, body.message)) {
-				this.json(res, 404, errorBody("PermissionNotFoundError", `permission not found: ${requestID}`));
-				return;
-			}
-			this.json(res, 200, true);
-			return;
-		}
-		if (path === "/lsp" && method === "GET") {
-			this.json(res, 200, []);
-			return;
-		}
-		if (path === "/formatter" && method === "GET") {
-			this.json(res, 200, []);
-			return;
-		}
-		if (path === "/mcp" && method === "GET") {
-			this.json(res, 200, {});
-			return;
-		}
-		if (path === "/command" && method === "GET") {
-			this.json(res, 200, await getCommands(directory));
-			return;
-		}
-		if (path === "/path" && method === "GET") {
-			this.json(res, 200, { home: homedir(), state: "", config: "", worktree: directory, directory });
-			return;
-		}
-		if (path === "/vcs" && method === "GET") {
-			execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: directory, timeout: 3000 }, (err, stdout) => {
-				const branch = err ? undefined : stdout.trim() || undefined;
-				this.json(res, 200, branch === undefined ? {} : { branch });
-			});
-			return;
-		}
-		if (path === "/agent" && method === "GET") {
-			// pi has one agent; publish OpenChamber's conventional `build` primary
-			// agent next to pi's own name so the picker — and its default resolution,
-			// which looks for `build` — has a real option. Both names run the same
-			// pi agent (see getExposedAgentNames).
-			const piName = getAgentName();
-			const defaults = agentDefaults(await this.catalog());
-			this.json(res, 200, getExposedAgentNames().map((name) => ({
-				name,
-				description:
-					name === piName
-						? `${piName} (pi coding agent via antechamber)`
-						: `${name} — ${piName} (pi coding agent via antechamber)`,
-				mode: "primary",
-				hidden: name === "build" && piName !== "build",
-				options: {},
-				...defaults,
-			})));
-			return;
-		}
+    // --- bootstrap probes OpenChamber expects to exist ---
+    if (path === "/experimental/session" && method === "GET") {
+      // OpenChamber page-loads the sidebar through this route (not /session) with
+      // ?directory=…&archived=…&roots=…&limit=…. Honor directory/roots/archived:
+      // ignoring them left the sidebar with only live sessions, so restored
+      // history never appeared after a restart. archived=false excludes archived
+      // sessions; archived=true includes them so the UI can partition both lists.
+      const directoryParam =
+        url.searchParams.get("directory") ?? (req.headers["x-opencode-directory"] as string | undefined);
+      const rootsOnly = url.searchParams.get("roots") === "true";
+      let sessions =
+        directoryParam !== undefined && directoryParam !== ""
+          ? this.sessions.list(directoryParam)
+          : this.sessions.listAll();
+      if (rootsOnly) sessions = sessions.filter((s) => s.parentID === undefined);
+      // Experimental lists use archived=true to INCLUDE archived sessions.
+      // The UI partitions this result itself; filtering to archived-only drops
+      // the current live session from the header's global metadata store.
+      if (url.searchParams.get("archived") === "false") {
+        sessions = sessions.filter((s) => s.time.archived === undefined);
+      }
+      this.json(res, 200, sessions);
+      return;
+    }
+    if (path === "/question" && method === "GET") {
+      this.json(res, 200, this.sessions.questions());
+      return;
+    }
+    if (path === "/permission" && method === "GET") {
+      this.json(res, 200, this.sessions.permissions());
+      return;
+    }
+    const questionReply = path.match(/^\/question\/([^/]+)\/reply$/);
+    if (questionReply && method === "POST") {
+      const requestID = decodeURIComponent(questionReply[1]!);
+      const body = (await this.body(req)) as { answers?: Array<string[]> };
+      const pending = this.sessions.questions().find((question) => question.id === requestID);
+      if (!pending || !this.sessions.replyQuestion(pending.sessionID, requestID, body.answers ?? [])) {
+        this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestID}`));
+        return;
+      }
+      this.json(res, 200, true);
+      return;
+    }
+    const questionReject = path.match(/^\/question\/([^/]+)\/reject$/);
+    if (questionReject && method === "POST") {
+      const requestID = decodeURIComponent(questionReject[1]!);
+      const pending = this.sessions.questions().find((question) => question.id === requestID);
+      if (!pending || !this.sessions.rejectQuestion(pending.sessionID, requestID)) {
+        this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestID}`));
+        return;
+      }
+      this.json(res, 200, true);
+      return;
+    }
+    const permissionReply = path.match(/^\/permission\/([^/]+)\/reply$/);
+    if (permissionReply && method === "POST") {
+      const requestID = decodeURIComponent(permissionReply[1]!);
+      const body = (await this.body(req)) as { reply?: "once" | "always" | "reject"; message?: string };
+      const pending = this.sessions.permissions().find((permission) => permission.id === requestID);
+      if (
+        !pending ||
+        !body.reply ||
+        !this.sessions.replyPermission(pending.sessionID, requestID, body.reply, body.message)
+      ) {
+        this.json(res, 404, errorBody("PermissionNotFoundError", `permission not found: ${requestID}`));
+        return;
+      }
+      this.json(res, 200, true);
+      return;
+    }
+    if (path === "/lsp" && method === "GET") {
+      this.json(res, 200, []);
+      return;
+    }
+    if (path === "/formatter" && method === "GET") {
+      this.json(res, 200, []);
+      return;
+    }
+    if (path === "/mcp" && method === "GET") {
+      this.json(res, 200, {});
+      return;
+    }
+    if (path === "/command" && method === "GET") {
+      this.json(res, 200, await getCommands(directory));
+      return;
+    }
+    if (path === "/path" && method === "GET") {
+      this.json(res, 200, { home: homedir(), state: "", config: "", worktree: directory, directory });
+      return;
+    }
+    if (path === "/vcs" && method === "GET") {
+      execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: directory, timeout: 3000 }, (err, stdout) => {
+        const branch = err ? undefined : stdout.trim() || undefined;
+        this.json(res, 200, branch === undefined ? {} : { branch });
+      });
+      return;
+    }
+    if (path === "/agent" && method === "GET") {
+      // pi has one agent; publish OpenChamber's conventional `build` primary
+      // agent next to pi's own name so the picker — and its default resolution,
+      // which looks for `build` — has a real option. Both names run the same
+      // pi agent (see getExposedAgentNames).
+      const piName = getAgentName();
+      const defaults = agentDefaults(await this.catalog());
+      this.json(
+        res,
+        200,
+        getExposedAgentNames().map((name) => ({
+          name,
+          description:
+            name === piName
+              ? `${piName} (pi coding agent via antechamber)`
+              : `${name} — ${piName} (pi coding agent via antechamber)`,
+          mode: "primary",
+          hidden: name === "build" && piName !== "build",
+          options: {},
+          ...defaults,
+        })),
+      );
+      return;
+    }
 
-		this.json(res, 404, errorBody("NotFoundError", `no route: ${method} ${path}`));
-	}
+    this.json(res, 404, errorBody("NotFoundError", `no route: ${method} ${path}`));
+  }
 
-	// ---------------------------------------------------------------
-	// opencode v2 API surface (called by OpenChamber 1.24.2 web UI)
-	// ---------------------------------------------------------------
+  // ---------------------------------------------------------------
+  // opencode v2 API surface (called by OpenChamber 1.24.2 web UI)
+  // ---------------------------------------------------------------
 
-	private async v2Agents(): Promise<Array<{ id: string; name: string; description: string; mode: string; hidden: boolean; options: Record<string, unknown>; model?: { providerID: string; modelID: string }; variant?: string }>> {
-		const piName = getAgentName();
-		const defaults = agentDefaults(await this.catalog());
-		return getExposedAgentNames().map((name) => ({
-			id: name,
-			name,
-			description:
-				name === piName
-					? `${piName} (pi coding agent via antechamber)`
-					: `${name} — ${piName} (pi coding agent via antechamber)`,
-			mode: "primary",
-			hidden: name === "build" && piName !== "build",
-			options: {},
-			...defaults,
-		}));
-	}
+  private async v2Agents(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      description: string;
+      mode: string;
+      hidden: boolean;
+      options: Record<string, unknown>;
+      model?: { providerID: string; modelID: string };
+      variant?: string;
+    }>
+  > {
+    const piName = getAgentName();
+    const defaults = agentDefaults(await this.catalog());
+    return getExposedAgentNames().map((name) => ({
+      id: name,
+      name,
+      description:
+        name === piName
+          ? `${piName} (pi coding agent via antechamber)`
+          : `${name} — ${piName} (pi coding agent via antechamber)`,
+      mode: "primary",
+      hidden: name === "build" && piName !== "build",
+      options: {},
+      ...defaults,
+    }));
+  }
 
-	private v2Session(info: OCSession): V2Session {
-		const managed = this.sessions.get(info.id);
-		return toV2Session(info, { model: managed?.model, agent: getAgentName() });
-	}
+  private v2Session(info: OCSession): V2Session {
+    const managed = this.sessions.get(info.id);
+    return toV2Session(info, { model: managed?.model, agent: getAgentName() });
+  }
 
-	/** v2 `/api/project` list: the adapter has no project registry, so expose the
-	 * directories it knows about (the default plus every restorable session). */
-	private v2Projects(): Array<Record<string, unknown>> {
-		const dirs = new Set<string>([this.options.defaultDirectory]);
-		for (const s of this.sessions.listAll()) dirs.add(s.directory);
-		const now = Date.now();
-		return [...dirs].map((dir) => ({
-			id: dir,
-			canonical: dir,
-			time: { created: now, updated: now },
-			sandboxes: [],
-		}));
-	}
+  /** v2 `/api/project` list: the adapter has no project registry, so expose the
+   * directories it knows about (the default plus every restorable session). */
+  private v2Projects(): Array<Record<string, unknown>> {
+    const dirs = new Set<string>([this.options.defaultDirectory]);
+    for (const s of this.sessions.listAll()) dirs.add(s.directory);
+    const now = Date.now();
+    return [...dirs].map((dir) => ({
+      id: dir,
+      canonical: dir,
+      time: { created: now, updated: now },
+      sandboxes: [],
+    }));
+  }
 
-	private async handleV2(
-		req: IncomingMessage,
-		res: ServerResponse,
-		url: URL,
-		path: string,
-		method: string,
-		directory: string,
-	): Promise<void> {
-		const location = { directory };
-		const withLocation = (data: unknown) => ({ location, data });
+  private async handleV2(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    path: string,
+    method: string,
+    directory: string,
+  ): Promise<void> {
+    const location = { directory };
+    const withLocation = (data: unknown) => ({ location, data });
 
-		// --- bootstrap ---
-		if (path === "/api/info" && method === "GET") {
-			this.json(res, 200, {
-				version: OPENCODE_COMPAT_VERSION ?? "2.0.18",
-				pid: process.pid,
-				urls: [this.url],
-				paths: { tmp: tmpdir() },
-			});
-			return;
-		}
-		if (path === "/api/location" && method === "GET") {
-			this.json(res, 200, { directory, project: { id: directory, directory, canonical: directory } });
-			return;
-		}
-		if (path === "/api/config" && method === "GET") {
-			this.json(res, 200, withLocation({ default_agent: getAgentName() }));
-			return;
-		}
-		if (path === "/api/provider" && method === "GET") {
-			const cat = await this.catalog();
-			this.json(res, 200, withLocation(cat.providers.map((p) => ({ ...p, activation: "enabled" }))));
-			return;
-		}
-		if (path === "/api/model" && method === "GET") {
-			const cat = await this.catalog();
-			this.json(res, 200, withLocation(flattenModels(cat)));
-			return;
-		}
-		if (path === "/api/model/default" && method === "GET") {
-			const cat = await this.catalog();
-			this.json(res, 200, withLocation(defaultV2Model(cat) ?? null));
-			return;
-		}
-		if (path === "/api/agent" && method === "GET") {
-			this.json(res, 200, withLocation(await this.v2Agents()));
-			return;
-		}
-		const agentMatch = path.match(/^\/api\/agent\/([^/]+)$/);
-		if (agentMatch && method === "GET") {
-			const agentId = decodeURIComponent(agentMatch[1]!);
-			const agent = (await this.v2Agents()).find((a) => a.id === agentId);
-			if (!agent) {
-				this.json(res, 404, errorBody("NotFoundError", `agent not found: ${agentId}`));
-				return;
-			}
-			this.json(res, 200, withLocation(agent));
-			return;
-		}
-		if (path === "/api/command" && method === "GET") {
-			this.json(res, 200, withLocation(await getCommands(directory)));
-			return;
-		}
-		if (path === "/api/skill" && method === "GET") {
-			this.json(res, 200, withLocation([]));
-			return;
-		}
+    // --- bootstrap ---
+    if (path === "/api/info" && method === "GET") {
+      this.json(res, 200, {
+        version: OPENCODE_COMPAT_VERSION ?? "2.0.18",
+        pid: process.pid,
+        urls: [this.url],
+        paths: { tmp: tmpdir() },
+      });
+      return;
+    }
+    if (path === "/api/location" && method === "GET") {
+      this.json(res, 200, { directory, project: { id: directory, directory, canonical: directory } });
+      return;
+    }
+    if (path === "/api/config" && method === "GET") {
+      this.json(res, 200, withLocation({ default_agent: getAgentName() }));
+      return;
+    }
+    if (path === "/api/provider" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, withLocation(cat.providers.map((p) => ({ ...p, activation: "enabled" }))));
+      return;
+    }
+    if (path === "/api/model" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, withLocation(flattenModels(cat)));
+      return;
+    }
+    if (path === "/api/model/default" && method === "GET") {
+      const cat = await this.catalog();
+      this.json(res, 200, withLocation(defaultV2Model(cat) ?? null));
+      return;
+    }
+    if (path === "/api/agent" && method === "GET") {
+      this.json(res, 200, withLocation(await this.v2Agents()));
+      return;
+    }
+    const agentMatch = path.match(/^\/api\/agent\/([^/]+)$/);
+    if (agentMatch && method === "GET") {
+      const agentId = decodeURIComponent(agentMatch[1]!);
+      const agent = (await this.v2Agents()).find((a) => a.id === agentId);
+      if (!agent) {
+        this.json(res, 404, errorBody("NotFoundError", `agent not found: ${agentId}`));
+        return;
+      }
+      this.json(res, 200, withLocation(agent));
+      return;
+    }
+    if (path === "/api/command" && method === "GET") {
+      this.json(res, 200, withLocation(await getCommands(directory)));
+      return;
+    }
+    if (path === "/api/skill" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
 
-		// --- project / vcs / permission / form (2.0.4 bootstrap) ---
-		if (path === "/api/project" && method === "GET") {
-			this.json(res, 200, this.v2Projects());
-			return;
-		}
-		const projectMatch = path.match(/^\/api\/project\/([^/]+)$/);
-		if (projectMatch && method === "PATCH") {
-			const projectId = decodeURIComponent(projectMatch[1]!);
-			const body = (await this.body(req)) as { canonical?: string };
-			this.json(res, 200, {
-				id: projectId,
-				canonical: body.canonical ?? projectId,
-				time: { created: 0, updated: Date.now() },
-				sandboxes: [],
-			});
-			return;
-		}
-		if (path === "/api/permission/request" && method === "GET") {
-			this.json(res, 200, withLocation(this.sessions.permissions().map(toV2Permission)));
-			return;
-		}
-		if (path === "/api/question/request" && method === "GET") {
-			this.json(res, 200, withLocation(this.sessions.questions()));
-			return;
-		}
-		if (path === "/api/permission/saved" && method === "GET") {
-			this.json(res, 200, { data: [] });
-			return;
-		}
-		if (path.match(/^\/api\/permission\/saved\/[^/]+$/) && method === "DELETE") {
-			res.writeHead(204).end();
-			return;
-		}
-		if (path === "/api/form" && method === "GET") {
-			this.json(res, 200, withLocation([]));
-			return;
-		}
-		if (path === "/api/vcs" && method === "GET") {
-			this.json(res, 200, withLocation({ branch: {} }));
-			return;
-		}
-		if (path === "/api/vcs/base" && method === "GET") {
-			this.json(res, 200, withLocation(null));
-			return;
-		}
-		if (path === "/api/vcs/status" && method === "GET") {
-			this.json(res, 200, withLocation([]));
-			return;
-		}
-		if (path === "/api/vcs/branch" && method === "GET") {
-			this.json(res, 200, withLocation([]));
-			return;
-		}
-		if (path === "/api/vcs/diff" && method === "GET") {
-			this.json(res, 200, withLocation(""));
-			return;
-		}
+    // --- project / vcs / permission / form (2.0.4 bootstrap) ---
+    if (path === "/api/project" && method === "GET") {
+      this.json(res, 200, this.v2Projects());
+      return;
+    }
+    const projectMatch = path.match(/^\/api\/project\/([^/]+)$/);
+    if (projectMatch && method === "PATCH") {
+      const projectId = decodeURIComponent(projectMatch[1]!);
+      const body = (await this.body(req)) as { canonical?: string };
+      this.json(res, 200, {
+        id: projectId,
+        canonical: body.canonical ?? projectId,
+        time: { created: 0, updated: Date.now() },
+        sandboxes: [],
+      });
+      return;
+    }
+    if (path === "/api/permission/request" && method === "GET") {
+      this.json(res, 200, withLocation(this.sessions.permissions().map(toV2Permission)));
+      return;
+    }
+    if (path === "/api/question/request" && method === "GET") {
+      this.json(res, 200, withLocation(this.sessions.questions()));
+      return;
+    }
+    if (path === "/api/permission/saved" && method === "GET") {
+      this.json(res, 200, { data: [] });
+      return;
+    }
+    if (path.match(/^\/api\/permission\/saved\/[^/]+$/) && method === "DELETE") {
+      res.writeHead(204).end();
+      return;
+    }
+    if (path === "/api/form" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/vcs" && method === "GET") {
+      this.json(res, 200, withLocation({ branch: {} }));
+      return;
+    }
+    if (path === "/api/vcs/base" && method === "GET") {
+      this.json(res, 200, withLocation(null));
+      return;
+    }
+    if (path === "/api/vcs/status" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/vcs/branch" && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/vcs/diff" && method === "GET") {
+      this.json(res, 200, withLocation(""));
+      return;
+    }
 
-		// --- sessions ---
-		if (path === "/api/session" && method === "GET") {
-			const dir = url.searchParams.get("directory") ?? url.searchParams.get("location");
-			const search = url.searchParams.get("search");
-			const limit = numberParam(url.searchParams.get("limit"));
-			let infos = dir !== null && dir !== "" ? this.sessions.list(dir) : this.sessions.listAll();
-			if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
-			const sessions = infos.map((info) => this.v2Session(info));
-			sessions.sort((a, b) => b.time.updated - a.time.updated);
-			const page = limit !== undefined ? sessions.slice(0, limit) : sessions;
-			// The 2.0.4 UI reads `cursor.previous` unconditionally — a list body
-			// without a cursor throws "Cannot read properties of undefined".
-			this.json(res, 200, { data: page, cursor: { previous: null, next: null } });
-			return;
-		}
-		if (path === "/api/session" && method === "POST") {
-			const body = (await this.body(req)) as {
-				title?: string;
-				parentID?: string;
-				location?: { directory?: string };
-			};
-			const dir = body.location?.directory ?? directory;
-			const info = await this.sessions.create(dir, body.title, body.parentID);
-			this.json(res, 200, { data: this.v2Session(info) });
-			return;
-		}
-		if (path === "/api/session/active" && method === "GET") {
-			const data: Record<string, { type: "running" }> = {};
-			for (const [id, status] of Object.entries(this.sessions.statuses())) {
-				if (status.type !== "idle") data[id] = { type: "running" };
-			}
-			this.json(res, 200, { data });
-			return;
-		}
+    // --- sessions ---
+    if (path === "/api/session" && method === "GET") {
+      const dir = url.searchParams.get("directory") ?? url.searchParams.get("location");
+      const search = url.searchParams.get("search");
+      const limit = numberParam(url.searchParams.get("limit"));
+      let infos = dir !== null && dir !== "" ? this.sessions.list(dir) : this.sessions.listAll();
+      if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
+      const sessions = infos.map((info) => this.v2Session(info));
+      sessions.sort((a, b) => b.time.updated - a.time.updated);
+      const page = limit !== undefined ? sessions.slice(0, limit) : sessions;
+      // The 2.0.4 UI reads `cursor.previous` unconditionally — a list body
+      // without a cursor throws "Cannot read properties of undefined".
+      this.json(res, 200, { data: page, cursor: { previous: null, next: null } });
+      return;
+    }
+    if (path === "/api/session" && method === "POST") {
+      const body = (await this.body(req)) as {
+        title?: string;
+        parentID?: string;
+        location?: { directory?: string };
+      };
+      const dir = body.location?.directory ?? directory;
+      const info = await this.sessions.create(dir, body.title, body.parentID);
+      this.json(res, 200, { data: this.v2Session(info) });
+      return;
+    }
+    if (path === "/api/session/active" && method === "GET") {
+      const data: Record<string, { type: "running" }> = {};
+      for (const [id, status] of Object.entries(this.sessions.statuses())) {
+        if (status.type !== "idle") data[id] = { type: "running" };
+      }
+      this.json(res, 200, { data });
+      return;
+    }
 
-		const sessionMatch = path.match(/^\/api\/session\/([^/]+)(\/.+)?$/);
-		if (sessionMatch) {
-			const sessionId = decodeURIComponent(sessionMatch[1]!);
-			const sub = sessionMatch[2] ?? "";
-			const managed = this.sessions.get(sessionId);
-			if (!managed) {
-				this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
-				return;
-			}
+    const sessionMatch = path.match(/^\/api\/session\/([^/]+)(\/.+)?$/);
+    if (sessionMatch) {
+      const sessionId = decodeURIComponent(sessionMatch[1]!);
+      const sub = sessionMatch[2] ?? "";
+      const managed = this.sessions.get(sessionId);
+      if (!managed) {
+        this.json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
+        return;
+      }
 
-			const messageMatch = sub.match(/^\/message\/([^/]+)$/);
-			if (messageMatch && method === "GET") {
-				const messageId = decodeURIComponent(messageMatch[1]!);
-				const found = (this.sessions.messages(sessionId) ?? []).find((m) => m.info.id === messageId);
-				if (!found) {
-					this.json(res, 404, errorBody("MessageNotFoundError", `message not found: ${messageId}`));
-					return;
-				}
-				this.json(res, 200, { data: toV2Message(found) });
-				return;
-			}
+      const messageMatch = sub.match(/^\/message\/([^/]+)$/);
+      if (messageMatch && method === "GET") {
+        const messageId = decodeURIComponent(messageMatch[1]!);
+        const found = (this.sessions.messages(sessionId) ?? []).find((m) => m.info.id === messageId);
+        if (!found) {
+          this.json(res, 404, errorBody("MessageNotFoundError", `message not found: ${messageId}`));
+          return;
+        }
+        this.json(res, 200, { data: toV2Message(found) });
+        return;
+      }
 
-			// Forms/permissions have no adapter-side store; answer the lifecycle routes
-			// the 2.0.4 UI polls rather than 404ing the whole panel.
-			const formMatch = sub.match(/^\/form\/([^/]+)(\/reply)?$/);
-			if (formMatch) {
-				const formId = decodeURIComponent(formMatch[1]!);
-				if (formMatch[2] === "/reply" && method === "POST") {
-					await this.body(req);
-					res.writeHead(204).end();
-					return;
-				}
-				if (method === "DELETE") {
-					res.writeHead(204).end();
-					return;
-				}
-				if (method === "GET") {
-					this.json(res, 404, errorBody("FormNotFoundError", `form not found: ${formId}`));
-					return;
-				}
-			}
-			const questionMatch = sub.match(/^\/question\/([^/]+)(\/reply|\/reject)?$/);
-			if (questionMatch) {
-				const requestId = decodeURIComponent(questionMatch[1]!);
-				if (questionMatch[2] === "/reply" && method === "POST") {
-					const body = (await this.body(req)) as { answers?: Array<string[]> };
-					if (!this.sessions.replyQuestion(sessionId, requestId, body.answers ?? [])) {
-						this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
-						return;
-					}
-					res.writeHead(204).end();
-					return;
-				}
-				if (questionMatch[2] === "/reject" && method === "POST") {
-					if (!this.sessions.rejectQuestion(sessionId, requestId)) {
-						this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
-						return;
-					}
-					res.writeHead(204).end();
-					return;
-				}
-				if (method === "GET") {
-					const question = this.sessions.questions(sessionId).find((entry) => entry.id === requestId);
-					if (question === undefined) this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
-					else this.json(res, 200, { data: question });
-					return;
-				}
-			}
-			const permissionMatch = sub.match(/^\/permission\/([^/]+)(\/reply)?$/);
-			if (permissionMatch) {
-				const requestId = decodeURIComponent(permissionMatch[1]!);
-				if (permissionMatch[2] === "/reply" && method === "POST") {
-					const body = (await this.body(req)) as { reply?: "once" | "always" | "reject"; message?: string };
-					if (!body.reply || !this.sessions.replyPermission(sessionId, requestId, body.reply, body.message)) {
-						this.json(res, 404, errorBody("PermissionNotFoundError", `permission not found: ${requestId}`));
-						return;
-					}
-					res.writeHead(204).end();
-					return;
-				}
-				if (method === "GET") {
-					const permission = this.sessions.permissions(sessionId).find((entry) => entry.id === requestId);
-					if (permission === undefined) this.json(res, 404, errorBody("PermissionNotFoundError", `permission not found: ${requestId}`));
-					else this.json(res, 200, { data: toV2Permission(permission) });
-					return;
-				}
-			}
+      // Forms/permissions have no adapter-side store; answer the lifecycle routes
+      // the 2.0.4 UI polls rather than 404ing the whole panel.
+      const formMatch = sub.match(/^\/form\/([^/]+)(\/reply)?$/);
+      if (formMatch) {
+        const formId = decodeURIComponent(formMatch[1]!);
+        if (formMatch[2] === "/reply" && method === "POST") {
+          await this.body(req);
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "DELETE") {
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "GET") {
+          this.json(res, 404, errorBody("FormNotFoundError", `form not found: ${formId}`));
+          return;
+        }
+      }
+      const questionMatch = sub.match(/^\/question\/([^/]+)(\/reply|\/reject)?$/);
+      if (questionMatch) {
+        const requestId = decodeURIComponent(questionMatch[1]!);
+        if (questionMatch[2] === "/reply" && method === "POST") {
+          const body = (await this.body(req)) as { answers?: Array<string[]> };
+          if (!this.sessions.replyQuestion(sessionId, requestId, body.answers ?? [])) {
+            this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
+            return;
+          }
+          res.writeHead(204).end();
+          return;
+        }
+        if (questionMatch[2] === "/reject" && method === "POST") {
+          if (!this.sessions.rejectQuestion(sessionId, requestId)) {
+            this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
+            return;
+          }
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "GET") {
+          const question = this.sessions.questions(sessionId).find((entry) => entry.id === requestId);
+          if (question === undefined)
+            this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
+          else this.json(res, 200, { data: question });
+          return;
+        }
+      }
+      const permissionMatch = sub.match(/^\/permission\/([^/]+)(\/reply)?$/);
+      if (permissionMatch) {
+        const requestId = decodeURIComponent(permissionMatch[1]!);
+        if (permissionMatch[2] === "/reply" && method === "POST") {
+          const body = (await this.body(req)) as { reply?: "once" | "always" | "reject"; message?: string };
+          if (!body.reply || !this.sessions.replyPermission(sessionId, requestId, body.reply, body.message)) {
+            this.json(res, 404, errorBody("PermissionNotFoundError", `permission not found: ${requestId}`));
+            return;
+          }
+          res.writeHead(204).end();
+          return;
+        }
+        if (method === "GET") {
+          const permission = this.sessions.permissions(sessionId).find((entry) => entry.id === requestId);
+          if (permission === undefined)
+            this.json(res, 404, errorBody("PermissionNotFoundError", `permission not found: ${requestId}`));
+          else this.json(res, 200, { data: toV2Permission(permission) });
+          return;
+        }
+      }
 
-			switch (`${method} ${sub}`) {
-				case "GET /todo":
-					this.json(res, 200, { data: this.sessions.todos(sessionId) });
-					return;
-				case "GET ": {
-					this.json(res, 200, { data: this.v2Session(managed.info) });
-					return;
-				}
-				case "PATCH ": {
-					const body = (await this.body(req)) as { title?: string; time?: { archived?: number } };
-					this.sessions.update(sessionId, { title: body.title, archived: body.time?.archived });
-					res.writeHead(204).end();
-					return;
-				}
-				case "DELETE ": {
-					await this.sessions.remove(sessionId);
-					res.writeHead(204).end();
-					return;
-				}
-				case "GET /message": {
-					const order = url.searchParams.get("order");
-					const limit = numberParam(url.searchParams.get("limit"));
-					let messages = (this.sessions.messages(sessionId) ?? []).map((m) => toV2Message(m));
-					if (order !== "asc") messages = messages.reverse(); // v2 default is newest-first
-					if (limit !== undefined) messages = messages.slice(0, limit);
-					this.json(res, 200, { data: messages, cursor: { previous: null, next: null } });
-					return;
-				}
-				case "POST /summarize": {
-					await this.body(req);
-					const result = await compactSession(this.sessions, sessionId);
-					if (result.kind === "error") {
-						announceSessionError(
-							{ sessions: this.sessions, session: managed, emit: this.broadcast.bind(this) },
-							"BadRequestError",
-							result.message,
-						);
-						this.json(res, 400, errorBody("BadRequestError", result.message));
-						return;
-					}
-					this.json(res, 200, { data: true });
-					return;
-				}
-				case "POST /shell": {
-					const command = parseShellCommand(await this.body(req));
-					if (command === undefined) {
-						this.json(res, 400, errorBody("BadRequestError", "command is required"));
-						return;
-					}
-					if (managed.status.type !== "idle") {
-						this.json(res, 409, errorBody("SessionBusyError", "session is busy"));
-						return;
-					}
-					const result = await runShellCommand({
-						sessions: this.sessions,
-						session: managed,
-						command,
-						emit: this.broadcast.bind(this),
-					});
-					if (result.kind === "error") {
-						this.json(res, 400, errorBody("BadRequestError", result.message));
-						return;
-					}
-					this.json(res, 200, { data: toV2Message(result.message) });
-					return;
-				}
-				case "POST /command": {
-					const input = parseSlashCommand(await this.body(req));
-					if (input === undefined) {
-						this.json(res, 400, errorBody("BadRequestError", "command is required"));
-						return;
-					}
-					const message = await runSlashCommand(this.sessions, sessionId, input);
-					this.json(res, 200, {
-						data: message === undefined ? { info: null, parts: [] } : { info: toV2Message(message), parts: message.parts },
-					});
-					return;
-				}
-				case "POST /share":
-				case "DELETE /share":
-					announceSessionError(
-						{ sessions: this.sessions, session: managed, emit: this.broadcast.bind(this) },
-						unsupportedShare.name,
-						unsupportedShare.data.message,
-					);
-					this.json(res, 400, errorBody(unsupportedShare.name, unsupportedShare.data.message));
-					return;
-				case "POST /prompt": {
-					const body = (await this.body(req)) as {
-						id?: string;
-						text?: string;
-						model?: { providerID?: string; id?: string; modelID?: string; variant?: string };
-						variant?: string;
-						delivery?: string;
-					};
-					const text = typeof body.text === "string" ? body.text : "";
-					const messageID = typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
-					const model = modelRefFromBody(body.model ?? (body.variant !== undefined ? managed.model : undefined), body.variant);
-					this.promptAsync(managed, text, model, false, messageID);
-					const delivery = typeof body.delivery === "string" ? body.delivery : "steer";
-					this.json(res, 200, {
-						data: {
-							id: messageID,
-							sessionID: sessionId,
-							time: { created: Date.now() },
-							type: "user",
-							text,
-							payload: { text },
-							delivery,
-						},
-					});
-					return;
-				}
-				case "POST /interrupt": {
-					await this.sessions.abort(sessionId);
-					this.json(res, 200, { data: true });
-					return;
-				}
-				case "POST /agent": {
-					await this.body(req); // agent is fixed per connector — acknowledge and ignore
-					res.writeHead(204).end();
-					return;
-				}
-				case "POST /model": {
-					// The UI awaits this before every prompt (applySendSelection →
-					// switchModel), so it is the only route from the bottom-right picker
-					// to pi. Dropping the body used to leave the UI showing a model pi
-					// never ran. 204 empty is the contract; 400/404 are the statuses the
-					// client declares, and a loud failure beats a silent drift.
-					const body = (await this.body(req)) as { model?: { providerID?: string; id?: string; modelID?: string; variant?: string }; variant?: string };
-					const ref = modelRefFromBody(body.model, body.variant);
-					if (ref === undefined) {
-						this.json(res, 400, errorBody("BadRequestError", "model is required: {providerID, modelID}"));
-						return;
-					}
-					try {
-						const resolved = await this.sessions.setModel(sessionId, ref);
-						if (resolved.modelID !== ref.modelID || resolved.providerID !== ref.providerID) {
-							// pi resolved the request to a different concrete model (alias or
-							// provider-reported id). Not an error, but the reason the UI ends
-							// up showing something other than what was picked.
-							debugLog(`[model] session ${sessionId}: pi resolved ${ref.providerID}/${ref.modelID} -> ${resolved.providerID}/${resolved.modelID}`);
-						}
-						res.writeHead(204).end();
-					} catch (err) {
-						const message = err instanceof Error ? err.message : String(err);
-						console.error(`[model] session ${sessionId} → ${ref.providerID}/${ref.modelID} failed:`, message);
-						this.json(res, message.startsWith("unknown session:") ? 404 : 400,
-							errorBody(message.startsWith("unknown session:") ? "NotFoundError" : "BadRequestError", message));
-					}
-					return;
-				}
-				case "GET /form": {
-					this.json(res, 200, { data: [] });
-					return;
-				}
-				case "GET /question": {
-					this.json(res, 200, { data: this.sessions.questions(sessionId) });
-					return;
-				}
-				case "GET /permission": {
-					this.json(res, 200, { data: this.sessions.permissions(sessionId).map(toV2Permission) });
-					return;
-				}
-				case "GET /inbox": {
-					this.json(res, 200, { data: [] });
-					return;
-				}
-				case "GET /diff":
-					this.json(res, 200, { data: await this.sessions.diff(sessionId) });
-					return;
-				case "GET /context": {
-					this.json(res, 501, errorBody("NotImplemented", `${method} ${path} is not implemented by this connector`));
-					return;
-				}
-				default:
-					this.json(res, 501, errorBody("NotImplemented", `${method} ${path} not implemented`));
-					return;
-			}
-		}
+      switch (`${method} ${sub}`) {
+        case "GET /todo":
+          this.json(res, 200, { data: this.sessions.todos(sessionId) });
+          return;
+        case "GET ": {
+          this.json(res, 200, { data: this.v2Session(managed.info) });
+          return;
+        }
+        case "PATCH ": {
+          const body = (await this.body(req)) as { title?: string; time?: { archived?: number } };
+          this.sessions.update(sessionId, { title: body.title, archived: body.time?.archived });
+          res.writeHead(204).end();
+          return;
+        }
+        case "DELETE ": {
+          await this.sessions.remove(sessionId);
+          res.writeHead(204).end();
+          return;
+        }
+        case "GET /message": {
+          const order = url.searchParams.get("order");
+          const limit = numberParam(url.searchParams.get("limit"));
+          let messages = (this.sessions.messages(sessionId) ?? []).map((m) => toV2Message(m));
+          if (order !== "asc") messages = messages.reverse(); // v2 default is newest-first
+          if (limit !== undefined) messages = messages.slice(0, limit);
+          this.json(res, 200, { data: messages, cursor: { previous: null, next: null } });
+          return;
+        }
+        case "POST /summarize": {
+          await this.body(req);
+          const result = await compactSession(this.sessions, sessionId);
+          if (result.kind === "error") {
+            announceSessionError(
+              { sessions: this.sessions, session: managed, emit: this.broadcast.bind(this) },
+              "BadRequestError",
+              result.message,
+            );
+            this.json(res, 400, errorBody("BadRequestError", result.message));
+            return;
+          }
+          this.json(res, 200, { data: true });
+          return;
+        }
+        case "POST /shell": {
+          const command = parseShellCommand(await this.body(req));
+          if (command === undefined) {
+            this.json(res, 400, errorBody("BadRequestError", "command is required"));
+            return;
+          }
+          if (managed.status.type !== "idle") {
+            this.json(res, 409, errorBody("SessionBusyError", "session is busy"));
+            return;
+          }
+          const result = await runShellCommand({
+            sessions: this.sessions,
+            session: managed,
+            command,
+            emit: this.broadcast.bind(this),
+          });
+          if (result.kind === "error") {
+            this.json(res, 400, errorBody("BadRequestError", result.message));
+            return;
+          }
+          this.json(res, 200, { data: toV2Message(result.message) });
+          return;
+        }
+        case "POST /command": {
+          const input = parseSlashCommand(await this.body(req));
+          if (input === undefined) {
+            this.json(res, 400, errorBody("BadRequestError", "command is required"));
+            return;
+          }
+          const message = await runSlashCommand(this.sessions, sessionId, input);
+          this.json(res, 200, {
+            data:
+              message === undefined ? { info: null, parts: [] } : { info: toV2Message(message), parts: message.parts },
+          });
+          return;
+        }
+        case "POST /share":
+        case "DELETE /share":
+          announceSessionError(
+            { sessions: this.sessions, session: managed, emit: this.broadcast.bind(this) },
+            unsupportedShare.name,
+            unsupportedShare.data.message,
+          );
+          this.json(res, 400, errorBody(unsupportedShare.name, unsupportedShare.data.message));
+          return;
+        case "POST /prompt": {
+          const body = (await this.body(req)) as {
+            id?: string;
+            text?: string;
+            model?: { providerID?: string; id?: string; modelID?: string; variant?: string };
+            variant?: string;
+            delivery?: string;
+          };
+          const text = typeof body.text === "string" ? body.text : "";
+          const messageID =
+            typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
+          const model = modelRefFromBody(
+            body.model ?? (body.variant !== undefined ? managed.model : undefined),
+            body.variant,
+          );
+          this.promptAsync(managed, text, model, false, messageID);
+          const delivery = typeof body.delivery === "string" ? body.delivery : "steer";
+          this.json(res, 200, {
+            data: {
+              id: messageID,
+              sessionID: sessionId,
+              time: { created: Date.now() },
+              type: "user",
+              text,
+              payload: { text },
+              delivery,
+            },
+          });
+          return;
+        }
+        case "POST /interrupt": {
+          await this.sessions.abort(sessionId);
+          this.json(res, 200, { data: true });
+          return;
+        }
+        case "POST /agent": {
+          await this.body(req); // agent is fixed per connector — acknowledge and ignore
+          res.writeHead(204).end();
+          return;
+        }
+        case "POST /model": {
+          // The UI awaits this before every prompt (applySendSelection →
+          // switchModel), so it is the only route from the bottom-right picker
+          // to pi. Dropping the body used to leave the UI showing a model pi
+          // never ran. 204 empty is the contract; 400/404 are the statuses the
+          // client declares, and a loud failure beats a silent drift.
+          const body = (await this.body(req)) as {
+            model?: { providerID?: string; id?: string; modelID?: string; variant?: string };
+            variant?: string;
+          };
+          const ref = modelRefFromBody(body.model, body.variant);
+          if (ref === undefined) {
+            this.json(res, 400, errorBody("BadRequestError", "model is required: {providerID, modelID}"));
+            return;
+          }
+          try {
+            const resolved = await this.sessions.setModel(sessionId, ref);
+            if (resolved.modelID !== ref.modelID || resolved.providerID !== ref.providerID) {
+              // pi resolved the request to a different concrete model (alias or
+              // provider-reported id). Not an error, but the reason the UI ends
+              // up showing something other than what was picked.
+              debugLog(
+                `[model] session ${sessionId}: pi resolved ${ref.providerID}/${ref.modelID} -> ${resolved.providerID}/${resolved.modelID}`,
+              );
+            }
+            res.writeHead(204).end();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[model] session ${sessionId} → ${ref.providerID}/${ref.modelID} failed:`, message);
+            this.json(
+              res,
+              message.startsWith("unknown session:") ? 404 : 400,
+              errorBody(message.startsWith("unknown session:") ? "NotFoundError" : "BadRequestError", message),
+            );
+          }
+          return;
+        }
+        case "GET /form": {
+          this.json(res, 200, { data: [] });
+          return;
+        }
+        case "GET /question": {
+          this.json(res, 200, { data: this.sessions.questions(sessionId) });
+          return;
+        }
+        case "GET /permission": {
+          this.json(res, 200, { data: this.sessions.permissions(sessionId).map(toV2Permission) });
+          return;
+        }
+        case "GET /inbox": {
+          this.json(res, 200, { data: [] });
+          return;
+        }
+        case "GET /diff":
+          this.json(res, 200, { data: await this.sessions.diff(sessionId) });
+          return;
+        case "GET /context": {
+          this.json(res, 501, errorBody("NotImplemented", `${method} ${path} is not implemented by this connector`));
+          return;
+        }
+        default:
+          this.json(res, 501, errorBody("NotImplemented", `${method} ${path} not implemented`));
+          return;
+      }
+    }
 
-		this.json(res, 404, errorBody("NotFoundError", `no route: ${method} ${path}`));
-	}
+    this.json(res, 404, errorBody("NotFoundError", `no route: ${method} ${path}`));
+  }
 
-	private json(res: ServerResponse, status: number, body: unknown): void {
-		const payload = JSON.stringify(body);
-		res.writeHead(status, { "Content-Type": "application/json" }).end(payload);
-	}
+  private json(res: ServerResponse, status: number, body: unknown): void {
+    const payload = JSON.stringify(body);
+    res.writeHead(status, { "Content-Type": "application/json" }).end(payload);
+  }
 
-	private body(req: IncomingMessage): Promise<unknown> {
-		if (Number(req.headers["content-length"]) > this.maxBodyBytes) {
-			req.pause();
-			return Promise.reject(new RequestBodyError(413, `Request body exceeds ${this.maxBodyBytes} bytes`));
-		}
-		return new Promise((resolve, reject) => {
-			const chunks: Buffer[] = [];
-			let bytes = 0;
-			const cleanup = (): void => {
-				req.off("data", onData);
-				req.off("end", onEnd);
-				req.off("error", onError);
-				req.off("aborted", onAborted);
-			};
-			const onError = (error: Error): void => { cleanup(); reject(error); };
-			const onAborted = (): void => onError(new RequestBodyError(400, "Request body was aborted"));
-			const onData = (chunk: Buffer): void => {
-				bytes += chunk.length;
-				if (bytes > this.maxBodyBytes) {
-					req.pause();
-					chunks.length = 0;
-					onError(new RequestBodyError(413, `Request body exceeds ${this.maxBodyBytes} bytes`));
-					return;
-				}
-				chunks.push(chunk);
-			};
-			const onEnd = (): void => {
-				cleanup();
-				if (bytes === 0) {
-					resolve({});
-					return;
-				}
-				let body: unknown;
-				try {
-					body = JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
-				} catch {
-					reject(new RequestBodyError(400, "Request body must be valid JSON"));
-					return;
-				}
-				if (body === null || typeof body !== "object" || Array.isArray(body) || Object.getPrototypeOf(body) !== Object.prototype) {
-					reject(new RequestBodyError(400, "Request body must be a JSON object"));
-					return;
-				}
-				resolve(body);
-			};
-			req.on("data", onData);
-			req.once("end", onEnd);
-			req.once("error", onError);
-			req.once("aborted", onAborted);
-		});
-	}
+  private body(req: IncomingMessage): Promise<unknown> {
+    if (Number(req.headers["content-length"]) > this.maxBodyBytes) {
+      req.pause();
+      return Promise.reject(new RequestBodyError(413, `Request body exceeds ${this.maxBodyBytes} bytes`));
+    }
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      const cleanup = (): void => {
+        req.off("data", onData);
+        req.off("end", onEnd);
+        req.off("error", onError);
+        req.off("aborted", onAborted);
+      };
+      const onError = (error: Error): void => {
+        cleanup();
+        reject(error);
+      };
+      const onAborted = (): void => onError(new RequestBodyError(400, "Request body was aborted"));
+      const onData = (chunk: Buffer): void => {
+        bytes += chunk.length;
+        if (bytes > this.maxBodyBytes) {
+          req.pause();
+          chunks.length = 0;
+          onError(new RequestBodyError(413, `Request body exceeds ${this.maxBodyBytes} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      };
+      const onEnd = (): void => {
+        cleanup();
+        if (bytes === 0) {
+          resolve({});
+          return;
+        }
+        let body: unknown;
+        try {
+          body = JSON.parse(Buffer.concat(chunks, bytes).toString("utf8"));
+        } catch {
+          reject(new RequestBodyError(400, "Request body must be valid JSON"));
+          return;
+        }
+        if (
+          body === null ||
+          typeof body !== "object" ||
+          Array.isArray(body) ||
+          Object.getPrototypeOf(body) !== Object.prototype
+        ) {
+          reject(new RequestBodyError(400, "Request body must be a JSON object"));
+          return;
+        }
+        resolve(body);
+      };
+      req.on("data", onData);
+      req.once("end", onEnd);
+      req.once("error", onError);
+      req.once("aborted", onAborted);
+    });
+  }
 }

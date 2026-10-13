@@ -17,10 +17,24 @@ const fixture: { content: Array<Record<string, unknown>> } = JSON.parse(
 
 function session(piPath: string): ManagedSession {
   return {
-    info: { id: "ses_server", projectID: "/tmp/test", directory: "/tmp/test", title: "Server tools", version: "test", time: { created: 1000, updated: 1000 } },
-    pi: undefined, messages: [], status: { type: "idle" }, model: undefined, streaming: undefined,
-    toolByCallId: new Map(), tree: { messageEntries: {} }, piPath,
-    hasPendingInteraction: () => false, hasRunningChildren: () => false,
+    info: {
+      id: "ses_server",
+      projectID: "/tmp/test",
+      directory: "/tmp/test",
+      title: "Server tools",
+      version: "test",
+      time: { created: 1000, updated: 1000 },
+    },
+    pi: undefined,
+    messages: [],
+    status: { type: "idle" },
+    model: undefined,
+    streaming: undefined,
+    toolByCallId: new Map(),
+    tree: { messageEntries: {} },
+    piPath,
+    hasPendingInteraction: () => false,
+    hasRunningChildren: () => false,
   };
 }
 
@@ -42,7 +56,10 @@ for (const rawFormat of ["object", "json", "repr"]) {
     const content = fixture.content.map((block) => {
       if (block.type !== "providerNative" || rawFormat === "object") return block;
       const json = JSON.stringify(block.raw);
-      return { ...block, raw: rawFormat === "json" ? json : json.replace(/"([^"]*)"/g, "'$1'").replace(/null/g, "None") };
+      return {
+        ...block,
+        raw: rawFormat === "json" ? json : json.replace(/"([^"]*)"/g, "'$1'").replace(/null/g, "None"),
+      };
     });
     const message = { role: "assistant", content, timestamp: 1000 };
     writeFileSync(piPath, JSON.stringify({ type: "message", id: "assistant", message }));
@@ -51,12 +68,23 @@ for (const rawFormat of ["object", "json", "repr"]) {
     const live = session(piPath);
     // When: full snapshots arrive via updates and then message_end.
     manager["onPiEvent"](live, { type: "message_start", message });
-    manager["onPiEvent"](live, { type: "message_update", message, assistantMessageEvent: { type: "text_start", contentIndex: 7, partial: message } });
+    manager["onPiEvent"](live, {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 7, partial: message },
+    });
     for (const [contentIndex, block] of content.entries()) {
       if (block.type === "text" || block.type === "thinking") {
-        manager["onPiEvent"](live, { type: "message_update", message, assistantMessageEvent: {
-          type: `${block.type}_end`, contentIndex, content: block.text ?? block.thinking, partial: message,
-        } });
+        manager["onPiEvent"](live, {
+          type: "message_update",
+          message,
+          assistantMessageEvent: {
+            type: `${block.type}_end`,
+            contentIndex,
+            content: block.text ?? block.thinking,
+            partial: message,
+          },
+        });
       }
     }
     manager["onPiEvent"](live, { type: "message_end", message });
@@ -69,16 +97,27 @@ for (const rawFormat of ["object", "json", "repr"]) {
     // Then: one card per call, unchanged adjacent parts, stable ids after restart.
     assert.equal(tools(liveParts).length, 3);
     assert.deepEqual(tools(liveParts).map(comparable), tools(historyParts).map(comparable));
-    assert.deepEqual(historyParts.map((part) => part.type), ["text", "tool", "reasoning", "tool", "tool", "text"]);
-    assert.deepEqual(liveParts.map((part) => part.type), historyParts.map((part) => part.type));
-    assert.deepEqual(liveParts.filter((part) => part.type !== "tool").map((part) => part.text),
-      ["Before search.", "Compare sources.", "After search."]);
+    assert.deepEqual(
+      historyParts.map((part) => part.type),
+      ["text", "tool", "reasoning", "tool", "tool", "text"],
+    );
+    assert.deepEqual(
+      liveParts.map((part) => part.type),
+      historyParts.map((part) => part.type),
+    );
+    assert.deepEqual(
+      liveParts.filter((part) => part.type !== "tool").map((part) => part.text),
+      ["Before search.", "Compare sources.", "After search."],
+    );
     const [web, search, openai] = tools(historyParts);
     assert.ok(web?.state.status === "completed");
     assert.equal(web.tool, "websearch");
     assert.deepEqual(web.state.input, { query: "Twitch dark theme color tokens" });
     assert.equal(web.state.title, "Twitch dark theme color tokens");
-    assert.equal(web.state.output, "Twitch Colors - Hex and RGB Color Codes - https://www.codeofcolors.com/twitch-colors.html");
+    assert.equal(
+      web.state.output,
+      "Twitch Colors - Hex and RGB Color Codes - https://www.codeofcolors.com/twitch-colors.html",
+    );
     assert.ok(search?.state.status === "completed");
     assert.equal(search.tool, "tool_search_tool_bm25");
     assert.equal(search.state.title, "monitor command background completion");
@@ -99,16 +138,29 @@ test("message_end alone maps server cards and skips malformed or unrelated nativ
   const manager = new SessionManager(() => {}, new SessionStore(join(dir, "state")));
   t.after(() => manager.disposeAll());
   const live = session(piPath);
-  const message = { role: "assistant", timestamp: 1000, content: [
-    fixture.content[1],
-    { type: "providerNative", subtype: "web_search_tool_result", raw: {
-      tool_use_id: "srvtoolu_web", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
-    } },
-    { type: "providerNative", subtype: "web_search_call", raw: { id: "failed", status: "failed", action: { query: "fail query" } } },
-    { type: "providerNative", subtype: "server_tool_use", raw: "not parseable" },
-    { type: "providerNative", subtype: "server_tool_use", raw: "{'id': __import__('os').system('bad')}" },
-    { type: "providerNative", subtype: "fallback", raw: { id: "marker" } },
-  ] };
+  const message = {
+    role: "assistant",
+    timestamp: 1000,
+    content: [
+      fixture.content[1],
+      {
+        type: "providerNative",
+        subtype: "web_search_tool_result",
+        raw: {
+          tool_use_id: "srvtoolu_web",
+          content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
+        },
+      },
+      {
+        type: "providerNative",
+        subtype: "web_search_call",
+        raw: { id: "failed", status: "failed", action: { query: "fail query" } },
+      },
+      { type: "providerNative", subtype: "server_tool_use", raw: "not parseable" },
+      { type: "providerNative", subtype: "server_tool_use", raw: "{'id': __import__('os').system('bad')}" },
+      { type: "providerNative", subtype: "fallback", raw: { id: "marker" } },
+    ],
+  };
   writeFileSync(piPath, JSON.stringify({ type: "message", id: "error", message }));
   manager["onPiEvent"](live, { type: "message_start", message });
   manager["onPiEvent"](live, { type: "message_end", message });
@@ -125,7 +177,10 @@ test("incremental partial snapshots update a single card without changing its id
   const live = session("/nonexistent");
   const message = { role: "assistant", timestamp: 1000, content: fixture.content.slice(0, 2) };
   manager["onPiEvent"](live, { type: "message_start", message });
-  manager["onPiEvent"](live, { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: message } });
+  manager["onPiEvent"](live, {
+    type: "message_update",
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: message },
+  });
   const initial = tools(live.messages?.[0]?.parts ?? []);
   assert.equal(initial.length, 1);
   assert.equal(initial[0]?.state.status, "running");
@@ -147,9 +202,19 @@ test("server result in a later assistant message completes the original card liv
     { role: "assistant", timestamp: 1000, content: [fixture.content[1]] },
     { role: "assistant", timestamp: 2000, content: [fixture.content[5], { type: "text", text: "Found it." }] },
   ];
-  writeFileSync(piPath, messages.map((message, index) => JSON.stringify({
-    type: "message", id: `e${index}`, parentId: index === 0 ? null : "e0", message,
-  })).join("\n"));
+  writeFileSync(
+    piPath,
+    messages
+      .map((message, index) =>
+        JSON.stringify({
+          type: "message",
+          id: `e${index}`,
+          parentId: index === 0 ? null : "e0",
+          message,
+        }),
+      )
+      .join("\n"),
+  );
   const manager = new SessionManager(() => {}, new SessionStore(join(dir, "state")));
   t.after(() => manager.disposeAll());
   const live = session(piPath);
@@ -165,7 +230,10 @@ test("server result in a later assistant message completes the original card liv
   const cards = tools(live.messages?.flatMap((m) => m.parts) ?? []);
   assert.equal(cards.length, 1);
   assert.ok(cards[0]?.state.status === "completed");
-  assert.equal(cards[0].state.output, "Twitch Colors - Hex and RGB Color Codes - https://www.codeofcolors.com/twitch-colors.html");
+  assert.equal(
+    cards[0].state.output,
+    "Twitch Colors - Hex and RGB Color Codes - https://www.codeofcolors.com/twitch-colors.html",
+  );
   assert.deepEqual(cards[0].state.time, { start: 1000, end: 2000 });
   assert.deepEqual(cards.map(comparable), tools(history.flatMap((m) => m.parts)).map(comparable));
   assert.equal(history[1]?.parts.length, 1);
@@ -182,45 +250,78 @@ for (const count of [1, 2]) {
       const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
       await server["sessions"].disposeAll();
       server["sessions"] = manager;
-      t.after(async () => { await server.stop(); rmSync(dir, { recursive: true, force: true }); });
+      t.after(async () => {
+        await server.stop();
+        rmSync(dir, { recursive: true, force: true });
+      });
       const live = session(piPath);
       manager["sessions"].set(live.info.id, live);
       await server.start();
       const items = Array.from({ length: count }, (_, i) => ({ description: `child ${i}`, prompt: `prompt ${i}` }));
       const args = count === 1 ? items[0] : { tasks: items };
       const content: Array<Record<string, unknown>> = [
-        { type: "text", text: "Before" }, { type: "toolCall", id: "task_call", name: "task", arguments: args },
+        { type: "text", text: "Before" },
+        { type: "toolCall", id: "task_call", name: "task", arguments: args },
       ];
       const message = { role: "assistant", timestamp: 1000, content };
       manager["onPiEvent"](live, { type: "message_start", message });
-      manager["onPiEvent"](live, { type: "message_update", message, assistantMessageEvent: {
-        type: "text_end", contentIndex: 0, content: "Before", partial: message,
-      } });
+      manager["onPiEvent"](live, {
+        type: "message_update",
+        message,
+        assistantMessageEvent: {
+          type: "text_end",
+          contentIndex: 0,
+          content: "Before",
+          partial: message,
+        },
+      });
       for (const type of ["toolcall_start", "toolcall_end"]) {
-        manager["onPiEvent"](live, { type: "message_update", message, assistantMessageEvent: {
-          type, contentIndex: 1, id: "task_call", toolName: "task",
-          toolCall: { id: "task_call", name: "task", arguments: args }, partial: message,
-        } });
+        manager["onPiEvent"](live, {
+          type: "message_update",
+          message,
+          assistantMessageEvent: {
+            type,
+            contentIndex: 1,
+            id: "task_call",
+            toolName: "task",
+            toolCall: { id: "task_call", name: "task", arguments: args },
+            partial: message,
+          },
+        });
       }
       const original = tools(live.messages?.[0]?.parts ?? []).filter((part) => part.tool === "task");
       assert.equal(original.length, count);
       if (withNative) content.push(fixture.content[1] ?? {}, fixture.content[5] ?? {});
       content.push({ type: "text", text: "After" });
-      manager["onPiEvent"](live, { type: "message_update", message, assistantMessageEvent: {
-        type: "text_end", contentIndex: content.length - 1, content: "After", partial: message,
-      } });
+      manager["onPiEvent"](live, {
+        type: "message_update",
+        message,
+        assistantMessageEvent: {
+          type: "text_end",
+          contentIndex: content.length - 1,
+          content: "After",
+          partial: message,
+        },
+      });
       manager["onPiEvent"](live, { type: "message_end", message });
-      const details = count === 1
-        ? { status: "completed", final_response: "done 0" }
-        : { items: items.map((_, i) => ({ status: "completed", final_response: `done ${i}` })) };
-      manager["onPiEvent"](live, { type: "tool_execution_end", toolCallId: "task_call",
-        result: { details, content: [{ type: "text", text: "done 0" }] } });
+      const details =
+        count === 1
+          ? { status: "completed", final_response: "done 0" }
+          : { items: items.map((_, i) => ({ status: "completed", final_response: `done ${i}` })) };
+      manager["onPiEvent"](live, {
+        type: "tool_execution_end",
+        toolCallId: "task_call",
+        result: { details, content: [{ type: "text", text: "done 0" }] },
+      });
       manager["onPiEvent"](live, { type: "agent_end" });
       const response = await fetch(`${server.url}/session/${live.info.id}/message`);
       assert.equal(response.status, 200);
-      const messages = await response.json() as Array<{ parts: OCPart[] }>;
+      const messages = (await response.json()) as Array<{ parts: OCPart[] }>;
       const returned = tools(messages.flatMap((m) => m.parts)).filter((part) => part.tool === "task");
-      assert.deepEqual(returned.map((part) => part.id), original.map((part) => part.id));
+      assert.deepEqual(
+        returned.map((part) => part.id),
+        original.map((part) => part.id),
+      );
       returned.forEach((part, i) => {
         assert.equal(part.id, `prt_task_task_call_${i}`);
         assert.equal(part.state.input.description, `child ${i}`);
@@ -228,9 +329,14 @@ for (const count of [1, 2]) {
         assert.ok(part.state.status === "completed");
         assert.equal(part.state.output, `done ${i}`);
       });
-      assert.deepEqual(messages[0]?.parts.filter((p) => p.type === "text").map((p) => p.text), ["Before", "After"]);
-      assert.deepEqual(messages[0]?.parts.map((part) => part.type),
-        ["text", ...Array(count).fill("tool"), ...(withNative ? ["tool"] : []), "text"]);
+      assert.deepEqual(
+        messages[0]?.parts.filter((p) => p.type === "text").map((p) => p.text),
+        ["Before", "After"],
+      );
+      assert.deepEqual(
+        messages[0]?.parts.map((part) => part.type),
+        ["text", ...Array(count).fill("tool"), ...(withNative ? ["tool"] : []), "text"],
+      );
     });
   }
 }
@@ -247,30 +353,62 @@ test("malformed repr parsing is bounded even for escaped quotes without a closin
     console.log(JSON.stringify({ms:performance.now()-started}));
   `;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", probe], {
-    cwd: process.cwd(), encoding: "utf8", timeout: 2000,
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 2000,
   });
   assert.equal(result.error, undefined, `parser exceeded watchdog: ${result.error?.message}`);
   assert.equal(result.status, 0, result.stderr);
   const timing: { ms: number } = JSON.parse(result.stdout);
   assert.ok(timing.ms < 500, `malformed parser took ${timing.ms}ms`);
   // A query exceeding the explicit raw cap is not parsed even when valid.
-  assert.equal(providerToolParts([{ type: "providerNative", subtype: "server_tool_use",
-    raw: JSON.stringify({ id: "large", name: "web_search", input: { query: "a".repeat(2_000_000) } }) }],
-  "s", "m", 0).size, 0);
+  assert.equal(
+    providerToolParts(
+      [
+        {
+          type: "providerNative",
+          subtype: "server_tool_use",
+          raw: JSON.stringify({ id: "large", name: "web_search", input: { query: "a".repeat(2_000_000) } }),
+        },
+      ],
+      "s",
+      "m",
+      0,
+    ).size,
+    0,
+  );
 });
 
 test("Python repr escapes preserve the exact query rather than dropping valid calls", () => {
   const fixture: Array<{ raw: string; query: string }> = JSON.parse(
-    readFileSync(new URL("./fixtures/provider-python-repr.json", import.meta.url), "utf8"));
+    readFileSync(new URL("./fixtures/provider-python-repr.json", import.meta.url), "utf8"),
+  );
   for (const sample of fixture) {
-    const part = providerToolParts([{ type: "providerNative", subtype: "server_tool_use", raw: sample.raw }],
-      "s", "m", 0).get(0);
+    const part = providerToolParts(
+      [{ type: "providerNative", subtype: "server_tool_use", raw: sample.raw }],
+      "s",
+      "m",
+      0,
+    ).get(0);
     assert.ok(part, sample.raw);
     assert.equal(part.state.input.query, sample.query);
   }
   for (const query of [String.raw`\xGG`, String.raw`\u123`, String.raw`\U00110000`]) {
-    assert.equal(providerToolParts([{ type: "providerNative", subtype: "server_tool_use",
-      raw: `{'id':'bad','name':'web_search','input':{'query':'${query}'}}` }], "s", "m", 0).size, 0);
+    assert.equal(
+      providerToolParts(
+        [
+          {
+            type: "providerNative",
+            subtype: "server_tool_use",
+            raw: `{'id':'bad','name':'web_search','input':{'query':'${query}'}}`,
+          },
+        ],
+        "s",
+        "m",
+        0,
+      ).size,
+      0,
+    );
   }
 });
 
@@ -279,14 +417,35 @@ for (const later of ["toolUse", "stop"]) {
     const dir = mkdtempSync(join(tmpdir(), "antechamber-native-run-boundary-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const piPath = join(dir, "session.jsonl");
-    const laterContent = later === "toolUse"
-      ? [{ type: "toolCall", id: "read", name: "read", arguments: { path: "/tmp/a" } }]
-      : [{ type: "text", text: "Finished" }];
-    writeFileSync(piPath, [
-      { type: "message", id: "e0", parentId: null, message: { role: "assistant", timestamp: 1000, stopReason: "aborted", content: [fixture.content[1]] } },
-      { type: "message", id: "e1", parentId: "e0", message: { role: "user", timestamp: 2000, content: [{ type: "text", text: "Read a file instead" }] } },
-      { type: "message", id: "e2", parentId: "e1", message: { role: "assistant", timestamp: 3000, stopReason: later, content: laterContent } },
-    ].map((entry) => JSON.stringify(entry)).join("\n"));
+    const laterContent =
+      later === "toolUse"
+        ? [{ type: "toolCall", id: "read", name: "read", arguments: { path: "/tmp/a" } }]
+        : [{ type: "text", text: "Finished" }];
+    writeFileSync(
+      piPath,
+      [
+        {
+          type: "message",
+          id: "e0",
+          parentId: null,
+          message: { role: "assistant", timestamp: 1000, stopReason: "aborted", content: [fixture.content[1]] },
+        },
+        {
+          type: "message",
+          id: "e1",
+          parentId: "e0",
+          message: { role: "user", timestamp: 2000, content: [{ type: "text", text: "Read a file instead" }] },
+        },
+        {
+          type: "message",
+          id: "e2",
+          parentId: "e1",
+          message: { role: "assistant", timestamp: 3000, stopReason: later, content: laterContent },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
     const manager = new SessionManager(() => {}, new SessionStore(join(dir, "state")));
     t.after(() => manager.disposeAll());
     const restored = session(piPath);
@@ -316,7 +475,10 @@ for (const reason of ["toolUse", "stop", "aborted", "error"]) {
     if (reason !== "toolUse") manager["onPiEvent"](live, { type: "agent_end" });
     const restored = session(piPath);
     restored.messages = undefined;
-    for (const cards of [tools(live.messages?.[0]?.parts ?? []), tools(manager["ensureMessages"](restored)[0]?.parts ?? [])]) {
+    for (const cards of [
+      tools(live.messages?.[0]?.parts ?? []),
+      tools(manager["ensureMessages"](restored)[0]?.parts ?? []),
+    ]) {
       const part = cards[0];
       assert.ok(part);
       assert.notEqual(part.state.status, "completed");

@@ -19,10 +19,18 @@ export interface SessionFileDiff {
 }
 
 export function touchedFiles(parts: readonly OCPart[]): string[] {
-  return [...new Set(parts.flatMap((part) =>
-    part.type === "tool" && ["write", "edit", "multiedit"].includes(part.tool) &&
-    part.state.status === "completed" && typeof part.state.input.filePath === "string"
-      ? [part.state.input.filePath] : []))];
+  return [
+    ...new Set(
+      parts.flatMap((part) =>
+        part.type === "tool" &&
+        ["write", "edit", "multiedit"].includes(part.tool) &&
+        part.state.status === "completed" &&
+        typeof part.state.input.filePath === "string"
+          ? [part.state.input.filePath]
+          : [],
+      ),
+    ),
+  ];
 }
 
 async function git(directory: string, args: string[]): Promise<string> {
@@ -56,7 +64,10 @@ async function confinedFile(directory: string, path: string): Promise<string | u
   return absolute;
 }
 
-export async function sessionDiff(directory: string, messages: readonly OCMessageWithParts[]): Promise<SessionFileDiff[]> {
+export async function sessionDiff(
+  directory: string,
+  messages: readonly OCMessageWithParts[],
+): Promise<SessionFileDiff[]> {
   let gitRoot: string | undefined;
   try {
     gitRoot = (await git(directory, ["rev-parse", "--show-toplevel"])).trim();
@@ -69,7 +80,9 @@ export async function sessionDiff(directory: string, messages: readonly OCMessag
     const absolute = await confinedFile(directory, path);
     if (absolute === undefined || seen.has(absolute)) continue;
     seen.add(absolute);
-    const file = relative(await realpath(directory), absolute).split(sep).join("/");
+    const file = relative(await realpath(directory), absolute)
+      .split(sep)
+      .join("/");
     let after = "";
     let exists = true;
     try {
@@ -97,20 +110,56 @@ export async function sessionDiff(directory: string, messages: readonly OCMessag
         const counts = numstat.split("\t");
         additions = Number(counts[0]) || 0;
         deletions = Number(counts[1]) || 0;
-        patch = await git(gitRoot, ["diff", "HEAD", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--", literal]);
+        patch = await git(gitRoot, [
+          "diff",
+          "HEAD",
+          "--no-ext-diff",
+          "--no-color",
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+          "--",
+          literal,
+        ]);
       } else if (exists) {
         // --no-index returns 1 when differences exist; that is its success contract.
         try {
-          patch = await git(gitRoot, ["diff", "--no-index", "--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--", "/dev/null", gitPath]);
+          patch = await git(gitRoot, [
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--",
+            "/dev/null",
+            gitPath,
+          ]);
         } catch (error) {
-          if (!(error instanceof Error && "code" in error && error.code === 1 && "stdout" in error && typeof error.stdout === "string")) throw error;
+          if (
+            !(
+              error instanceof Error &&
+              "code" in error &&
+              error.code === 1 &&
+              "stdout" in error &&
+              typeof error.stdout === "string"
+            )
+          )
+            throw error;
           patch = error.stdout;
         }
         additions = after === "" ? 0 : after.split("\n").length - (after.endsWith("\n") ? 1 : 0);
       }
     }
-    diffs.push({ file, path: file, before, after, additions, deletions, patch,
-      status: !exists ? "deleted" : tracked ? "modified" : "added" });
+    diffs.push({
+      file,
+      path: file,
+      before,
+      after,
+      additions,
+      deletions,
+      patch,
+      status: !exists ? "deleted" : tracked ? "modified" : "added",
+    });
   }
   return diffs;
 }

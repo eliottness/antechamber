@@ -47,12 +47,15 @@ export class SessionLifecycle {
   private stopped = false;
   private stopping: Promise<void> | undefined;
 
-  constructor(private sessions: () => Iterable<ManagedSession>, options: LifecycleOptions = {}) {
+  constructor(
+    private sessions: () => Iterable<ManagedSession>,
+    options: LifecycleOptions = {},
+  ) {
     this.clock = options.clock ?? systemClock;
     this.idleTimeoutMs = options.idleTimeoutMs ?? positiveEnv("IDLE_TIMEOUT_MS", 900_000);
     this.maxLive = options.maxLive ?? positiveEnv("MAX_LIVE", 8);
-    this.reaperIntervalMs = options.reaperIntervalMs ??
-      Math.min(MAX_REAPER_INTERVAL_MS, Math.max(1_000, Math.floor(this.idleTimeoutMs / 4)));
+    this.reaperIntervalMs =
+      options.reaperIntervalMs ?? Math.min(MAX_REAPER_INTERVAL_MS, Math.max(1_000, Math.floor(this.idleTimeoutMs / 4)));
     if (!Number.isSafeInteger(this.reaperIntervalMs) || this.reaperIntervalMs <= 0) {
       throw new Error("reaperIntervalMs must be a positive integer");
     }
@@ -67,9 +70,16 @@ export class SessionLifecycle {
   }
 
   private idle(s: ManagedSession): boolean {
-    return !this.active.has(s) && s.pi !== undefined && !s.pi.isBusy && s.status.type === "idle" &&
-      !s.hasPendingInteraction() && !s.hasRunningChildren() &&
-      s.piSessionId !== undefined && s.piPath !== undefined;
+    return (
+      !this.active.has(s) &&
+      s.pi !== undefined &&
+      !s.pi.isBusy &&
+      s.status.type === "idle" &&
+      !s.hasPendingInteraction() &&
+      !s.hasRunningChildren() &&
+      s.piSessionId !== undefined &&
+      s.piPath !== undefined
+    );
   }
 
   /** Protect the caller across awaits, including admission of a dormant session. */
@@ -101,7 +111,8 @@ export class SessionLifecycle {
   /** Called inside run(), before a process is spawned. */
   async makeRoom(): Promise<void> {
     while ([...this.sessions()].filter((s) => s.pi !== undefined).length >= this.maxLive) {
-      const candidate = [...this.sessions()].filter((s) => this.idle(s))
+      const candidate = [...this.sessions()]
+        .filter((s) => this.idle(s))
         .sort((a, b) => (this.used.get(a) ?? 0) - (this.used.get(b) ?? 0))[0];
       if (candidate === undefined) {
         throw new Error(`${ENV_PREFIX}MAX_LIVE=${this.maxLive} reached: no disposable idle session`);
@@ -144,10 +155,7 @@ export class SessionLifecycle {
     this.stopped = true;
     this.clock.clearInterval(this.timer);
     this.stopping = this.enqueue(async () => {
-      await Promise.all([
-        ...[...this.sessions()].map((s) => this.dormant(s)),
-        ...this.disposing,
-      ]);
+      await Promise.all([...[...this.sessions()].map((s) => this.dormant(s)), ...this.disposing]);
     });
     return this.stopping;
   }

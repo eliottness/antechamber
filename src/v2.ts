@@ -24,7 +24,15 @@
 
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
-import type { OCAssistantMessage, OCMessageWithParts, OCModelRef, OCPart, OCSession, OCSessionStatus, OCEvent } from "./types.js";
+import type {
+  OCAssistantMessage,
+  OCMessageWithParts,
+  OCModelRef,
+  OCPart,
+  OCSession,
+  OCSessionStatus,
+  OCEvent,
+} from "./types.js";
 
 function genId(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
@@ -101,7 +109,9 @@ function toV2Model(m: CatalogModelLike): V2Model {
     capabilities: { tools: true, input: inputs.length > 0 ? inputs : ["text"], output: ["text"] },
     variants: [],
     time: { released: 0 },
-    cost: [{ input: m.cost.input, output: m.cost.output, cache: { read: m.cost.cache.read, write: m.cost.cache.write } }],
+    cost: [
+      { input: m.cost.input, output: m.cost.output, cache: { read: m.cost.cache.read, write: m.cost.cache.write } },
+    ],
     status: "active",
     enabled: true,
     limit: { context: m.limit.context, output: m.limit.output },
@@ -420,11 +430,17 @@ export class V2EventTranslator {
       }
       case "permission.asked": {
         const p = ev.properties;
-        return [this.frame(directory, "permission.v2.asked", {
-          id: p.id, sessionID: p.sessionID, action: p.permission,
-          resources: p.patterns, save: p.always, metadata: p.metadata,
-          ...(p.tool ? { source: { type: "tool", ...p.tool } } : {}),
-        })];
+        return [
+          this.frame(directory, "permission.v2.asked", {
+            id: p.id,
+            sessionID: p.sessionID,
+            action: p.permission,
+            resources: p.patterns,
+            save: p.always,
+            metadata: p.metadata,
+            ...(p.tool ? { source: { type: "tool", ...p.tool } } : {}),
+          }),
+        ];
       }
       case "permission.replied":
         return [this.frame(directory, "permission.v2.replied", ev.properties)];
@@ -439,11 +455,7 @@ export class V2EventTranslator {
     }
   }
 
-  private onStatus(
-    directory: string,
-    sessionID: string,
-    status: OCSessionStatus,
-  ): V2Envelope[] {
+  private onStatus(directory: string, sessionID: string, status: OCSessionStatus): V2Envelope[] {
     const frames: V2Envelope[] = [this.frame(directory, "session.status", { sessionID, status })];
     const st = this.state(sessionID);
     if (status.type === "busy" && !st.executionStarted) {
@@ -486,7 +498,9 @@ export class V2EventTranslator {
       if (info.finish !== undefined) st.step.finish = info.finish;
       if (!st.step.streamed) {
         st.step.streamed = true;
-        frames.push(this.frame(directory, "session.step.streamed", { sessionID: info.sessionID, assistantMessageID: info.id }));
+        frames.push(
+          this.frame(directory, "session.step.streamed", { sessionID: info.sessionID, assistantMessageID: info.id }),
+        );
       }
     }
     if (st.step && !st.step.ended && info.time.completed !== undefined) {
@@ -512,18 +526,24 @@ export class V2EventTranslator {
   }
 
   private onPartUpdated(directory: string, part: OCPart, delta?: string): V2Envelope[] {
-    return part.type === "tool"
-      ? this.onToolPart(directory, part)
-      : this.onTextPart(directory, part, delta);
+    return part.type === "tool" ? this.onToolPart(directory, part) : this.onTextPart(directory, part, delta);
   }
 
-  private onTextPart(directory: string, part: Extract<OCPart, { type: "text" | "reasoning" }>, delta?: string): V2Envelope[] {
+  private onTextPart(
+    directory: string,
+    part: Extract<OCPart, { type: "text" | "reasoning" }>,
+    delta?: string,
+  ): V2Envelope[] {
     // Shell creates this user turn on the server; there is no optimistic prompt.
     if (part.type === "text" && part.synthetic) {
-      return [this.frame(directory, "session.prompted", {
-        sessionID: part.sessionID, messageID: part.messageID,
-        prompt: { text: part.text }, delivery: "queue",
-      })];
+      return [
+        this.frame(directory, "session.prompted", {
+          sessionID: part.sessionID,
+          messageID: part.messageID,
+          prompt: { text: part.text },
+          delivery: "queue",
+        }),
+      ];
     }
     const kind = part.type;
     const st = this.state(part.sessionID);
@@ -572,7 +592,15 @@ export class V2EventTranslator {
     const st = this.state(part.sessionID);
     let ts = st.tools.get(part.id);
     if (!ts) {
-      ts = { callID: part.callID, name: part.tool, started: false, inputEnded: false, called: false, ended: false, raw: "" };
+      ts = {
+        callID: part.callID,
+        name: part.tool,
+        started: false,
+        inputEnded: false,
+        called: false,
+        ended: false,
+        raw: "",
+      };
       st.tools.set(part.id, ts);
     }
     ts.callID = part.callID;
@@ -601,7 +629,12 @@ export class V2EventTranslator {
     }
     if (!ts.inputEnded) {
       ts.inputEnded = true;
-      frames.push(this.frame(directory, "session.tool.input.ended", { ...base, text: ts.raw !== "" ? ts.raw : safeJson(state.input) }));
+      frames.push(
+        this.frame(directory, "session.tool.input.ended", {
+          ...base,
+          text: ts.raw !== "" ? ts.raw : safeJson(state.input),
+        }),
+      );
     }
     if (!ts.called) {
       ts.called = true;

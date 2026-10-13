@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { PiRpcClient } from "./pi-rpc.js";
 import { getAgentName } from "./agent-name.js";
 import type { ManagedSession, SessionManager } from "./sessions.js";
-import type { OCAssistantMessage, OCEvent, OCMessageWithParts, OCToolPart, OCTextPart, OCUserMessage } from "./types.js";
+import type {
+  OCAssistantMessage,
+  OCEvent,
+  OCMessageWithParts,
+  OCToolPart,
+  OCTextPart,
+  OCUserMessage,
+} from "./types.js";
 
 export type CommandDescriptor = { name: string; description: string; template: "" };
 export type SlashCommandInput = { command: string; arguments: string };
@@ -12,9 +19,7 @@ export type ShellUserMessage = OCMessageWithParts & { info: OCUserMessage; parts
 
 export type ShareNoticeMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCTextPart] };
 
-export type ShellExecution =
-  | { kind: "completed"; message: ShellMessage }
-  | { kind: "error"; message: string };
+export type ShellExecution = { kind: "completed"; message: ShellMessage } | { kind: "error"; message: string };
 
 export interface ShellCommandContext {
   sessions: SessionManager;
@@ -130,13 +135,16 @@ export function getCommands(directory: string): Promise<CommandDescriptor[]> {
       } finally {
         await pi.dispose();
       }
-    })().then((commands) => {
-      entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
-      return commands;
-    }, (error: unknown) => {
-      commandCache.delete(directory);
-      throw error;
-    }),
+    })().then(
+      (commands) => {
+        entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
+        return commands;
+      },
+      (error: unknown) => {
+        commandCache.delete(directory);
+        throw error;
+      },
+    ),
   };
   commandCache.set(directory, entry);
   return entry.promise;
@@ -172,7 +180,9 @@ export function parseShellResult(value: unknown): ShellResult {
   if (
     !isRecord(value) ||
     typeof value.output !== "string" ||
-    (typeof value.exitCode !== "number" && value.exitCode !== null && !(value.cancelled === true && value.exitCode === undefined)) ||
+    (typeof value.exitCode !== "number" &&
+      value.exitCode !== null &&
+      !(value.cancelled === true && value.exitCode === undefined)) ||
     typeof value.cancelled !== "boolean" ||
     typeof value.truncated !== "boolean"
   ) {
@@ -213,18 +223,32 @@ export function shellUserMessage(message: ShellMessage): ShellUserMessage {
   const { info } = message;
   return {
     info: {
-      id: info.parentID, sessionID: info.sessionID, role: "user", time: { created: info.time.created },
-      agent: info.mode, model: { providerID: info.providerID, modelID: info.modelID },
+      id: info.parentID,
+      sessionID: info.sessionID,
+      role: "user",
+      time: { created: info.time.created },
+      agent: info.mode,
+      model: { providerID: info.providerID, modelID: info.modelID },
     },
-    parts: [{
-      id: `${message.parts[0].id}u`, sessionID: info.sessionID, messageID: info.parentID,
-      type: "text", text: "The following tool was executed by the user", synthetic: true,
-      time: { start: info.time.created, end: info.time.created },
-    }],
+    parts: [
+      {
+        id: `${message.parts[0].id}u`,
+        sessionID: info.sessionID,
+        messageID: info.parentID,
+        type: "text",
+        text: "The following tool was executed by the user",
+        synthetic: true,
+        time: { start: info.time.created, end: info.time.created },
+      },
+    ],
   };
 }
 
-export function announceSessionNotice(context: ShareNoticeContext, messageText: string, error?: OCAssistantMessage["error"]): void {
+export function announceSessionNotice(
+  context: ShareNoticeContext,
+  messageText: string,
+  error?: OCAssistantMessage["error"],
+): void {
   const { session, sessions, emit } = context;
   if (!sessions.messages(session.info.id)) return;
   const info = assistantMessage(session);
@@ -267,7 +291,12 @@ export function completeShellMessage(message: ShellMessage, command: string, res
   message.info.time.completed = Date.now();
 }
 
-export function failShellMessage(message: ShellMessage, command: string, error: string, metadata?: Record<string, unknown>): void {
+export function failShellMessage(
+  message: ShellMessage,
+  command: string,
+  error: string,
+  metadata?: Record<string, unknown>,
+): void {
   const [part] = message.parts;
   const started = part.state.status === "pending" ? Date.now() : part.state.time.start;
   part.state = {
@@ -291,7 +320,7 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   sessions.messages(session.info.id);
   const message = createShellMessage(session, command);
   const user = shellUserMessage(message);
-  const dispatch = session.tree.shellDispatch ??= {};
+  const dispatch = (session.tree.shellDispatch ??= {});
   dispatch[message.info.id] = false;
   const afterEntryId = session.tree.leafId ?? null;
   const controller = new AbortController();
@@ -312,14 +341,19 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   emitShellMessage(context, message);
   try {
     sessions.update(session.info.id, {});
-    const response = await sessions.sessionRpc<unknown>(session.info.id, { type: "bash", command }, controller.signal, () => {
-      dispatch[message.info.id] = true;
-      // Only actual dispatch admissions are durable; queued attempts stay in the live cache.
-      (session.tree.localShellTurns ??= []).push({ afterEntryId, messages: [user, message] });
-      // A native result can land beyond the last synchronized leaf.
-      if (!session.tree.revert) delete session.tree.leafId;
-      sessions.update(session.info.id, {});
-    });
+    const response = await sessions.sessionRpc<unknown>(
+      session.info.id,
+      { type: "bash", command },
+      controller.signal,
+      () => {
+        dispatch[message.info.id] = true;
+        // Only actual dispatch admissions are durable; queued attempts stay in the live cache.
+        (session.tree.localShellTurns ??= []).push({ afterEntryId, messages: [user, message] });
+        // A native result can land beyond the last synchronized leaf.
+        if (!session.tree.revert) delete session.tree.leafId;
+        sessions.update(session.info.id, {});
+      },
+    );
     if (controller.signal.aborted) throw controller.signal.reason;
     if (!response.success) {
       const error = response.error ?? "OmO bash failed";
@@ -337,8 +371,12 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     return { kind: "completed", message };
   } catch (error) {
     if (controller.signal.aborted) {
-      failShellMessage(message, command, interrupted ? "Interrupted by restart" : "Command cancelled",
-        interrupted ? { interrupted: true } : { cancelled: true });
+      failShellMessage(
+        message,
+        command,
+        interrupted ? "Interrupted by restart" : "Command cancelled",
+        interrupted ? { interrupted: true } : { cancelled: true },
+      );
       emitShellMessage(context, message);
       return { kind: "completed", message };
     }

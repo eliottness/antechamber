@@ -13,7 +13,9 @@ const WORK_DIR = process.argv[2] ?? process.env.OMO_CAPTURE_WORK_DIR ?? "";
 const OUTPUT = join(process.cwd(), "test", "fixtures", "omo-rpc", "run1.jsonl");
 const OMO = process.argv[3] ?? process.env.ANTECHAMBER_PI_BINARY ?? "";
 if (!WORK_DIR.trim() || !OMO.trim()) {
-  throw new Error("Usage: tsx contrib/omo/capture-omo-rpc.ts <work-directory> <omo-binary> (or OMO_CAPTURE_WORK_DIR and ANTECHAMBER_PI_BINARY)");
+  throw new Error(
+    "Usage: tsx contrib/omo/capture-omo-rpc.ts <work-directory> <omo-binary> (or OMO_CAPTURE_WORK_DIR and ANTECHAMBER_PI_BINARY)",
+  );
 }
 const SECRET_KEY = /key|token|secret|password|auth|cookie/i;
 const FORBIDDEN = /sk-[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}/g;

@@ -55,7 +55,12 @@ interface V2Envelope {
 /** Minimal SSE client for the v2 envelopes on `/api/event`. */
 class V2Sse {
   private events: V2Envelope[] = [];
-  private waiters: Array<{ type: string; test: (e: V2Envelope) => boolean; resolve: (e: V2Envelope) => void; timer: NodeJS.Timeout }> = [];
+  private waiters: Array<{
+    type: string;
+    test: (e: V2Envelope) => boolean;
+    resolve: (e: V2Envelope) => void;
+    timer: NodeJS.Timeout;
+  }> = [];
   private controller = new AbortController();
 
   constructor(private url: string) {}
@@ -176,7 +181,11 @@ interface MessageBody {
   content?: Array<{ type?: string; text?: string }>;
 }
 
-function refOf(m: { id?: string | undefined; modelID?: string | undefined; providerID?: string | undefined }): ModelRef | undefined {
+function refOf(m: {
+  id?: string | undefined;
+  modelID?: string | undefined;
+  providerID?: string | undefined;
+}): ModelRef | undefined {
   const providerID = typeof m.providerID === "string" && m.providerID !== "" ? m.providerID : undefined;
   const modelID =
     typeof m.modelID === "string" && m.modelID !== ""
@@ -247,7 +256,11 @@ async function main(): Promise<void> {
     console.log("— catalog —");
     const models = await api<{ location?: { directory?: string }; data?: CatalogModel[] }>(url, "/api/model");
     const catalog = dedupe((models.body.data ?? []).map((m) => refOf(m)).filter((r): r is ModelRef => r !== undefined));
-    ok("GET /api/model {location,data:[Model]}", models.status === 200 && Array.isArray(models.body.data) && catalog.length > 0, `${catalog.length} distinct models`);
+    ok(
+      "GET /api/model {location,data:[Model]}",
+      models.status === 200 && Array.isArray(models.body.data) && catalog.length > 0,
+      `${catalog.length} distinct models`,
+    );
 
     // The picker is seeded from /api/model/default and validated against the
     // catalog: a default that is not in the list makes the client silently fall
@@ -267,7 +280,11 @@ async function main(): Promise<void> {
       body: JSON.stringify({ title: "model consistency" }),
     });
     const sessionId = created.body.data?.id;
-    ok("POST /api/session {data:Session}", created.status === 200 && typeof sessionId === "string" && sessionId !== "", JSON.stringify(created.body).slice(0, 200));
+    ok(
+      "POST /api/session {data:Session}",
+      created.status === 200 && typeof sessionId === "string" && sessionId !== "",
+      JSON.stringify(created.body).slice(0, 200),
+    );
     if (typeof sessionId !== "string" || sessionId === "") throw new Error("no session id");
 
     const initial = sessionModel(created.body.data);
@@ -289,7 +306,9 @@ async function main(): Promise<void> {
       sse = undefined;
       await server.stop();
       server = undefined;
-      console.log(`\nSKIP: no catalog model distinct from the active one (${show(initial ?? defRef)}) — cannot prove a switch with ${catalog.length} model(s).`);
+      console.log(
+        `\nSKIP: no catalog model distinct from the active one (${show(initial ?? defRef)}) — cannot prove a switch with ${catalog.length} model(s).`,
+      );
       console.log(`${checks - failures}/${checks} checks passed`);
       process.exit(0);
     }
@@ -301,7 +320,11 @@ async function main(): Promise<void> {
       method: "POST",
       body: JSON.stringify({ model: { providerID: modelB.providerID, modelID: modelB.modelID } }),
     });
-    ok("switch to B → 204 empty", switched.status === 204 && switched.body === undefined, `status ${switched.status} body ${JSON.stringify(switched.body)?.slice(0, 160)}`);
+    ok(
+      "switch to B → 204 empty",
+      switched.status === 204 && switched.body === undefined,
+      `status ${switched.status} body ${JSON.stringify(switched.body)?.slice(0, 160)}`,
+    );
 
     // The session-create path also announces pi's boot model, so match on the
     // target model too — otherwise this picks up the earlier envelope.
@@ -326,7 +349,11 @@ async function main(): Promise<void> {
     );
 
     const afterSwitch = sessionModel(await getSession(url, sessionId));
-    ok("GET /api/session/:id reports B", sameRef(afterSwitch, modelB), `reported=${show(afterSwitch)} expected=${show(modelB)}`);
+    ok(
+      "GET /api/session/:id reports B",
+      sameRef(afterSwitch, modelB),
+      `reported=${show(afterSwitch)} expected=${show(modelB)}`,
+    );
 
     // 4. the UI calls this before EVERY send — a no-op switch must stay quiet,
     // otherwise the transcript fills up with phantom "model switched" markers.
@@ -343,27 +370,46 @@ async function main(): Promise<void> {
 
     // 5. a model pi does not know must be refused, not silently accepted
     console.log("— invalid model —");
-    const bogus = await api<{ error?: string; name?: string }>(url, `/api/session/${encodeURIComponent(sessionId)}/model`, {
-      method: "POST",
-      body: JSON.stringify({ model: { providerID: "nope", modelID: "nope" } }),
-    });
-    ok("switch to nope/nope → 400", bogus.status === 400, `status ${bogus.status} body ${JSON.stringify(bogus.body).slice(0, 160)}`);
+    const bogus = await api<{ error?: string; name?: string }>(
+      url,
+      `/api/session/${encodeURIComponent(sessionId)}/model`,
+      {
+        method: "POST",
+        body: JSON.stringify({ model: { providerID: "nope", modelID: "nope" } }),
+      },
+    );
+    ok(
+      "switch to nope/nope → 400",
+      bogus.status === 400,
+      `status ${bogus.status} body ${JSON.stringify(bogus.body).slice(0, 160)}`,
+    );
     const afterBogus = sessionModel(await getSession(url, sessionId));
     ok("session still reports B after the refused switch", sameRef(afterBogus, modelB), `reported=${show(afterBogus)}`);
 
     // 6. the reply must be attributed to the model that actually produced it
     console.log("— prompt + reply attribution —");
     const clientMessageId = `msg_modelsmoke${Date.now()}`;
-    const prompt = await api<{ data?: { id?: string; type?: string } }>(url, `/api/session/${encodeURIComponent(sessionId)}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ id: clientMessageId, text: "Reply with the single word: pong", delivery: "steer" }),
-    });
-    ok("POST /api/session/:id/prompt {data:UserMessage}", prompt.status === 200 && prompt.body.data?.id === clientMessageId, JSON.stringify(prompt.body).slice(0, 200));
+    const prompt = await api<{ data?: { id?: string; type?: string } }>(
+      url,
+      `/api/session/${encodeURIComponent(sessionId)}/prompt`,
+      {
+        method: "POST",
+        body: JSON.stringify({ id: clientMessageId, text: "Reply with the single word: pong", delivery: "steer" }),
+      },
+    );
+    ok(
+      "POST /api/session/:id/prompt {data:UserMessage}",
+      prompt.status === 200 && prompt.body.data?.id === clientMessageId,
+      JSON.stringify(prompt.body).slice(0, 200),
+    );
 
     const deadline = Date.now() + 180_000;
     let reply: MessageBody | undefined;
     while (Date.now() < deadline) {
-      const res = await api<{ data?: MessageBody[] }>(url, `/api/session/${encodeURIComponent(sessionId)}/message?order=asc`);
+      const res = await api<{ data?: MessageBody[] }>(
+        url,
+        `/api/session/${encodeURIComponent(sessionId)}/message?order=asc`,
+      );
       const done = (res.body.data ?? []).find((m) => m.type === "assistant" && assistantText(m).trim() !== "");
       if (done !== undefined) {
         reply = done;
@@ -371,11 +417,20 @@ async function main(): Promise<void> {
       }
       await sleep(1_000);
     }
-    ok("assistant reply arrived", reply !== undefined, reply === undefined ? "timed out after 180s" : assistantText(reply).slice(0, 80));
+    ok(
+      "assistant reply arrived",
+      reply !== undefined,
+      reply === undefined ? "timed out after 180s" : assistantText(reply).slice(0, 80),
+    );
 
-    const replyModel = reply === undefined ? undefined : refOf({ id: reply.model?.id, providerID: reply.model?.providerID });
+    const replyModel =
+      reply === undefined ? undefined : refOf({ id: reply.model?.id, providerID: reply.model?.providerID });
     ok("reply is attributed to a real model", replyModel !== undefined, `model=${show(replyModel)}`);
-    ok("reply provider is B's provider", replyModel?.providerID === modelB.providerID, `got=${replyModel?.providerID ?? "<none>"} expected=${modelB.providerID}`);
+    ok(
+      "reply provider is B's provider",
+      replyModel?.providerID === modelB.providerID,
+      `got=${replyModel?.providerID ?? "<none>"} expected=${modelB.providerID}`,
+    );
     // pi may report the provider's concrete `responseModel` rather than the
     // requested id (alias resolution). That is still pi's truth — but it must
     // then be a catalog member, not a fabrication.
@@ -412,11 +467,19 @@ async function main(): Promise<void> {
       `/api/session?directory=${encodeURIComponent(WORKSPACE)}`,
     );
     const restored = (listed.body.data ?? []).find((s) => s.id === sessionId);
-    ok("restored session is listed after restart", restored !== undefined, `${(listed.body.data ?? []).length} sessions listed`);
+    ok(
+      "restored session is listed after restart",
+      restored !== undefined,
+      `${(listed.body.data ?? []).length} sessions listed`,
+    );
 
     // No prompt, no revive: this is served purely from the persisted registry.
     const dormant = sessionModel(await getSession(url2, sessionId));
-    ok("dormant session still reports B (no prompt sent)", sameRef(dormant, modelB), `reported=${show(dormant)} expected=${show(modelB)}`);
+    ok(
+      "dormant session still reports B (no prompt sent)",
+      sameRef(dormant, modelB),
+      `reported=${show(dormant)} expected=${show(modelB)}`,
+    );
   } finally {
     sse?.stop();
     if (server !== undefined) await server.stop().catch(() => undefined);

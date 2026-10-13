@@ -5,13 +5,22 @@ import { SmokeRegistry, parseOnly, summarize, SseCollector } from "../contrib/om
 test("registry reports passes, failures, and blocked checks", async () => {
   const registry = new SmokeRegistry();
   const called: string[] = [];
-  registry.check("good", async () => { called.push("good"); });
-  registry.check("bad", async () => { throw new Error("observable missing"); });
-  registry.check("blocked", async () => { called.push("blocked"); });
+  registry.check("good", async () => {
+    called.push("good");
+  });
+  registry.check("bad", async () => {
+    throw new Error("observable missing");
+  });
+  registry.check("blocked", async () => {
+    called.push("blocked");
+  });
   const lines: string[] = [];
   const results = await registry.run({ log: (line) => lines.push(line) });
   assert.deepEqual(called, ["good"]);
-  assert.deepEqual(results.map((r) => r.status), ["PASS", "FAIL", "SKIP"]);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ["PASS", "FAIL", "SKIP"],
+  );
   assert.deepEqual(summarize(results), { pass: 1, fail: 1, skip: 1, exitCode: 1 });
   assert.equal(lines.filter((line) => line.startsWith("FAIL bad")).length, 1);
 });
@@ -19,9 +28,19 @@ test("registry reports passes, failures, and blocked checks", async () => {
 test("only filter includes prerequisites and skips unrelated checks", async () => {
   const registry = new SmokeRegistry();
   const called: string[] = [];
-  registry.check("setup", async () => { called.push("setup"); });
-  registry.check("unrelated", async () => { called.push("unrelated"); });
-  registry.check("selected", async () => { called.push("selected"); }, { dependsOn: ["setup"] });
+  registry.check("setup", async () => {
+    called.push("setup");
+  });
+  registry.check("unrelated", async () => {
+    called.push("unrelated");
+  });
+  registry.check(
+    "selected",
+    async () => {
+      called.push("selected");
+    },
+    { dependsOn: ["setup"] },
+  );
   const results = await registry.run({ only: parseOnly(["--only", "selected"]), log: () => {} });
   assert.deepEqual(called, ["setup", "selected"]);
   assert.deepEqual(summarize(results), { pass: 2, fail: 0, skip: 1, exitCode: 0 });
@@ -41,9 +60,21 @@ test("hung checks fail with cancellation using a controlled deadline", async (t)
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const registry = new SmokeRegistry();
   let cancelled = false;
-  registry.check("hung", (signal) => new Promise<void>((resolve) => {
-    signal.addEventListener("abort", () => { cancelled = true; resolve(); }, { once: true });
-  }), { timeoutMs: 100 });
+  registry.check(
+    "hung",
+    (signal) =>
+      new Promise<void>((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            cancelled = true;
+            resolve();
+          },
+          { once: true },
+        );
+      }),
+    { timeoutMs: 100 },
+  );
   const run = registry.run({ log: () => {} });
   t.mock.timers.tick(100);
   const results = await run;
@@ -56,15 +87,26 @@ test("hung checks fail with cancellation using a controlled deadline", async (t)
 test("interruption stops the active check and skips the remainder", async () => {
   const controller = new AbortController();
   const registry = new SmokeRegistry();
-  registry.check("interrupted", async () => { controller.abort(new Error("SIGINT")); });
-  registry.check("untouched", async () => { assert.fail("must not run"); });
+  registry.check("interrupted", async () => {
+    controller.abort(new Error("SIGINT"));
+  });
+  registry.check("untouched", async () => {
+    assert.fail("must not run");
+  });
   const results = await registry.run({ signal: controller.signal, log: () => {} });
-  assert.deepEqual(results.map((r) => r.status), ["FAIL", "SKIP"]);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ["FAIL", "SKIP"],
+  );
 });
 
 test("SSE waits observe only future events and handle split frames", async () => {
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
-  const stream = new ReadableStream<Uint8Array>({ start(controller) { streamController = controller; } });
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+    },
+  });
   const sse = new SseCollector();
   const pump = sse.consume(stream);
   const encoder = new TextEncoder();

@@ -50,13 +50,17 @@ function gone(pid: number): void {
 test("detached fixture groups are cleaned up after assertion failure", { timeout: 20_000 }, async (t) => {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const runner = spawn(process.execPath, [
-    "--import", "tsx", "--test", "--test-reporter=tap", resolve("test/fixtures/detached-fixture-failure.ts"),
-  ], { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  const runner = spawn(
+    process.execPath,
+    ["--import", "tsx", "--test", "--test-reporter=tap", resolve("test/fixtures/detached-fixture-failure.ts")],
+    { env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
   trackDetachedFixture(t, runner);
   const closed = once(runner, "close", { signal: deadline() });
   let output = "";
-  runner.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+  runner.stdout.on("data", (chunk: Buffer) => {
+    output += chunk.toString();
+  });
   const [code] = await closed;
   assert.equal(code, 1, output);
   const identities = output.match(/fixture-identities (\{[^\n]+\})/);
@@ -104,53 +108,72 @@ test("dispose terminates the process group and is idempotent", { timeout: 15_000
   gone(before.childPid);
 });
 
-for (const restarted of [false, true]) test(`F2 B4 shutdown owns private session shards${restarted ? " after restart" : ""} but leaves another session host alive`, { timeout: 20_000 }, async (t) => {
-  const { manager: initial, store, dir } = setup(t);
-  let manager = initial;
-  const info = await manager.create(dir);
-  const sessionId = manager.get(info.id)?.piSessionId;
-  assert.ok(sessionId);
-  if (restarted) {
-    await initial.disposeAll();
-    manager = new SessionManager(() => undefined, store, dir);
-    t.after(() => manager.disposeAll());
-    assert.ok(manager.get(info.id), "restore the connector-created session from its registry");
-  }
-  const hosts = [];
-  for (const ownerId of [sessionId, randomUUID()]) {
-    const key = createHash("sha256").update(`p:${ownerId}`).digest("hex").slice(0, 16);
-    const child = spawn(process.execPath, [
-      resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor",
-      "--socket", join(dir, `p-${key}.sock`),
-    ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
-    trackDetachedFixture(t, child);
-    assert.ok(child.stdout);
-    const [output] = await once(child.stdout, "data", { signal: deadline() });
-    const identity: { pid: number; enginePid: number } = JSON.parse(String(output));
-    hosts.push(identity);
-  }
-  const [owned, unrelated] = hosts;
-  assert.ok(owned && unrelated);
-  await manager.disposeAll();
-  gone(owned.pid);
-  gone(owned.enginePid);
-  assert.doesNotThrow(() => process.kill(unrelated.pid, 0), "another OmO session's host must remain alive");
-  assert.doesNotThrow(() => process.kill(unrelated.enginePid, 0));
-});
+for (const restarted of [false, true])
+  test(`F2 B4 shutdown owns private session shards${restarted ? " after restart" : ""} but leaves another session host alive`, {
+    timeout: 20_000,
+  }, async (t) => {
+    const { manager: initial, store, dir } = setup(t);
+    let manager = initial;
+    const info = await manager.create(dir);
+    const sessionId = manager.get(info.id)?.piSessionId;
+    assert.ok(sessionId);
+    if (restarted) {
+      await initial.disposeAll();
+      manager = new SessionManager(() => undefined, store, dir);
+      t.after(() => manager.disposeAll());
+      assert.ok(manager.get(info.id), "restore the connector-created session from its registry");
+    }
+    const hosts = [];
+    for (const ownerId of [sessionId, randomUUID()]) {
+      const key = createHash("sha256").update(`p:${ownerId}`).digest("hex").slice(0, 16);
+      const child = spawn(
+        process.execPath,
+        [
+          resolve("test/fixtures/fake-omo-host.mjs"),
+          "--internal-rpc-host-supervisor",
+          "--socket",
+          join(dir, `p-${key}.sock`),
+        ],
+        { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] },
+      );
+      trackDetachedFixture(t, child);
+      assert.ok(child.stdout);
+      const [output] = await once(child.stdout, "data", { signal: deadline() });
+      const identity: { pid: number; enginePid: number } = JSON.parse(String(output));
+      hosts.push(identity);
+    }
+    const [owned, unrelated] = hosts;
+    assert.ok(owned && unrelated);
+    await manager.disposeAll();
+    gone(owned.pid);
+    gone(owned.enginePid);
+    assert.doesNotThrow(() => process.kill(unrelated.pid, 0), "another OmO session's host must remain alive");
+    assert.doesNotThrow(() => process.kill(unrelated.enginePid, 0));
+  });
 
-test("F2 S1 failed private-host teardown is reported but local state is still released", { timeout: 20_000 }, async (t) => {
+test("F2 S1 failed private-host teardown is reported but local state is still released", {
+  timeout: 20_000,
+}, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-s1-"));
   const previous = process.env.ANTECHAMBER_PI_BINARY;
   process.env.ANTECHAMBER_PI_BINARY = fixture;
-  const manager = new SessionManager(() => undefined, new SessionStore(join(dir, "state")), dir, { clock: new Clock() });
+  const manager = new SessionManager(() => undefined, new SessionStore(join(dir, "state")), dir, {
+    clock: new Clock(),
+  });
   const info = await manager.create(dir);
   const sessionId = manager.get(info.id)?.piSessionId;
   assert.ok(sessionId);
   const key = createHash("sha256").update(`p:${sessionId}`).digest("hex").slice(0, 16);
-  const host = spawn(process.execPath, [
-    resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor",
-    "--socket", join(dir, `p-${key}.sock`),
-  ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
+  const host = spawn(
+    process.execPath,
+    [
+      resolve("test/fixtures/fake-omo-host.mjs"),
+      "--internal-rpc-host-supervisor",
+      "--socket",
+      join(dir, `p-${key}.sock`),
+    ],
+    { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] },
+  );
   trackDetachedFixture(t, host);
   t.after(async () => {
     t.mock.restoreAll();
@@ -165,7 +188,11 @@ test("F2 S1 failed private-host teardown is reported but local state is still re
   const childProcess = await import("node:child_process");
   const originalSpawn = childProcess.default.spawn;
   t.mock.method(childProcess.default, "spawn", (binary: string, ...rest: unknown[]) =>
-    Reflect.apply(originalSpawn, childProcess.default, [binary.endsWith("/python3") ? join(dir, "missing-python3") : binary, ...rest]));
+    Reflect.apply(originalSpawn, childProcess.default, [
+      binary.endsWith("/python3") ? join(dir, "missing-python3") : binary,
+      ...rest,
+    ]),
+  );
   syncBuiltinESMExports();
 
   await assert.rejects(manager.disposeAll(), { code: "ENOENT" });
@@ -187,8 +214,12 @@ test("hung OmO receives SIGKILL at the injected five second deadline", { timeout
     });
   });
   const disposing = pi.dispose();
-  await Promise.race([termIgnored, new Promise<never>((_, reject) =>
-    deadline().addEventListener("abort", () => reject(new Error("SIGTERM not received")), { once: true }))]);
+  await Promise.race([
+    termIgnored,
+    new Promise<never>((_, reject) =>
+      deadline().addEventListener("abort", () => reject(new Error("SIGTERM not received")), { once: true }),
+    ),
+  ]);
   const timeout = clock.timeouts.find((entry) => entry.ms === 5_000);
   assert.ok(timeout);
   timeout.callback();
@@ -199,18 +230,30 @@ test("hung OmO receives SIGKILL at the injected five second deadline", { timeout
   gone(before.childPid);
 });
 
-test("F2 B4 private hosts in the connector service cgroup stop while shared LSP survives", { timeout: 20_000 }, async (t) => {
+test("F2 B4 private hosts in the connector service cgroup stop while shared LSP survives", {
+  timeout: 20_000,
+}, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-service-host-"));
   const owner = randomUUID();
   const socket = join(dir, `p-${createHash("sha256").update(`p:${owner}`).digest("hex").slice(0, 16)}.sock`);
-  const host = spawn(process.execPath, [
-    resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor", "--socket", socket,
-  ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
+  const host = spawn(
+    process.execPath,
+    [resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor", "--socket", socket],
+    { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] },
+  );
   const hostExited = trackDetachedFixture(t, host);
-  const lsp = spawn(process.execPath, [
-    "-e", 'process.stdout.write("READY\\n"); setInterval(() => {}, 2147483647)',
-    "--", "--lsp-daemon", "--socket", socket,
-  ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
+  const lsp = spawn(
+    process.execPath,
+    [
+      "-e",
+      'process.stdout.write("READY\\n"); setInterval(() => {}, 2147483647)',
+      "--",
+      "--lsp-daemon",
+      "--socket",
+      socket,
+    ],
+    { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] },
+  );
   trackDetachedFixture(t, lsp);
   const readFile = fs.readFileSync;
   t.after(() => {
@@ -241,7 +284,10 @@ test("F2 B4 private hosts in the connector service cgroup stop while shared LSP 
   await hostExited;
   gone(identity.pid);
   gone(identity.enginePid);
-  assert.doesNotThrow(() => process.kill(lspPid, 0), "shared LSP is not a private supervisor, even with matching cwd and socket");
+  assert.doesNotThrow(
+    () => process.kill(lspPid, 0),
+    "shared LSP is not a private supervisor, even with matching cwd and socket",
+  );
 });
 
 test("reaper makes an expired session dormant and preserves registry and history", async (t) => {
@@ -403,8 +449,11 @@ test("connector SIGKILL closes stdin and fake OmO reaps its sleep child", { time
   const { dir } = setup(t);
   // Linux subreaper adopts OmO after its connector dies. waitpid is the exact
   // kernel exit signal, and also reaps the orphan before checking PID absence.
-  const supervisor = spawn("python3", ["-c",
-    `import ctypes, json, os, subprocess, sys
+  const supervisor = spawn(
+    "python3",
+    [
+      "-c",
+      `import ctypes, json, os, subprocess, sys
 ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
 connector = subprocess.Popen(sys.argv[1:], stdout=subprocess.PIPE)
 state = json.loads(connector.stdout.readline())
@@ -415,12 +464,20 @@ while True:
         os.waitpid(-1, 0)
     except ChildProcessError:
         break
-`, process.execPath, "--import", "tsx", "--input-type=module", "-e",
-    `import {PiRpcClient} from "./src/pi-rpc.ts";
+`,
+      process.execPath,
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "-e",
+      `import {PiRpcClient} from "./src/pi-rpc.ts";
      const pi = new PiRpcClient({cwd:${JSON.stringify(dir)}, piBinary:${JSON.stringify(fixture)}});
      const state = await pi.command({type:"get_state"});
      console.log(JSON.stringify(state.data));
-     pi.onExit(() => process.exit(0));`], { stdio: ["ignore", "pipe", "pipe"] });
+     pi.onExit(() => process.exit(0));`,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
   let result: (State & { connectorPid: number }) | undefined;
   const ready = new Promise<void>((resolveReady, reject) => {
     let buffer = "";
@@ -435,15 +492,21 @@ while True:
   t.after(() => {
     if (result !== undefined) {
       for (const pid of [result.connectorPid, result.pid, result.childPid]) {
-        try { process.kill(pid, "SIGKILL"); } catch (error) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch (error) {
           if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
         }
       }
     }
     supervisor.kill("SIGKILL");
   });
-  await Promise.race([ready, new Promise<never>((_, reject) =>
-    deadline().addEventListener("abort", () => reject(new Error("fixture startup timed out")), { once: true }))]);
+  await Promise.race([
+    ready,
+    new Promise<never>((_, reject) =>
+      deadline().addEventListener("abort", () => reject(new Error("fixture startup timed out")), { once: true }),
+    ),
+  ]);
   assert.ok(result);
   const exited = once(supervisor, "exit", { signal: deadline() });
   process.kill(result.connectorPid, "SIGKILL");

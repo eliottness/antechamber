@@ -28,11 +28,20 @@ function setup(t: TestContext) {
     else process.env.ANTECHAMBER_STATE_DIR = previous.state;
     rmSync(directory, { recursive: true, force: true });
   });
-  return { directory, manager, expire: () => { time += 100; } };
+  return {
+    directory,
+    manager,
+    expire: () => {
+      time += 100;
+    },
+  };
 }
 
 async function state(manager: SessionManager, sessionID: string) {
-  const result = await manager.sessionRpc<{ thinkingLevel: string; thinkingCalls: number; resumed: boolean }>(sessionID, { type: "get_state" });
+  const result = await manager.sessionRpc<{ thinkingLevel: string; thinkingCalls: number; resumed: boolean }>(
+    sessionID,
+    { type: "get_state" },
+  );
   assert.ok(result.success && result.data);
   return result.data;
 }
@@ -101,10 +110,18 @@ test("F2 B6 a later thinking selection cannot overtake a prompt's own selection"
   }
   await manager.prompt(session.id, "AFTER_HIGH");
   const entries: Array<{ message?: { role: string; thinkingLevel: string; content: Array<{ text: string }> } }> =
-    readFileSync(managed.piPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  const prompts = entries.flatMap((entry) => entry.message?.role === "user" ? [entry.message] : []);
-  assert.deepEqual(prompts.map((message) => [message.content[0]?.text, message.thinkingLevel]),
-    [["RACE_LOW", "low"], ["AFTER_HIGH", "high"]]);
+    readFileSync(managed.piPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+  const prompts = entries.flatMap((entry) => (entry.message?.role === "user" ? [entry.message] : []));
+  assert.deepEqual(
+    prompts.map((message) => [message.content[0]?.text, message.thinkingLevel]),
+    [
+      ["RACE_LOW", "low"],
+      ["AFTER_HIGH", "high"],
+    ],
+  );
   assert.equal((await state(manager, session.id)).thinkingLevel, "high");
   assert.equal(managed.thinkingLevel, "high");
 });
@@ -170,7 +187,14 @@ test("thinking level is isolated between sessions", async (t) => {
 
 for (const [route, body] of [
   ["api-model", { model: { providerID: "fake", id: "fake-model", variant: "low" } }],
-  ["v1-message", { model: { providerID: "fake", modelID: "fake-model" }, variant: "low", parts: [{ type: "text", text: "V1_SELECTION" }] }],
+  [
+    "v1-message",
+    {
+      model: { providerID: "fake", modelID: "fake-model" },
+      variant: "low",
+      parts: [{ type: "text", text: "V1_SELECTION" }],
+    },
+  ],
   ["v1-variant-only", { variant: "low", parts: [{ type: "text", text: "VARIANT_ONLY" }] }],
 ] as const) {
   test(`${route} forwards the selected thinking level`, async (t) => {
@@ -178,7 +202,9 @@ for (const [route, body] of [
     const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
     t.after(() => server.stop());
     await server.start();
-    const session = await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json() as { id: string };
+    const session = (await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
+      id: string;
+    };
     const path = route === "api-model" ? `/api/session/${session.id}/model` : `/session/${session.id}/message`;
     const response = await fetch(server.url + path, { method: "POST", body: JSON.stringify(body) });
     assert.equal(response.status, route === "api-model" ? 204 : 200);
@@ -186,9 +212,16 @@ for (const [route, body] of [
     assert.equal(messages.status, 200);
     // Use the same fake's session JSONL to observe the RPC command, not UI state.
     const files = readdirSync(directory).filter((file) => file.endsWith(".jsonl"));
-    assert.ok(files.some((file) => readFileSync(join(directory, file), "utf8").trim().split("\n").some((line) => {
-      const entry: { type: string; thinkingLevel?: string } = JSON.parse(line);
-      return entry.type === "thinking_level_change" && entry.thinkingLevel === "low";
-    })));
+    assert.ok(
+      files.some((file) =>
+        readFileSync(join(directory, file), "utf8")
+          .trim()
+          .split("\n")
+          .some((line) => {
+            const entry: { type: string; thinkingLevel?: string } = JSON.parse(line);
+            return entry.type === "thinking_level_change" && entry.thinkingLevel === "low";
+          }),
+      ),
+    );
   });
 }

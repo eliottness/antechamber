@@ -166,8 +166,12 @@ export class PiRpcClient extends EventEmitter {
 
     if (msg.type === "response") {
       const pending = typeof msg.id === "string" ? this.pending.get(msg.id) : undefined;
-      if (typeof msg.id !== "string" || typeof msg.success !== "boolean" ||
-          typeof msg.command !== "string" || (msg.error !== undefined && typeof msg.error !== "string")) {
+      if (
+        typeof msg.id !== "string" ||
+        typeof msg.success !== "boolean" ||
+        typeof msg.command !== "string" ||
+        (msg.error !== undefined && typeof msg.error !== "string")
+      ) {
         const error = new Error("pi returned a malformed RPC response");
         console.error(`[pi-rpc] ${error.message}`);
         pending?.reject(error);
@@ -175,7 +179,13 @@ export class PiRpcClient extends EventEmitter {
       }
       const response: PiRpcResponse = msg.success
         ? { type: "response", id: msg.id, command: msg.command, success: true, data: msg.data }
-        : { type: "response", id: msg.id, command: msg.command, success: false, ...(msg.error !== undefined ? { error: msg.error } : {}) };
+        : {
+            type: "response",
+            id: msg.id,
+            command: msg.command,
+            success: false,
+            ...(msg.error !== undefined ? { error: msg.error } : {}),
+          };
       pending?.resolve(response);
       return;
     }
@@ -212,7 +222,12 @@ export class PiRpcClient extends EventEmitter {
   }
 
   /** Send a command and wait for its correlated response. */
-  command<T = unknown>(cmd: Omit<PiRpcCommand, "id">, timeoutMs = RPC_COMMAND_TIMEOUT_MS, signal?: AbortSignal, onDispatch?: () => void): Promise<PiRpcResponse<T>> {
+  command<T = unknown>(
+    cmd: Omit<PiRpcCommand, "id">,
+    timeoutMs = RPC_COMMAND_TIMEOUT_MS,
+    signal?: AbortSignal,
+    onDispatch?: () => void,
+  ): Promise<PiRpcResponse<T>> {
     if (this.closed) return Promise.reject(new Error("pi process is not running"));
     if (signal?.aborted) return Promise.reject(signal.reason);
     const id = randomUUID();

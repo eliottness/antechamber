@@ -9,7 +9,14 @@ import { bindMessageEntries, branchEntries, getEntries } from "../src/session-tr
 import { SessionManager, type ManagedSession } from "../src/sessions.js";
 import { SessionStore } from "../src/session-store.js";
 import { AdapterServer } from "../src/server.js";
-import { announceSessionNotice, completeShellMessage, createShellMessage, failShellMessage, runShellCommand, shellUserMessage } from "../src/session-commands.js";
+import {
+  announceSessionNotice,
+  completeShellMessage,
+  createShellMessage,
+  failShellMessage,
+  runShellCommand,
+  shellUserMessage,
+} from "../src/session-commands.js";
 import type { PiRpcClient } from "../src/pi-rpc.js";
 
 function setup(t: TestContext) {
@@ -52,7 +59,10 @@ test("repeated forks transfer listeners without retaining previous sessions", { 
     const child = manager.get(forked.id);
     assert.ok(child?.pi);
     assert.equal(child.pi, pi);
-    assert.deepEqual(events.map((event) => pi.listenerCount(event)), [counts[0] + 1, counts[1], counts[2]]);
+    assert.deepEqual(
+      events.map((event) => pi.listenerCount(event)),
+      [counts[0] + 1, counts[1], counts[2]],
+    );
     assert.ok(pi.listeners("event").includes(observer), "external observers remain subscribed");
     current = child;
   }
@@ -126,7 +136,9 @@ test("shell identity is durable while a persisted native response is held", { ti
   }
 });
 
-test("a cold restore keeps only the identity admission when no native shell result exists", { timeout: 30_000 }, async (t) => {
+test("a cold restore keeps only the identity admission when no native shell result exists", {
+  timeout: 30_000,
+}, async (t) => {
   const { manager, dir, state } = setup(t);
   const { s, id } = await turns(manager, dir);
   assert.ok(s.pi);
@@ -137,7 +149,12 @@ test("a cold restore keeps only the identity admission when no native shell resu
     if (event.type === "fake_bash_started") started.resolve();
     if (event.type === "fake_bash_finished") finished.resolve();
   });
-  const pending = runShellCommand({ sessions: manager, session: s, command: "IFS= read -r gate < restart-gate; echo restarted", emit: () => {} });
+  const pending = runShellCommand({
+    sessions: manager,
+    session: s,
+    command: "IFS= read -r gate < restart-gate; echo restarted",
+    emit: () => {},
+  });
   try {
     await started.promise;
     const live = s.messages?.at(-1);
@@ -148,9 +165,14 @@ test("a cold restore keeps only the identity admission when no native shell resu
     const restored = cold.messages(id)?.find((message) => message.info.id === live.info.id);
     assert.equal(restored, undefined);
     const parentID = live.info.parentID;
-    assert.equal(cold.messages(id)?.some((message) => message.info.id === parentID), false);
+    assert.equal(
+      cold.messages(id)?.some((message) => message.info.id === parentID),
+      false,
+    );
     assert.equal(cold.get(id)?.tree.messageEntries[live.info.id], undefined);
-    assert.ok(new SessionStore(state).get(id)?.tree?.localShellTurns?.some((turn) => turn.messages[1].info.id === live.info.id));
+    assert.ok(
+      new SessionStore(state).get(id)?.tree?.localShellTurns?.some((turn) => turn.messages[1].info.id === live.info.id),
+    );
   } finally {
     await manager.abort(id);
     await pending;
@@ -164,9 +186,18 @@ async function crashDispatchedShell(t: TestContext) {
   assert.ok(s.pi);
   execFileSync("mkfifo", [join(dir, "lost-gate")]);
   const started = Promise.withResolvers<void>();
-  s.pi.onEvent((event) => { if (event.type === "fake_bash_started") started.resolve(); });
-  const pending = runShellCommand({ sessions: manager, session: s, command: "IFS= read -r x < lost-gate; echo unavailable-outcome", emit: () => {} })
-    .then((result) => ({ result }), (error: unknown) => ({ error }));
+  s.pi.onEvent((event) => {
+    if (event.type === "fake_bash_started") started.resolve();
+  });
+  const pending = runShellCommand({
+    sessions: manager,
+    session: s,
+    command: "IFS= read -r x < lost-gate; echo unavailable-outcome",
+    emit: () => {},
+  }).then(
+    (result) => ({ result }),
+    (error: unknown) => ({ error }),
+  );
   await started.promise;
   const shell = s.messages?.at(-1)?.info;
   assert.ok(shell?.role === "assistant");
@@ -204,28 +235,47 @@ test("an unresolved dispatched admission cannot abort the next admitted prompt",
   await cold.prompt(id, "pending-turn", undefined, false, "msg_followup");
   assert.equal(session.status.type, "busy", "a read/sync must not abort an admitted native turn");
   const finished = Promise.withResolvers<void>();
-  pi.onEvent((event) => { if (event.type === "agent_idle") finished.resolve(); });
+  pi.onEvent((event) => {
+    if (event.type === "agent_idle") finished.resolve();
+  });
   await pi.command({ type: "finish_pending_turn" });
   await finished.promise;
-  const reply = cold.messages(id)?.find((message) => message.info.role === "assistant" && message.info.parentID === "msg_followup");
+  const reply = cold
+    .messages(id)
+    ?.find((message) => message.info.role === "assistant" && message.info.parentID === "msg_followup");
   assert.ok(reply?.parts.some((part) => part.type === "text" && part.text === "completed followup"));
   assert.equal(session.status.type, "idle");
 });
 
-test("an abandoned dispatched admission never returns after replacement refresh or restart", { timeout: 30_000 }, async (t) => {
+test("an abandoned dispatched admission never returns after replacement refresh or restart", {
+  timeout: 30_000,
+}, async (t) => {
   const { cold, dir, id, shell, snapshot } = await crashDispatchedShell(t);
   cold.messages(id);
   await cold.revert(id, "msg_live_2");
   await cold.prompt(id, "replacement", undefined, false, "msg_replacement");
-  assert.equal(cold.messages(id)?.some((message) => message.info.id === shell.id || message.info.id === shell.parentID), false);
+  assert.equal(
+    cold.messages(id)?.some((message) => message.info.id === shell.id || message.info.id === shell.parentID),
+    false,
+  );
   await cold.reloadMessages(id);
-  assert.equal(cold.messages(id)?.some((message) => message.info.id === shell.id || message.info.id === shell.parentID), false);
-  assert.equal(new SessionStore(snapshot.stateDir).get(id)?.tree?.localShellTurns?.some((turn) =>
-    turn.messages[1].info.id === shell.id), false);
+  assert.equal(
+    cold.messages(id)?.some((message) => message.info.id === shell.id || message.info.id === shell.parentID),
+    false,
+  );
+  assert.equal(
+    new SessionStore(snapshot.stateDir)
+      .get(id)
+      ?.tree?.localShellTurns?.some((turn) => turn.messages[1].info.id === shell.id),
+    false,
+  );
   await cold.disposeAll();
   const restarted = new SessionManager(() => {}, new SessionStore(snapshot.stateDir), dir);
   t.after(() => restarted.disposeAll());
-  assert.equal(restarted.messages(id)?.some((message) => message.info.id === shell.id || message.info.id === shell.parentID), false);
+  assert.equal(
+    restarted.messages(id)?.some((message) => message.info.id === shell.id || message.info.id === shell.parentID),
+    false,
+  );
   assert.ok(restarted.messages(id)?.some((message) => message.info.id === "msg_replacement"));
 });
 
@@ -238,16 +288,24 @@ test("never dispatched shell attempts stay live but are absent from the registry
   const disk = new SessionStore(state).get(id);
   assert.ok(disk?.tree);
   assert.equal(disk.tree.shellDispatch?.[cancelled.info.id], undefined);
-  assert.equal(disk.tree.localShellTurns?.some((turn) => turn.messages.some((message) =>
-    message.info.id === cancelled.info.id || message.info.id === cancelled.info.parentID)) ?? false, false);
+  assert.equal(
+    disk.tree.localShellTurns?.some((turn) =>
+      turn.messages.some(
+        (message) => message.info.id === cancelled.info.id || message.info.id === cancelled.info.parentID,
+      ),
+    ) ?? false,
+    false,
+  );
   await manager.disposeAll();
   const cold = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => cold.disposeAll());
   const history = cold.messages(id);
   assert.equal(history?.[0]?.info.id, "msg_live_1");
   assert.equal(history?.length, 6);
-  assert.equal(history?.some((message) => message.info.id === cancelled.info.id ||
-    message.info.id === cancelled.info.parentID), false);
+  assert.equal(
+    history?.some((message) => message.info.id === cancelled.info.id || message.info.id === cancelled.info.parentID),
+    false,
+  );
 });
 
 test("old registry local attempts are not restored under the ephemeral contract", async (t) => {
@@ -256,14 +314,19 @@ test("old registry local attempts are not restored under the ephemeral contract"
   const cancelled = await cancelQueuedShell(t, manager, s, "echo legacy-local");
   const saved = new SessionStore(state).get(id);
   assert.ok(saved?.tree);
-  saved.tree.localShellTurns = [{ afterEntryId: s.tree.leafId ?? null, messages: [shellUserMessage(cancelled), cancelled] }];
+  saved.tree.localShellTurns = [
+    { afterEntryId: s.tree.leafId ?? null, messages: [shellUserMessage(cancelled), cancelled] },
+  ];
   (saved.tree.shellDispatch ??= {})[cancelled.info.id] = false;
   const legacy = new SessionStore(join(dir, "legacy-state"));
   legacy.set(id, saved);
   const cold = new SessionManager(() => {}, legacy, dir);
   t.after(() => cold.disposeAll());
   assert.equal(cold.messages(id)?.length, 6);
-  assert.equal(cold.messages(id)?.some((message) => message.info.id === cancelled.info.id), false);
+  assert.equal(
+    cold.messages(id)?.some((message) => message.info.id === cancelled.info.id),
+    false,
+  );
 });
 
 test("shutdown marks an active shell interrupted rather than rejected", { timeout: 30_000 }, async (t) => {
@@ -272,9 +335,18 @@ test("shutdown marks an active shell interrupted rather than rejected", { timeou
   assert.ok(s.pi);
   execFileSync("mkfifo", [join(dir, "shutdown-gate")]);
   const started = Promise.withResolvers<void>();
-  s.pi.onEvent((event) => { if (event.type === "fake_bash_started") started.resolve(); });
-  const pending = runShellCommand({ sessions: manager, session: s, command: "IFS= read -r gate < shutdown-gate; echo done", emit: () => {} })
-    .then((result) => ({ result }), (error: unknown) => ({ error }));
+  s.pi.onEvent((event) => {
+    if (event.type === "fake_bash_started") started.resolve();
+  });
+  const pending = runShellCommand({
+    sessions: manager,
+    session: s,
+    command: "IFS= read -r gate < shutdown-gate; echo done",
+    emit: () => {},
+  }).then(
+    (result) => ({ result }),
+    (error: unknown) => ({ error }),
+  );
   await started.promise;
   const shellID = s.messages?.at(-1)?.info.id;
   await manager.disposeAll();
@@ -285,7 +357,10 @@ test("shutdown marks an active shell interrupted rather than rejected", { timeou
   const restored = cold.messages(id)?.find((message) => message.info.id === shellID);
   const saved = new SessionStore(state).get(id);
   assert.ok(saved);
-  const native = readFileSync(saved.piPath, "utf8").trim().split("\n").map((line) => JSON.parse(line))
+  const native = readFileSync(saved.piPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
     .find((entry) => entry.message?.role === "bashExecution");
   if (native) {
     assert.ok(restored?.parts[0]?.type === "tool" && restored.parts[0].state.status === "error");
@@ -298,7 +373,10 @@ test("a replacement prompt cannot resurrect ephemeral shell attempts through rel
   const { s, id } = await turns(manager, dir);
   const cancelled = await cancelQueuedShell(t, manager, s, "echo discarded");
   await manager.revert(id, "msg_live_2");
-  assert.ok(manager.messages(id)?.some((message) => message.info.id === cancelled.info.id), "revert alone retains the live cache");
+  assert.ok(
+    manager.messages(id)?.some((message) => message.info.id === cancelled.info.id),
+    "revert alone retains the live cache",
+  );
   await manager.prompt(id, "replacement", undefined, false, "msg_replacement");
   const retained = () => manager.messages(id)?.some((message) => message.info.id === cancelled.info.id);
   assert.equal(retained(), false);
@@ -309,7 +387,10 @@ test("a replacement prompt cannot resurrect ephemeral shell attempts through rel
   await manager.disposeAll();
   const cold = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => cold.disposeAll());
-  assert.equal(cold.messages(id)?.some((message) => message.info.id === cancelled.info.id), false);
+  assert.equal(
+    cold.messages(id)?.some((message) => message.info.id === cancelled.info.id),
+    false,
+  );
   assert.equal(cold.messages(id)?.[0]?.info.id, "msg_live_1");
 });
 
@@ -327,19 +408,35 @@ test("forks never copy ephemeral shell attempts even before a normal user bounda
   for (const boundary of ["msg_two", undefined]) {
     const child = await manager.fork(info.id, boundary);
     children.push(child.id);
-    assert.equal(manager.messages(child.id)?.filter((message) =>
-      message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length, 0);
+    assert.equal(
+      manager
+        .messages(child.id)
+        ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length,
+      0,
+    );
   }
   await manager.disposeAll();
   const cold = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => cold.disposeAll());
-  for (const childID of children) assert.equal(cold.messages(childID)?.filter((message) =>
-    message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length, 0);
-  assert.equal(cold.messages(info.id)?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length, 0);
+  for (const childID of children)
+    assert.equal(
+      cold
+        .messages(childID)
+        ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length,
+      0,
+    );
+  assert.equal(
+    cold
+      .messages(info.id)
+      ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length,
+    0,
+  );
 });
 
 for (const boundary of ["complete", "assistant", "user"] as const) {
-  test(`a dispatched cancellation forks once at its ${boundary} boundary through restart`, { timeout: 30_000 }, async (t) => {
+  test(`a dispatched cancellation forks once at its ${boundary} boundary through restart`, {
+    timeout: 30_000,
+  }, async (t) => {
     const { manager, dir, state } = setup(t);
     const info = await manager.create(dir);
     await manager.prompt(info.id, "before", undefined, false, "msg_before");
@@ -359,14 +456,29 @@ for (const boundary of ["complete", "assistant", "user"] as const) {
     const result = await pending;
     await finished.promise;
     assert.equal(result.kind, "completed");
-    const child = await manager.fork(info.id, boundary === "complete" ? undefined :
-      boundary === "assistant" ? result.message.info.id : result.message.info.parentID);
+    const child = await manager.fork(
+      info.id,
+      boundary === "complete"
+        ? undefined
+        : boundary === "assistant"
+          ? result.message.info.id
+          : result.message.info.parentID,
+    );
     const expected = boundary === "user" ? 0 : 1;
-    const count = (owner: SessionManager) => owner.messages(child.id)?.filter((message) =>
-      message.parts.some((part) => part.type === "tool" && part.tool === "bash" && part.state.input.command === command)).length;
+    const count = (owner: SessionManager) =>
+      owner
+        .messages(child.id)
+        ?.filter((message) =>
+          message.parts.some(
+            (part) => part.type === "tool" && part.tool === "bash" && part.state.input.command === command,
+          ),
+        ).length;
     const pi = manager.get(child.id)?.pi;
     assert.ok(pi);
-    assert.equal(branchEntries(await getEntries(pi)).filter((entry) => entry.message?.role === "bashExecution").length, expected);
+    assert.equal(
+      branchEntries(await getEntries(pi)).filter((entry) => entry.message?.role === "bashExecution").length,
+      expected,
+    );
     assert.equal(count(manager), expected);
     await manager.disposeAll();
     const cold = new SessionManager(() => {}, new SessionStore(state), dir);
@@ -386,17 +498,28 @@ test("a fork at a native shell excludes local attempts after that boundary", { t
   await manager.reloadMessages(info.id);
   const queued = await cancelQueuedShell(t, manager, session, "echo excluded-local");
   const child = await manager.fork(info.id, executed.message.info.id);
-  const commands = (owner: SessionManager) => owner.messages(child.id)?.flatMap((message) =>
-    message.parts.flatMap((part) => part.type === "tool" && part.tool === "bash" ? [part.state.input.command] : []));
+  const commands = (owner: SessionManager) =>
+    owner
+      .messages(child.id)
+      ?.flatMap((message) =>
+        message.parts.flatMap((part) =>
+          part.type === "tool" && part.tool === "bash" ? [part.state.input.command] : [],
+        ),
+      );
   assert.deepEqual(commands(manager), ["echo included"]);
   await manager.disposeAll();
   const cold = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => cold.disposeAll());
   assert.deepEqual(commands(cold), ["echo included"]);
-  assert.equal(cold.messages(info.id)?.some((message) => message.info.id === queued.info.id), false);
+  assert.equal(
+    cold.messages(info.id)?.some((message) => message.info.id === queued.info.id),
+    false,
+  );
 });
 
-test("an older cached ancestor cannot carry a later queued attempt across either shell fork cutoff", { timeout: 30_000 }, async (t) => {
+test("an older cached ancestor cannot carry a later queued attempt across either shell fork cutoff", {
+  timeout: 30_000,
+}, async (t) => {
   const { manager, dir, state } = setup(t);
   const info = await manager.create(dir);
   await manager.prompt(info.id, "before", undefined, false, "msg_before");
@@ -406,9 +529,13 @@ test("an older cached ancestor cannot carry a later queued attempt across either
   execFileSync("mkfifo", [join(dir, "gate"), join(dir, "exit-gate")]);
   const ready = Promise.withResolvers<void>();
   const finished = Promise.withResolvers<void>();
-  const watcher = watch(dir, (_event, name) => { if (name === "ready") ready.resolve(); });
+  const watcher = watch(dir, (_event, name) => {
+    if (name === "ready") ready.resolve();
+  });
   t.after(() => watcher.close());
-  session.pi.onEvent((event) => { if (event.type === "fake_bash_finished") finished.resolve(); });
+  session.pi.onEvent((event) => {
+    if (event.type === "fake_bash_finished") finished.resolve();
+  });
   const command = 'trap "IFS= read -r x < exit-gate; exit 0" TERM; : > ready; IFS= read -r x < gate; echo earlier';
   const pending = runShellCommand({ sessions: manager, session, command, emit: () => {} });
   await ready.promise;
@@ -421,23 +548,45 @@ test("an older cached ancestor cannot carry a later queued attempt across either
   assert.equal(session.tree.leafId, ancestor, "no preliminary source refresh before admitting the later attempt");
   const queued = await cancelQueuedShell(t, manager, session, "echo later-local");
   const children = [];
-  for (const [boundary, expected] of [[earlier.message.info.id, [command]], [earlier.message.info.parentID, []]] as const) {
+  for (const [boundary, expected] of [
+    [earlier.message.info.id, [command]],
+    [earlier.message.info.parentID, []],
+  ] as const) {
     const child = await manager.fork(info.id, boundary);
     children.push({ id: child.id, expected });
-    const commands = manager.messages(child.id)?.flatMap((message) => message.parts.flatMap((part) =>
-      part.type === "tool" && part.tool === "bash" ? [part.state.input.command] : []));
+    const commands = manager
+      .messages(child.id)
+      ?.flatMap((message) =>
+        message.parts.flatMap((part) =>
+          part.type === "tool" && part.tool === "bash" ? [part.state.input.command] : [],
+        ),
+      );
     assert.deepEqual(commands, expected);
   }
   assert.ok(manager.messages(info.id)?.some((message) => message.info.id === queued.info.id));
   await manager.disposeAll();
   const cold = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => cold.disposeAll());
-  for (const child of children) assert.deepEqual(cold.messages(child.id)?.flatMap((message) =>
-    message.parts.flatMap((part) => part.type === "tool" && part.tool === "bash" ? [part.state.input.command] : [])), child.expected);
-  assert.equal(cold.messages(info.id)?.some((message) => message.info.id === queued.info.id), false);
+  for (const child of children)
+    assert.deepEqual(
+      cold
+        .messages(child.id)
+        ?.flatMap((message) =>
+          message.parts.flatMap((part) =>
+            part.type === "tool" && part.tool === "bash" ? [part.state.input.command] : [],
+          ),
+        ),
+      child.expected,
+    );
+  assert.equal(
+    cold.messages(info.id)?.some((message) => message.info.id === queued.info.id),
+    false,
+  );
 });
 
-test("revival preserves an unreverted native branch instead of adopting its latest sibling", { timeout: 30_000 }, async (t) => {
+test("revival preserves an unreverted native branch instead of adopting its latest sibling", {
+  timeout: 30_000,
+}, async (t) => {
   const { manager, dir, state } = setup(t);
   const { id } = await turns(manager, dir);
   await manager.revert(id, "msg_live_3");
@@ -480,8 +629,15 @@ for (const action of ["read", "refresh", "fork", "notice", "prewarmed-fork", "pr
     assert.ok(session?.pi);
     execFileSync("mkfifo", [join(dir, "late-gate")]);
     const started = Promise.withResolvers<void>();
-    session.pi.onEvent((event) => { if (event.type === "fake_bash_started") started.resolve(); });
-    const pending = runShellCommand({ sessions: manager, session, command: "IFS= read -r x < late-gate; echo late-native", emit: () => {} });
+    session.pi.onEvent((event) => {
+      if (event.type === "fake_bash_started") started.resolve();
+    });
+    const pending = runShellCommand({
+      sessions: manager,
+      session,
+      command: "IFS= read -r x < late-gate; echo late-native",
+      emit: () => {},
+    });
     await started.promise;
     const live = session.messages?.at(-1);
     assert.ok(live?.info.role === "assistant");
@@ -530,19 +686,29 @@ for (const action of ["read", "refresh", "fork", "notice", "prewarmed-fork", "pr
       assert.ok(recovered?.pi);
       assert.equal(recovered.status.type, "busy", "prompt admission must not reopen native after recovery");
       const finished = Promise.withResolvers<void>();
-      recovered.pi.onEvent((event) => { if (event.type === "agent_idle") finished.resolve(); });
+      recovered.pi.onEvent((event) => {
+        if (event.type === "agent_idle") finished.resolve();
+      });
       await recovered.pi.command({ type: "finish_pending_turn" });
       await finished.promise;
       assert.ok(switches.every((status) => status === "idle"));
-      assert.ok(cold.messages(info.id)?.some((message) => message.info.role === "assistant" && message.info.parentID === "msg_after_recovery"));
+      assert.ok(
+        cold
+          .messages(info.id)
+          ?.some((message) => message.info.role === "assistant" && message.info.parentID === "msg_after_recovery"),
+      );
     } else if (action === "fork") await cold.fork(info.id, live.info.id);
     else if (action !== "read") await cold.reloadMessages(info.id);
     const restored = cold.messages(info.id)?.find((message) => message.info.id === live.info.id);
     assert.ok(restored?.parts[0]?.type === "tool" && restored.parts[0].state.status === "completed");
     assert.equal(restored.parts[0].state.output, "late-native\n");
     assert.equal(restored.info.role === "assistant" && restored.info.parentID, live.info.parentID);
-    assert.equal(cold.messages(info.id)?.filter((message) => message.parts.some((part) =>
-      part.type === "tool" && part.tool === "bash")).length, 1);
+    assert.equal(
+      cold
+        .messages(info.id)
+        ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash")).length,
+      1,
+    );
     if (noticeID) assert.ok(cold.messages(info.id)?.some((message) => message.info.id === noticeID));
     assert.equal(new SessionStore(snapshot.stateDir).get(info.id)?.tree?.localShellTurns?.length, 0);
     await cold.disposeAll();
@@ -561,8 +727,15 @@ async function lateNativeReader(t: TestContext) {
   assert.ok(s.pi);
   execFileSync("mkfifo", [join(dir, "late-gate")]);
   const started = Promise.withResolvers<void>();
-  s.pi.onEvent((event) => { if (event.type === "fake_bash_started") started.resolve(); });
-  const pending = runShellCommand({ sessions: manager, session: s, command: "IFS= read -r x < late-gate; echo late-native", emit: () => {} });
+  s.pi.onEvent((event) => {
+    if (event.type === "fake_bash_started") started.resolve();
+  });
+  const pending = runShellCommand({
+    sessions: manager,
+    session: s,
+    command: "IFS= read -r x < late-gate; echo late-native",
+    emit: () => {},
+  });
   await started.promise;
   const saved = new SessionStore(state).get(id);
   assert.ok(saved?.tree?.localShellTurns?.[0]);
@@ -581,12 +754,17 @@ async function lateNativeReader(t: TestContext) {
 }
 
 for (const action of ["older-fork", "older-revert", "direct-late-fork"] as const) {
-  test(`idle ${action} compares the complete disk tree before preserving the selected shell`, { timeout: 30_000 }, async (t) => {
+  test(`idle ${action} compares the complete disk tree before preserving the selected shell`, {
+    timeout: 30_000,
+  }, async (t) => {
     const { id, live, reader, recovered, snapshot, dir } = await lateNativeReader(t);
     assert.ok(recovered.pi);
     if (action !== "direct-late-fork") {
       assert.ok(reader.messages(id)?.some((message) => message.info.id === live.id));
-      assert.equal((await getEntries(recovered.pi)).entries.some((entry) => entry.id === recovered.tree.leafId), false);
+      assert.equal(
+        (await getEntries(recovered.pi)).entries.some((entry) => entry.id === recovered.tree.leafId),
+        false,
+      );
     }
     if (action === "older-revert") {
       const selected = recovered.tree.leafId;
@@ -613,7 +791,10 @@ test("plain binding and refresh cannot move a selected leaf back to its ancestor
   assert.ok(s.pi);
   const original = s.pi.command.bind(s.pi);
   t.mock.method(s.pi, "command", async (...args: Parameters<PiRpcClient["command"]>) =>
-    args[0].type === "get_entries" ? { type: "response", command: "get_entries", success: true, data: ancestor } : original(...args));
+    args[0].type === "get_entries"
+      ? { type: "response", command: "get_entries", success: true, data: ancestor }
+      : original(...args),
+  );
   await manager.reloadMessages(id);
   assert.equal(s.tree.leafId, selected);
   const cold = new SessionManager(() => {}, new SessionStore(state), dir);
@@ -627,16 +808,24 @@ for (const outcome of ["cancel", "fail"] as const) {
     assert.ok(reader.messages(id)?.some((message) => message.info.id === live.id));
     const selected = recovered.tree.leafId;
     await manager.revert(id, "msg_live_3");
-    assert.equal((await runShellCommand({ sessions: manager, session: s, command: "echo sibling", emit: () => {} })).kind, "completed");
+    assert.equal(
+      (await runShellCommand({ sessions: manager, session: s, command: "echo sibling", emit: () => {} })).kind,
+      "completed",
+    );
     const pi = recovered.pi;
     assert.ok(pi);
     const original = pi.command.bind(pi);
     let switched = false;
     t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
       if (args[0].type === "navigate_tree" && switched) {
-        return outcome === "cancel" ?
-          { type: "response", command: "navigate_tree", success: true, data: { cancelled: true, leafId: (await getEntries(pi)).leafId } } :
-          { type: "response", command: "navigate_tree", success: false, error: "Injected navigation refusal" };
+        return outcome === "cancel"
+          ? {
+              type: "response",
+              command: "navigate_tree",
+              success: true,
+              data: { cancelled: true, leafId: (await getEntries(pi)).leafId },
+            }
+          : { type: "response", command: "navigate_tree", success: false, error: "Injected navigation refusal" };
       }
       const response = await original(...args);
       if (args[0].type === "switch_session") switched = true;
@@ -650,9 +839,16 @@ for (const outcome of ["cancel", "fail"] as const) {
     await reader.prompt(id, "after restoration", undefined, false, "msg_after_refusal");
     assert.ok(recovered.pi);
     const tree = await getEntries(recovered.pi);
-    assert.equal(tree.entries.find((entry) => entry.id === recovered.tree.messageEntries.msg_after_refusal)?.parentId, selected);
+    assert.equal(
+      tree.entries.find((entry) => entry.id === recovered.tree.messageEntries.msg_after_refusal)?.parentId,
+      selected,
+    );
     assert.equal(recovered.status.type, "idle");
-    assert.ok(reader.messages(id)?.some((message) => message.info.role === "assistant" && message.info.parentID === "msg_after_refusal"));
+    assert.ok(
+      reader
+        .messages(id)
+        ?.some((message) => message.info.role === "assistant" && message.info.parentID === "msg_after_refusal"),
+    );
   });
 }
 
@@ -668,13 +864,20 @@ test("unrevert refreshes entries appended after its saved navigation pin", { tim
   await writer.reloadMessages(id);
   const source = writer.get(id);
   assert.ok(source?.pi);
-  assert.equal((await runShellCommand({ sessions: writer, session: source, command: "echo external", emit: () => {} })).kind, "completed");
-  const appended = (await getEntries(source.pi)).entries.find((entry) =>
-    entry.message?.role === "bashExecution" && entry.message.command === "echo external")?.id;
+  assert.equal(
+    (await runShellCommand({ sessions: writer, session: source, command: "echo external", emit: () => {} })).kind,
+    "completed",
+  );
+  const appended = (await getEntries(source.pi)).entries.find(
+    (entry) => entry.message?.role === "bashExecution" && entry.message.command === "echo external",
+  )?.id;
   assert.ok(appended);
   const recovered = reader.get(id);
   assert.ok(recovered?.pi);
-  assert.equal((await getEntries(recovered.pi)).entries.some((entry) => entry.id === appended), false);
+  assert.equal(
+    (await getEntries(recovered.pi)).entries.some((entry) => entry.id === appended),
+    false,
+  );
   await reader.unrevert(id);
   assert.ok((await getEntries(recovered.pi)).entries.some((entry) => entry.id === appended));
   assert.equal(recovered.info.revert, undefined);
@@ -696,10 +899,16 @@ test("missing saved leaf revival fails dormant before admitting an unwired promp
   assert.ok(recovered);
   assert.equal(recovered.pi, undefined);
   assert.ok(recovered.restored);
-  await assert.rejects(cold.prompt(id, "must not dispatch", undefined, false, "msg_after_bad_revival"), /entry-no-longer-present/);
+  await assert.rejects(
+    cold.prompt(id, "must not dispatch", undefined, false, "msg_after_bad_revival"),
+    /entry-no-longer-present/,
+  );
   assert.equal(recovered.pi, undefined);
   assert.equal(recovered.status.type, "idle");
-  assert.equal(cold.messages(id)?.some((message) => message.info.id === "msg_after_bad_revival"), false);
+  assert.equal(
+    cold.messages(id)?.some((message) => message.info.id === "msg_after_bad_revival"),
+    false,
+  );
 });
 
 test("a never-dispatched cancelled shell cannot claim an identical successful run", { timeout: 30_000 }, async (t) => {
@@ -713,28 +922,44 @@ test("a never-dispatched cancelled shell cannot claim an identical successful ru
   assert.equal(completed.kind, "completed");
   const entries = (await getEntries(session.pi)).entries.filter((entry) => entry.message?.role === "bashExecution");
   assert.equal(entries.length, 1);
-  assert.equal(session.tree.messageEntries[cancelled.info.id], undefined, "the never-dispatched cancellation must remain unbound");
+  assert.equal(
+    session.tree.messageEntries[cancelled.info.id],
+    undefined,
+    "the never-dispatched cancellation must remain unbound",
+  );
   assert.equal(session.tree.messageEntries[cancelled.info.parentID], undefined);
   assert.equal(session.tree.messageEntries[completed.message.info.id], entries[0]?.id);
   assert.equal(session.tree.messageEntries[completed.message.info.parentID], entries[0]?.id);
   await manager.reloadMessages(info.id);
-  const cards = manager.messages(info.id)?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
-  assert.deepEqual(cards?.map((message) => message.info.id), [cancelled.info.id, completed.message.info.id]);
+  const cards = manager
+    .messages(info.id)
+    ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
+  assert.deepEqual(
+    cards?.map((message) => message.info.id),
+    [cancelled.info.id, completed.message.info.id],
+  );
   assert.equal(cards?.[0]?.parts[0]?.type === "tool" && cards[0].parts[0].state.status, "error");
   assert.equal(cards?.[1]?.parts[0]?.type === "tool" && cards[1].parts[0].state.status, "completed");
   await manager.fork(info.id, completed.message.info.id);
   await manager.disposeAll();
   const restored = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => restored.disposeAll());
-  const restarted = restored.messages(info.id)?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
-  assert.deepEqual(restarted?.map((message) => message.info.id), [completed.message.info.id]);
+  const restarted = restored
+    .messages(info.id)
+    ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
+  assert.deepEqual(
+    restarted?.map((message) => message.info.id),
+    [completed.message.info.id],
+  );
   assert.equal(restarted?.[0]?.parts[0]?.type === "tool" && restarted[0].parts[0].state.status, "completed");
   await restored.revert(info.id, completed.message.info.parentID);
   await restored.unrevert(info.id);
   await restored.fork(info.id, completed.message.info.id);
 });
 
-test("identical shell commands retain mixed cancellation outcomes and distinct tree boundaries", { timeout: 30_000 }, async (t) => {
+test("identical shell commands retain mixed cancellation outcomes and distinct tree boundaries", {
+  timeout: 30_000,
+}, async (t) => {
   const { manager, dir, state } = setup(t);
   const info = await manager.create(dir);
   await manager.prompt(info.id, "before", undefined, false, "msg_before");
@@ -776,21 +1001,40 @@ test("identical shell commands retain mixed cancellation outcomes and distinct t
     assert.equal(session.tree.messageEntries[message.info.parentID], native[index]?.id);
   }
   await manager.reloadMessages(info.id);
-  const cards = manager.messages(info.id)?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
-  assert.deepEqual(cards?.map((message) => message.info.id), identities);
-  assert.deepEqual(cards?.map((message) => message.parts[0]?.type === "tool" && message.parts[0].state.status), ["error", "error", "completed", "completed"]);
+  const cards = manager
+    .messages(info.id)
+    ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
+  assert.deepEqual(
+    cards?.map((message) => message.info.id),
+    identities,
+  );
+  assert.deepEqual(
+    cards?.map((message) => message.parts[0]?.type === "tool" && message.parts[0].state.status),
+    ["error", "error", "completed", "completed"],
+  );
   for (const message of dispatched) {
     await manager.revert(info.id, message.info.parentID);
-    assert.equal(session.tree.leafId, native.find((entry) => entry.id === session.tree.messageEntries[message.info.id])?.parentId);
+    assert.equal(
+      session.tree.leafId,
+      native.find((entry) => entry.id === session.tree.messageEntries[message.info.id])?.parentId,
+    );
     await manager.unrevert(info.id);
     await manager.fork(info.id, message.info.id);
   }
   await manager.disposeAll();
   const restored = new SessionManager(() => {}, new SessionStore(state), dir);
   t.after(() => restored.disposeAll());
-  const restarted = restored.messages(info.id)?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
-  assert.deepEqual(restarted?.map((message) => message.info.id), dispatched.map((message) => message.info.id));
-  assert.deepEqual(restarted?.map((message) => message.parts[0]?.type === "tool" && message.parts[0].state.status), ["error", "completed", "completed"]);
+  const restarted = restored
+    .messages(info.id)
+    ?.filter((message) => message.parts.some((part) => part.type === "tool" && part.tool === "bash"));
+  assert.deepEqual(
+    restarted?.map((message) => message.info.id),
+    dispatched.map((message) => message.info.id),
+  );
+  assert.deepEqual(
+    restarted?.map((message) => message.parts[0]?.type === "tool" && message.parts[0].state.status),
+    ["error", "completed", "completed"],
+  );
   for (const message of dispatched) {
     await restored.revert(info.id, message.info.parentID);
     await restored.unrevert(info.id);
@@ -808,18 +1052,34 @@ test("shell binding rejects conflicting outcomes, undispatched cards and reused 
     const correct = createShellMessage(session, "echo repeated");
     const result = { output: "repeated\n", exitCode: 0, cancelled: false, truncated: false };
     completeShellMessage(wrong, "echo repeated", {
-      ...result, ...(conflict === "output" ? { output: "other\n" } : {}), ...(conflict === "exitCode" ? { exitCode: 7 } : {}),
+      ...result,
+      ...(conflict === "output" ? { output: "other\n" } : {}),
+      ...(conflict === "exitCode" ? { exitCode: 7 } : {}),
     });
     if (conflict === "cancelled") failShellMessage(wrong, "echo repeated", "Command cancelled", { cancelled: true });
     completeShellMessage(correct, "echo repeated", result);
     session.messages = [shellUserMessage(wrong), wrong, shellUserMessage(correct), correct];
-    Object.assign(session.tree, { messageEntries: {}, shellDispatch: { [wrong.info.id]: conflict !== "undispatched", [correct.info.id]: true } });
+    Object.assign(session.tree, {
+      messageEntries: {},
+      shellDispatch: { [wrong.info.id]: conflict !== "undispatched", [correct.info.id]: true },
+    });
     if (conflict === "bound") session.tree.messageEntries[wrong.info.id] = "another_entry";
-    bindMessageEntries(session, { entries: [{
-      type: "message", id: "expected_entry", parentId: null,
-      message: { role: "bashExecution", command: "echo repeated", ...result },
-    }], leafId: "expected_entry" });
-    assert.equal(session.tree.messageEntries[wrong.info.id], conflict === "bound" ? "another_entry" : undefined, conflict);
+    bindMessageEntries(session, {
+      entries: [
+        {
+          type: "message",
+          id: "expected_entry",
+          parentId: null,
+          message: { role: "bashExecution", command: "echo repeated", ...result },
+        },
+      ],
+      leafId: "expected_entry",
+    });
+    assert.equal(
+      session.tree.messageEntries[wrong.info.id],
+      conflict === "bound" ? "another_entry" : undefined,
+      conflict,
+    );
     assert.equal(session.tree.messageEntries[correct.info.id], "expected_entry", conflict);
   }
 });
@@ -837,10 +1097,17 @@ test("an established shell binding takes precedence over an earlier identical ca
   Object.assign(session.tree, { shellDispatch: { [earlier.info.id]: true, [known.info.id]: true } });
   session.tree.messageEntries[known.info.id] = "known_entry";
   session.tree.messageEntries[known.info.parentID] = "known_entry";
-  bindMessageEntries(session, { entries: [{
-    type: "message", id: "known_entry", parentId: null,
-    message: { role: "bashExecution", command: "echo repeated", ...result },
-  }], leafId: "known_entry" });
+  bindMessageEntries(session, {
+    entries: [
+      {
+        type: "message",
+        id: "known_entry",
+        parentId: null,
+        message: { role: "bashExecution", command: "echo repeated", ...result },
+      },
+    ],
+    leafId: "known_entry",
+  });
   assert.equal(session.tree.messageEntries[earlier.info.id], undefined);
   assert.equal(session.tree.messageEntries[earlier.info.parentID], undefined);
   assert.equal(session.tree.messageEntries[known.info.id], "known_entry");
@@ -855,7 +1122,13 @@ test("fork stops before the selected live user and transfers the process away fr
   assert.notEqual(child.id, id);
   assert.equal(s.pi, undefined);
   assert.equal(s.piPath, sourcePath);
-  assert.deepEqual(manager.messages(child.id)?.filter((m) => m.info.role === "user").map((m) => m.parts[0]?.type === "text" ? m.parts[0].text : ""), ["turn-1"]);
+  assert.deepEqual(
+    manager
+      .messages(child.id)
+      ?.filter((m) => m.info.role === "user")
+      .map((m) => (m.parts[0]?.type === "text" ? m.parts[0].text : "")),
+    ["turn-1"],
+  );
   assert.equal(manager.messages(child.id)?.at(-1)?.info.role, "assistant");
   await manager.prompt(id, "source-only");
   assert.ok(s.pi);
@@ -881,7 +1154,12 @@ test("persisted shell cards retain live ids through reload, fork and revert boun
   const session = { id };
   const s = manager.get(id);
   assert.ok(s?.pi);
-  const result = await runShellCommand({ sessions: manager, session: s, command: "echo bash-boundary", emit: () => {} });
+  const result = await runShellCommand({
+    sessions: manager,
+    session: s,
+    command: "echo bash-boundary",
+    emit: () => {},
+  });
   assert.equal(result.kind, "completed");
   const shellID = result.message.info.id;
   const shellUserID = result.message.info.parentID;
@@ -956,7 +1234,10 @@ test("restart retains live ids and reverted transcript then a prompt branches fr
   const tree = await getEntries(s.pi);
   const active = branchEntries(tree);
   assert.equal(active.filter((e) => e.message?.role === "user").length, 3);
-  assert.equal(active.some((e) => e.message?.content?.[0]?.text === "turn-3"), false);
+  assert.equal(
+    active.some((e) => e.message?.content?.[0]?.text === "turn-3"),
+    false,
+  );
   assert.ok(tree.entries.some((e) => e.message?.content?.[0]?.text === "turn-3"));
   assert.equal(tree.entries.find((e) => e.id === s.tree.messageEntries.msg_replacement)?.parentId, saved?.targetId);
   assert.equal(s.info.revert, undefined);
@@ -989,7 +1270,9 @@ test("compaction preserves the active revert leaf and original history across re
   assert.doesNotMatch(JSON.stringify(restarted.messages(id)), /Compacted summary/);
 });
 
-test("F2 B1 history refresh waits for an in-flight unrevert and agrees with the backend", { timeout: 10_000 }, async (t) => {
+test("F2 B1 history refresh waits for an in-flight unrevert and agrees with the backend", {
+  timeout: 10_000,
+}, async (t) => {
   const { manager, dir } = setup(t);
   const { s, id, tree } = await turns(manager, dir);
   await manager.revert(id, "msg_live_3");
@@ -1013,7 +1296,11 @@ test("F2 B1 history refresh waits for an in-flight unrevert and agrees with the 
   const readsBeforeRefresh = reads;
   const refresh = manager.reloadMessages(id);
   try {
-    assert.equal(reads, readsBeforeRefresh, "refresh must not dispatch get_entries while unrevert navigation is pending");
+    assert.equal(
+      reads,
+      readsBeforeRefresh,
+      "refresh must not dispatch get_entries while unrevert navigation is pending",
+    );
   } finally {
     release.resolve();
     await Promise.all([redo, refresh]);
@@ -1026,16 +1313,25 @@ test("F2 B1 history refresh waits for an in-flight unrevert and agrees with the 
   assert.equal((await getEntries(pi)).leafId, s.tree.leafId);
 });
 
-test("F2 B2 shell cards and notices created after revert remain in rendered history", { timeout: 10_000 }, async (t) => {
+test("F2 B2 shell cards and notices created after revert remain in rendered history", {
+  timeout: 10_000,
+}, async (t) => {
   const { manager, dir } = setup(t);
   const { s, id } = await turns(manager, dir);
   await manager.revert(id, "msg_live_3");
-  const result = await runShellCommand({ sessions: manager, session: s, command: "echo F2_SHELL_OK", emit: () => undefined });
+  const result = await runShellCommand({
+    sessions: manager,
+    session: s,
+    command: "echo F2_SHELL_OK",
+    emit: () => undefined,
+  });
   assert.equal(result.kind, "completed");
   announceSessionNotice({ sessions: manager, session: s, emit: () => undefined }, "F2_NOTICE");
   const shellId = result.message.info.id;
   assert.equal(result.message.info.parentID, `${result.message.info.id.slice(0, -1)}u`);
-  const noticeId = s.messages?.find((message) => message.parts.some((part) => part.type === "text" && part.text === "F2_NOTICE"))?.info.id;
+  const noticeId = s.messages?.find((message) =>
+    message.parts.some((part) => part.type === "text" && part.text === "F2_NOTICE"),
+  )?.info.id;
   assert.ok(noticeId, "notice must be appended to canonical history");
   const retained = () => {
     const history = manager.messages(id) ?? [];
@@ -1043,8 +1339,11 @@ test("F2 B2 shell cards and notices created after revert remain in rendered hist
     assert.equal(history.filter((message) => message.info.id === noticeId).length, 1);
     assert.equal(history.find((message) => message.info.id === shellId)?.parts[0]?.type, "tool");
     if (s.tree.revert) {
-      assert.ok(history.findIndex((message) => message.info.id === shellId) <
-        history.findIndex((message) => message.info.id === s.tree.revert?.messageID), "shell must precede the UI cutoff");
+      assert.ok(
+        history.findIndex((message) => message.info.id === shellId) <
+          history.findIndex((message) => message.info.id === s.tree.revert?.messageID),
+        "shell must precede the UI cutoff",
+      );
     }
   };
   retained();
@@ -1093,13 +1392,13 @@ test("unknown and malformed messageIDs return 400 without changing session or tr
   });
   await server.start();
   const created = await fetch(`${server.url}/session`, { method: "POST" });
-  const session = await created.json() as { id: string };
+  const session = (await created.json()) as { id: string };
   const url = `${server.url}/session/${session.id}`;
   const before = await (await fetch(url)).json();
   for (const body of [{ messageID: "nope" }, {}, { messageID: 12 }]) {
     const response = await fetch(`${url}/revert`, { method: "POST", body: JSON.stringify(body) });
     assert.equal(response.status, 400);
-    const error = await response.json() as { data: { message: string } };
+    const error = (await response.json()) as { data: { message: string } };
     assert.ok(error.data.message.length > 0);
   }
   assert.deepEqual(await (await fetch(url)).json(), before);

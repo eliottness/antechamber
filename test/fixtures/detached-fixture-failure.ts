@@ -7,7 +7,8 @@ import { trackDetachedFixture } from "./detached-fixture.js";
 
 test("fixture cleanup after an assertion failure", async (t) => {
   const child = spawn(process.execPath, [resolve("test/fixtures/fake-omo-host.mjs")], {
-    detached: true, stdio: ["ignore", "pipe", "ignore"],
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
   });
   trackDetachedFixture(t, child);
   assert.ok(child.stdout);

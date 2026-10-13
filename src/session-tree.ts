@@ -38,13 +38,16 @@ export function durableShellTree(tree: SessionTreeState): SessionTreeState {
   return {
     ...tree,
     shellDispatch: Object.fromEntries(Object.entries(tree.shellDispatch ?? {}).filter(([, dispatched]) => dispatched)),
-    localShellTurns: (tree.localShellTurns ?? []).filter((turn) => tree.shellDispatch?.[turn.messages[1].info.id] === true),
+    localShellTurns: (tree.localShellTurns ?? []).filter(
+      (turn) => tree.shellDispatch?.[turn.messages[1].info.id] === true,
+    ),
   };
 }
 
 export async function getEntries(pi: PiRpcClient, signal?: AbortSignal): Promise<Entries> {
   const response = await pi.command<Entries>({ type: "get_entries" }, RPC_COMMAND_TIMEOUT_MS, signal);
-  if (!response.success || !response.data) throw new SessionTreeError(response.error ?? "OmO returned no session entries");
+  if (!response.success || !response.data)
+    throw new SessionTreeError(response.error ?? "OmO returned no session entries");
   return response.data;
 }
 
@@ -55,8 +58,14 @@ export function readSessionTree(piPath: string): Entries {
     if (line.trim().length === 0) continue;
     try {
       const value: unknown = JSON.parse(line);
-      if (typeof value !== "object" || value === null || Array.isArray(value) ||
-          !("type" in value) || typeof value.type !== "string") throw new SyntaxError("Invalid session entry");
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        Array.isArray(value) ||
+        !("type" in value) ||
+        typeof value.type !== "string"
+      )
+        throw new SyntaxError("Invalid session entry");
       const entry = value as TreeEntry;
       if (entry.type !== "session" && typeof entry.id === "string") entries.push(entry);
     } catch (error) {
@@ -105,17 +114,26 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
     if (s.tree.shellDispatch) delete s.tree.shellDispatch[turn.messages[1].info.id];
     return false;
   });
-  const entries = branch.filter((entry) => entry.type === "message" && (entry.message?.role === "user" || entry.message?.role === "assistant" || entry.message?.role === "bashExecution"));
+  const entries = branch.filter(
+    (entry) =>
+      entry.type === "message" &&
+      (entry.message?.role === "user" ||
+        entry.message?.role === "assistant" ||
+        entry.message?.role === "bashExecution"),
+  );
   const visible = s.messages ?? [];
   const visibleIds = new Set(visible.map((message) => message.info.id));
-  const candidates = s.tree.localShellTurns.flatMap((turn) => turn.messages).filter((message) => !visibleIds.has(message.info.id));
+  const candidates = s.tree.localShellTurns
+    .flatMap((turn) => turn.messages)
+    .filter((message) => !visibleIds.has(message.info.id));
   for (const message of candidates) (s.localMessageIds ??= new Set()).add(message.info.id);
   const messages = [...visible, ...candidates];
   let cursor = 0;
   for (const entry of entries) {
     const shell = entry.message?.role === "bashExecution";
-    const known = messages.findIndex((message) => (!shell || message.info.role === "assistant") &&
-      s.tree.messageEntries[message.info.id] === entry.id);
+    const known = messages.findIndex(
+      (message) => (!shell || message.info.role === "assistant") && s.tree.messageEntries[message.info.id] === entry.id,
+    );
     if (known >= 0) {
       if (known < visible.length) cursor = known + 1;
       continue;
@@ -123,32 +141,60 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
     if (shell) {
       if (Object.values(s.tree.messageEntries).includes(entry.id)) continue;
       const index = messages.findIndex((message, i) => {
-        if (i < cursor || message.info.role !== "assistant" ||
+        if (
+          i < cursor ||
+          message.info.role !== "assistant" ||
           s.tree.shellDispatch?.[message.info.id] !== true ||
-          s.tree.messageEntries[message.info.id] !== undefined) return false;
+          s.tree.messageEntries[message.info.id] !== undefined
+        )
+          return false;
         const parentEntry = s.tree.messageEntries[message.info.parentID];
         if (parentEntry !== undefined && parentEntry !== entry.id) return false;
         const attempt = s.tree.localShellTurns?.find((turn) => turn.messages[1].info.id === message.info.id);
-        if (attempt?.afterEntryId !== undefined && attempt.afterEntryId !== null &&
-          (!positions.has(attempt.afterEntryId) || (positions.get(attempt.afterEntryId) ?? 0) >= (positions.get(entry.id) ?? 0))) return false;
-        const part = message.parts.find((part) => part.type === "tool" && part.tool === "bash" &&
-          part.state.input.command === entry.message?.command);
+        if (
+          attempt?.afterEntryId !== undefined &&
+          attempt.afterEntryId !== null &&
+          (!positions.has(attempt.afterEntryId) ||
+            (positions.get(attempt.afterEntryId) ?? 0) >= (positions.get(entry.id) ?? 0))
+        )
+          return false;
+        const part = message.parts.find(
+          (part) => part.type === "tool" && part.tool === "bash" && part.state.input.command === entry.message?.command,
+        );
         if (part?.type !== "tool" || part.state.status === "pending") return false;
         const state = part.state;
-        if (state.status === "error" && state.metadata?.interrupted !== true &&
-          (state.metadata?.cancelled !== true || entry.message?.cancelled !== true)) return false;
+        if (
+          state.status === "error" &&
+          state.metadata?.interrupted !== true &&
+          (state.metadata?.cancelled !== true || entry.message?.cancelled !== true)
+        )
+          return false;
         if (state.status === "completed" && entry.message?.cancelled === true) return false;
-        if (state.metadata?.cancelled !== undefined && state.metadata.cancelled !== (entry.message?.cancelled === true)) return false;
-        if (entry.message?.exitCode !== undefined && state.metadata?.exitCode !== undefined &&
-          state.metadata.exitCode !== entry.message.exitCode) return false;
-        if (state.status === "completed" && entry.message?.output !== undefined && state.output !== entry.message.output) return false;
+        if (state.metadata?.cancelled !== undefined && state.metadata.cancelled !== (entry.message?.cancelled === true))
+          return false;
+        if (
+          entry.message?.exitCode !== undefined &&
+          state.metadata?.exitCode !== undefined &&
+          state.metadata.exitCode !== entry.message.exitCode
+        )
+          return false;
+        if (
+          state.status === "completed" &&
+          entry.message?.output !== undefined &&
+          state.output !== entry.message.output
+        )
+          return false;
         return true;
       });
       const assistant = messages[index];
       if (assistant?.info.role === "assistant") {
         const parentID = assistant.info.parentID;
-        const user = messages.find((message) => message.info.id === parentID && message.info.role === "user" &&
-          message.parts.some((part) => part.type === "text" && part.synthetic));
+        const user = messages.find(
+          (message) =>
+            message.info.id === parentID &&
+            message.info.role === "user" &&
+            message.parts.some((part) => part.type === "text" && part.synthetic),
+        );
         for (const message of user ? [user, assistant] : [assistant]) {
           s.tree.messageEntries[message.info.id] = entry.id;
           s.localMessageIds?.delete(message.info.id);
@@ -157,11 +203,22 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
       }
       continue;
     }
-    const text = entry.message?.content?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("");
-    const index = messages.findIndex((message, i) => i >= cursor &&
-      !s.localMessageIds?.has(message.info.id) &&
-      s.tree.messageEntries[message.info.id] === undefined && message.info.role === entry.message?.role &&
-      (message.info.role !== "user" || message.parts.filter((part) => part.type === "text").map((part) => part.text).join("") === text));
+    const text = entry.message?.content
+      ?.filter((part) => part.type === "text")
+      .map((part) => part.text ?? "")
+      .join("");
+    const index = messages.findIndex(
+      (message, i) =>
+        i >= cursor &&
+        !s.localMessageIds?.has(message.info.id) &&
+        s.tree.messageEntries[message.info.id] === undefined &&
+        message.info.role === entry.message?.role &&
+        (message.info.role !== "user" ||
+          message.parts
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("") === text),
+    );
     const message = messages[index];
     if (message) {
       s.tree.messageEntries[message.info.id] = entry.id;
@@ -171,7 +228,9 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
   // Syncs/agent events preserve an active revert's navigation pin. Only
   // revert/unrevert select it explicitly; prompt clears the pin before branching.
   if (!s.tree.revert) s.tree.leafId = leafId;
-  s.tree.localShellTurns = s.tree.localShellTurns.filter((turn) => s.tree.messageEntries[turn.messages[1].info.id] === undefined);
+  s.tree.localShellTurns = s.tree.localShellTurns.filter(
+    (turn) => s.tree.messageEntries[turn.messages[1].info.id] === undefined,
+  );
 }
 
 export function entryForMessage(s: ManagedSession, tree: Entries, messageID: string): TreeEntry {
@@ -186,11 +245,15 @@ export function entryForMessage(s: ManagedSession, tree: Entries, messageID: str
 export async function forkConversation(s: ManagedSession, pi: PiRpcClient, tree: Entries, messageID?: string) {
   const entry = messageID === undefined ? branchEntries(tree).at(-1) : entryForMessage(s, tree, messageID);
   if (!entry) throw new SessionTreeError("Cannot fork an empty conversation");
-  const shellUser = entry.message?.role === "bashExecution" && s.messages?.find((message) => message.info.id === messageID)?.info.role === "user";
+  const shellUser =
+    entry.message?.role === "bashExecution" &&
+    s.messages?.find((message) => message.info.id === messageID)?.info.role === "user";
   const forkEntryId = shellUser ? entry.parentId : entry.id;
   if (forkEntryId === null) throw new SessionTreeError("Cannot fork before a root shell entry");
   const response = await pi.command<{ cancelled?: boolean }>({
-    type: "fork", entryId: forkEntryId, ...(messageID === undefined || entry.message?.role === "bashExecution" ? { position: "at" } : {}),
+    type: "fork",
+    entryId: forkEntryId,
+    ...(messageID === undefined || entry.message?.role === "bashExecution" ? { position: "at" } : {}),
   });
   if (!response.success) throw new SessionTreeError(response.error ?? "OmO fork failed");
   if (response.data?.cancelled) throw new SessionTreeError("Conversation fork was cancelled");
@@ -210,9 +273,15 @@ export async function forkConversation(s: ManagedSession, pi: PiRpcClient, tree:
   }
 }
 
-export async function revertConversation(s: ManagedSession, pi: PiRpcClient, tree: Entries, messageID: string): Promise<boolean> {
+export async function revertConversation(
+  s: ManagedSession,
+  pi: PiRpcClient,
+  tree: Entries,
+  messageID: string,
+): Promise<boolean> {
   const entry = entryForMessage(s, tree, messageID);
-  if (s.messages?.find((message) => message.info.id === messageID)?.info.role !== "user") throw new SessionTreeError("Revert requires a user messageID");
+  if (s.messages?.find((message) => message.info.id === messageID)?.info.role !== "user")
+    throw new SessionTreeError("Revert requires a user messageID");
   if (s.tree.revert?.messageID === messageID) return false;
   const previousLeafId = s.tree.revert ? s.tree.revert.previousLeafId : tree.leafId;
   const leafId = await navigate(pi, entry.parentId);
@@ -239,17 +308,28 @@ export async function navigate(pi: PiRpcClient, targetId: string | null, signal?
     if (tree.leafId === null) return null;
     const root = tree.entries.find((entry) => entry.parentId === null && entry.message?.role === "user");
     if (!root) throw new SessionTreeError("Cannot locate the root conversation message");
-    const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>({ type: "navigate_tree", targetId: root.id }, RPC_COMMAND_TIMEOUT_MS, signal);
+    const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>(
+      { type: "navigate_tree", targetId: root.id },
+      RPC_COMMAND_TIMEOUT_MS,
+      signal,
+    );
     if (!response.success || !response.data || response.data.cancelled) {
       throw new SessionTreeError(response.error ?? "Root conversation navigation was cancelled");
     }
     return response.data.leafId;
   }
   // Resume selects the exact parent, even when it is a user/custom message.
-  const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>({
-    type: "navigate_tree", targetId, intent: "resume",
-  }, RPC_COMMAND_TIMEOUT_MS, signal);
-  if (!response.success || !response.data) throw new SessionTreeError(response.error ?? "OmO returned no navigation result");
+  const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>(
+    {
+      type: "navigate_tree",
+      targetId,
+      intent: "resume",
+    },
+    RPC_COMMAND_TIMEOUT_MS,
+    signal,
+  );
+  if (!response.success || !response.data)
+    throw new SessionTreeError(response.error ?? "OmO returned no navigation result");
   if (response.data.cancelled) throw new SessionTreeError("Conversation navigation was cancelled");
   return response.data.leafId;
 }
@@ -259,19 +339,34 @@ export function revertNotice(s: ManagedSession): OCMessageWithParts | undefined 
   if (!revert) return undefined;
   const boundary = s.messages?.find((message) => message.info.id === revert.messageID);
   const boundaryIndex = s.messages?.findIndex((message) => message.info.id === revert.messageID) ?? 0;
-  const parent = s.messages?.slice(0, boundaryIndex).reverse().find((message) => message.info.role === "user");
+  const parent = s.messages
+    ?.slice(0, boundaryIndex)
+    .reverse()
+    .find((message) => message.info.role === "user");
   const messageID = `msg_revert_${revert.messageID}`;
   const created = (boundary?.info.time.created ?? s.info.time.updated) - 1;
   return {
     info: {
-      id: messageID, sessionID: s.info.id, role: "assistant", time: { created, completed: created },
-      parentID: parent?.info.id ?? "", modelID: s.model?.modelID ?? "unknown", providerID: s.model?.providerID ?? "unknown",
-      mode: "info", path: { cwd: s.info.directory, root: s.info.directory }, cost: 0,
+      id: messageID,
+      sessionID: s.info.id,
+      role: "assistant",
+      time: { created, completed: created },
+      parentID: parent?.info.id ?? "",
+      modelID: s.model?.modelID ?? "unknown",
+      providerID: s.model?.providerID ?? "unknown",
+      mode: "info",
+      path: { cwd: s.info.directory, root: s.info.directory },
+      cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     },
-    parts: [{
-      id: `prt_revert_${revert.messageID}`, sessionID: s.info.id, messageID, type: "text",
-      text: "Conversation reverted. Files were not changed.",
-    }],
+    parts: [
+      {
+        id: `prt_revert_${revert.messageID}`,
+        sessionID: s.info.id,
+        messageID,
+        type: "text",
+        text: "Conversation reverted. Files were not changed.",
+      },
+    ],
   };
 }

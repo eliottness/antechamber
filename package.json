@@ -5,7 +5,9 @@
   "type": "module",
   "license": "MIT",
   "author": "Eliott Bouhana",
-  "contributors": ["xiuli.qz (original openchamber-pi-connector)"],
+  "contributors": [
+    "xiuli.qz (original openchamber-pi-connector)"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/eliottness/antechamber.git"
@@ -14,8 +16,22 @@
     "url": "https://github.com/eliottness/antechamber/issues"
   },
   "homepage": "https://github.com/eliottness/antechamber#readme",
-  "keywords": ["openchamber", "opencode", "pi", "coding-agent", "omo", "adapter"],
-  "files": ["dist", "bin/opencode-antechamber", "bin/opencode-pi", "README.md", "LICENSE", "CHANGELOG.md"],
+  "keywords": [
+    "openchamber",
+    "opencode",
+    "pi",
+    "coding-agent",
+    "omo",
+    "adapter"
+  ],
+  "files": [
+    "dist",
+    "bin/opencode-antechamber",
+    "bin/opencode-pi",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "bin": {
     "antechamber": "./dist/cli.js"
   },
@@ -27,7 +43,7 @@
     "lint": "biome lint . --error-on-warnings",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "check": "npm run typecheck && npm run lint && npm test",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
     "test": "tsx --test --import ./test/setup.ts test/*.test.ts",
     "probe": "tsx contrib/probe.ts",
     "smoke": "tsx contrib/smoke.ts",

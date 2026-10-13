@@ -57,7 +57,9 @@ function startEvents(url: string, path = "/event") {
   return {
     ready,
     close: () => controller.abort(),
-    mark(): number { return history.length; },
+    mark(): number {
+      return history.length;
+    },
     waitFor(type: string, predicate: (event: TestEvent) => boolean): Promise<TestEvent> {
       const existing = history.find((event) => event.type === type && predicate(event));
       if (existing !== undefined) return Promise.resolve(existing);
@@ -125,30 +127,42 @@ async function createSession(url: string): Promise<string> {
   return session.id;
 }
 
-async function sendPrompt(url: string, sessionId: string, text: string): Promise<void> { assert.equal((await fetch(`${url}/session/${sessionId}/message`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parts: [{ type: "text", text }] }) })).status, 200); }
+async function sendPrompt(url: string, sessionId: string, text: string): Promise<void> {
+  assert.equal(
+    (
+      await fetch(`${url}/session/${sessionId}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parts: [{ type: "text", text }] }),
+      })
+    ).status,
+    200,
+  );
+}
 
-for (const failure of ["rejected", "unsuccessful"]) test(`abort ${failure} returns an OpenCode error without cancelling children`, { timeout: 30_000 }, async (t) => {
-  const { url, server } = await startServer(t);
-  const sessionId = await createSession(url);
-  const pi = server["sessions"].get(sessionId)?.pi;
-  assert.ok(pi);
-  const original = pi.command.bind(pi);
-  t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
-    if (args[0].type !== "abort") return original(...args);
-    if (failure === "rejected") throw new Error("abort transport failed");
-    return { type: "response", id: "abort", command: "abort", success: false, error: "abort denied" };
-  });
-  const stop = t.mock.method(server["sessions"].subagents, "stopParent", () => {});
-  for (const path of [`/session/${sessionId}/abort`, `/api/session/${sessionId}/interrupt`]) {
-    const response = await fetch(`${url}${path}`, { method: "POST" });
-    assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), {
-      name: "UnknownError",
-      data: { message: failure === "rejected" ? "abort transport failed" : "abort denied" },
+for (const failure of ["rejected", "unsuccessful"])
+  test(`abort ${failure} returns an OpenCode error without cancelling children`, { timeout: 30_000 }, async (t) => {
+    const { url, server } = await startServer(t);
+    const sessionId = await createSession(url);
+    const pi = server["sessions"].get(sessionId)?.pi;
+    assert.ok(pi);
+    const original = pi.command.bind(pi);
+    t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
+      if (args[0].type !== "abort") return original(...args);
+      if (failure === "rejected") throw new Error("abort transport failed");
+      return { type: "response", id: "abort", command: "abort", success: false, error: "abort denied" };
     });
-    assert.equal(stop.mock.callCount(), 0);
-  }
-});
+    const stop = t.mock.method(server["sessions"].subagents, "stopParent", () => {});
+    for (const path of [`/session/${sessionId}/abort`, `/api/session/${sessionId}/interrupt`]) {
+      const response = await fetch(`${url}${path}`, { method: "POST" });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), {
+        name: "UnknownError",
+        data: { message: failure === "rejected" ? "abort transport failed" : "abort denied" },
+      });
+      assert.equal(stop.mock.callCount(), 0);
+    }
+  });
 
 test("command catalog maps OmO commands for v1 and v2", { timeout: 30_000 }, async (t) => {
   const { url, directory } = await startServer(t);
@@ -200,11 +214,14 @@ test("shell route emits a bash card with output and exit code", { timeout: 30_00
 
   const assistantUpdated = stream.waitFor(
     "message.updated",
-    (event) => JSON.stringify(event).includes(`"sessionID":"${sessionId}"`) && JSON.stringify(event).includes('"role":"assistant"'),
+    (event) =>
+      JSON.stringify(event).includes(`"sessionID":"${sessionId}"`) &&
+      JSON.stringify(event).includes('"role":"assistant"'),
   );
   const completedPart = stream.waitFor(
     "message.part.updated",
-    (event) => JSON.stringify(event).includes('"tool":"bash"') && JSON.stringify(event).includes('"status":"completed"'),
+    (event) =>
+      JSON.stringify(event).includes('"tool":"bash"') && JSON.stringify(event).includes('"status":"completed"'),
   );
   const response = await fetch(`${url}/session/${sessionId}/shell`, {
     method: "POST",
@@ -218,9 +235,8 @@ test("shell route emits a bash card with output and exit code", { timeout: 30_00
   assert.match(JSON.stringify(partEvent), /SHELL_OUTPUT/);
   assert.match(JSON.stringify(partEvent), /"exitCode":3/);
 
-  const v2CompletedPart = stream.waitFor(
-    "message.part.updated",
-    (event) => JSON.stringify(event).includes('"exitCode":4'),
+  const v2CompletedPart = stream.waitFor("message.part.updated", (event) =>
+    JSON.stringify(event).includes('"exitCode":4'),
   );
   const v2 = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
@@ -240,7 +256,9 @@ test("shell synthetic users arrive over v2 SSE without an optimistic prompt", { 
   await stream.ready;
   const prompted = stream.waitFor("session.prompted", (event) => event.data?.sessionID === sessionId);
   const shell = await fetch(`${url}/api/session/${sessionId}/shell`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command: "echo paired" }),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command: "echo paired" }),
   });
   assert.equal(shell.status, 200);
   const event = await prompted;
@@ -261,9 +279,8 @@ test("slash command refreshes entries persisted without agent events", { timeout
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const output = stream.waitFor(
-    "message.part.updated",
-    (event) => JSON.stringify(event).includes("Slash command output without agent events"),
+  const output = stream.waitFor("message.part.updated", (event) =>
+    JSON.stringify(event).includes("Slash command output without agent events"),
   );
   const response = await fetch(`${url}/session/${sessionId}/command`, {
     method: "POST",
@@ -289,7 +306,9 @@ test("empty shell commands return a client error without creating a card", { tim
   assert.equal(response.status, 400);
 });
 
-test("abort cancels a pending shell within ten seconds and tolerates repeated interruptions", { timeout: 30_000 }, async (t) => {
+test("abort cancels a pending shell within ten seconds and tolerates repeated interruptions", {
+  timeout: 30_000,
+}, async (t) => {
   const { url, server } = await startServer(t);
   const sessionId = await createSession(url);
   const stream = startEvents(url);
@@ -304,11 +323,15 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
       if (event.type === "fixture_abort_bash") abortBashDispatched = true;
     });
   });
-  const cancelled = stream.waitFor("message.part.updated", (event) =>
-    JSON.stringify(event).includes('"status":"error"') && JSON.stringify(event).includes('"cancelled":true'));
+  const cancelled = stream.waitFor(
+    "message.part.updated",
+    (event) => JSON.stringify(event).includes('"status":"error"') && JSON.stringify(event).includes('"cancelled":true'),
+  );
   const idle = stream.waitFor("session.idle", (event) => event.properties?.sessionID === sessionId);
   const shell = fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "sleep 600" }), signal: AbortSignal.timeout(10_000),
+    method: "POST",
+    body: JSON.stringify({ command: "sleep 600" }),
+    signal: AbortSignal.timeout(10_000),
   });
   await pending;
   const started = performance.now();
@@ -323,32 +346,46 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
   assert.ok(performance.now() - started < 10_000);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
   const resumed = await fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "echo RESUMED" }),
+    method: "POST",
+    body: JSON.stringify({ command: "echo RESUMED" }),
   });
   assert.equal(resumed.status, 200);
 });
 
-test("a late bash reply cannot resurrect or duplicate a cancelled shell after reload", { timeout: 30_000 }, async (t) => {
+test("a late bash reply cannot resurrect or duplicate a cancelled shell after reload", {
+  timeout: 30_000,
+}, async (t) => {
   const { url, server } = await startServer(t);
   const sessionId = await createSession(url);
   const pi = server["sessions"].get(sessionId)?.pi;
   assert.ok(pi);
   const pending = new Promise<void>((resolvePending) => {
-    pi.onEvent((event) => { if (event.type === "fixture_bash_pending") resolvePending(); });
+    pi.onEvent((event) => {
+      if (event.type === "fixture_bash_pending") resolvePending();
+    });
   });
   const shell = fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "sleep 600 late" }), signal: AbortSignal.timeout(10_000),
+    method: "POST",
+    body: JSON.stringify({ command: "sleep 600 late" }),
+    signal: AbortSignal.timeout(10_000),
   });
   await pending;
   await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" });
   assert.equal((await shell).status, 200);
-  assert.equal((await fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "echo RELEASE_LATE" }),
-  })).status, 200);
+  assert.equal(
+    (
+      await fetch(`${url}/session/${sessionId}/shell`, {
+        method: "POST",
+        body: JSON.stringify({ command: "echo RELEASE_LATE" }),
+      })
+    ).status,
+    200,
+  );
   await server["sessions"].reloadMessages(sessionId);
   const messages = server["sessions"].messages(sessionId) ?? [];
-  const cancelled = messages.flatMap((message) => message.parts).filter((part) =>
-    part.type === "tool" && part.state.input.command === "sleep 600 late");
+  const cancelled = messages
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === "tool" && part.state.input.command === "sleep 600 late");
   assert.equal(cancelled.length, 1);
   assert.match(JSON.stringify(cancelled[0]), /"status":"error"/);
   assert.match(JSON.stringify(cancelled[0]), /"cancelled":true/);
@@ -360,7 +397,8 @@ test("a native cancelled bash reply without exitCode ends the card as cancelled"
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
   const response = await fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "fixture-cancelled" }),
+    method: "POST",
+    body: JSON.stringify({ command: "fixture-cancelled" }),
   });
   assert.equal(response.status, 200);
   const history = await fetch(`${url}/session/${sessionId}/message`).then((res) => res.json());
@@ -369,16 +407,22 @@ test("a native cancelled bash reply without exitCode ends the card as cancelled"
   assert.match(JSON.stringify(history), /"exitCode":null/);
 });
 
-test("abort releases a shell waiting on history refresh and ignores the late entries reply", { timeout: 30_000 }, async (t) => {
+test("abort releases a shell waiting on history refresh and ignores the late entries reply", {
+  timeout: 30_000,
+}, async (t) => {
   const { url, server } = await startServer(t);
   const sessionId = await createSession(url);
   const pi = server["sessions"].get(sessionId)?.pi;
   assert.ok(pi);
   const pending = new Promise<void>((resolvePending) => {
-    pi.onEvent((event) => { if (event.type === "fixture_entries_pending") resolvePending(); });
+    pi.onEvent((event) => {
+      if (event.type === "fixture_entries_pending") resolvePending();
+    });
   });
   const shell = fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "fixture-reload-pending" }), signal: AbortSignal.timeout(10_000),
+    method: "POST",
+    body: JSON.stringify({ command: "fixture-reload-pending" }),
+    signal: AbortSignal.timeout(10_000),
   });
   await pending;
   const started = performance.now();
@@ -386,10 +430,17 @@ test("abort releases a shell waiting on history refresh and ignores the late ent
   assert.equal((await shell).status, 200);
   assert.ok(performance.now() - started < 10_000);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
-  assert.equal((await fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "echo RELEASE_ENTRIES" }),
-  })).status, 200);
-  const parts = (server["sessions"].messages(sessionId) ?? []).flatMap((message) => message.parts)
+  assert.equal(
+    (
+      await fetch(`${url}/session/${sessionId}/shell`, {
+        method: "POST",
+        body: JSON.stringify({ command: "echo RELEASE_ENTRIES" }),
+      })
+    ).status,
+    200,
+  );
+  const parts = (server["sessions"].messages(sessionId) ?? [])
+    .flatMap((message) => message.parts)
     .filter((part) => part.type === "tool" && part.state.input.command === "fixture-reload-pending");
   assert.equal(parts.length, 1);
   assert.match(JSON.stringify(parts), /"status":"error"/);
@@ -433,9 +484,11 @@ test("F2 B5 abort cancels a queued shell before the preceding refresh completes"
   const refresh = manager.reloadMessages(sessionId);
   await held.promise;
   const running = stream.waitFor("message.part.updated", (event) =>
-    JSON.stringify(event).includes('"status":"running"'));
+    JSON.stringify(event).includes('"status":"running"'),
+  );
   const shell = fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "echo NEVER_DISPATCH" }),
+    method: "POST",
+    body: JSON.stringify({ command: "echo NEVER_DISPATCH" }),
     signal: AbortSignal.timeout(2_000),
   });
   try {
@@ -447,8 +500,11 @@ test("F2 B5 abort cancels a queued shell before the preceding refresh completes"
     assert.ok(performance.now() - started < 2_000);
     assert.equal(manager.get(sessionId)?.status.type, "idle");
     const parts = manager.messages(sessionId)?.flatMap((message) => message.parts) ?? [];
-    assert.ok(parts.some((part) => part.type === "tool" && part.state.status === "error" &&
-      part.state.metadata?.cancelled === true));
+    assert.ok(
+      parts.some(
+        (part) => part.type === "tool" && part.state.status === "error" && part.state.metadata?.cancelled === true,
+      ),
+    );
     assert.equal(commands.includes("bash"), false);
   } finally {
     release.resolve();
@@ -457,63 +513,86 @@ test("F2 B5 abort cancels a queued shell before the preceding refresh completes"
     pi.command = command;
   }
   assert.equal(commands.includes("bash"), false, "cancelled queue entries must never dispatch later");
-  assert.equal((await fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST", body: JSON.stringify({ command: "echo RESUMED" }),
-  })).status, 200);
+  assert.equal(
+    (
+      await fetch(`${url}/session/${sessionId}/shell`, {
+        method: "POST",
+        body: JSON.stringify({ command: "echo RESUMED" }),
+      })
+    ).status,
+    200,
+  );
 });
 
-for (const version of ["v1", "v2"]) test(`F2 B3 ${version} async prompt registry failure emits an error and retains visible failed state`, { timeout: 15_000 }, async (t) => {
-  const { url, server } = await startServer(t);
-  const sessionId = await createSession(url);
-  const manager = server["sessions"];
-  const pi = manager.get(sessionId)?.pi;
-  assert.ok(pi);
-  // Use the real failing filesystem boundary, not a mocked rejection.
-  Object.defineProperty(manager, "store", { value: new SessionStore("/dev/null/F2-registry-failure") });
-  const commands: string[] = [];
-  const command = pi.command.bind(pi);
-  pi.command = <T>(...args: Parameters<PiRpcClient["command"]>) => {
-    commands.push(String(args[0].type));
-    return command<T>(...args);
-  };
-  const stream = startEvents(url);
-  t.after(stream.close);
-  await stream.ready;
-  const error = stream.waitFor("session.error", (event) => event.properties?.sessionID === sessionId);
-  void error.catch(() => undefined);
-  const path = version === "v1" ? `/session/${sessionId}/prompt_async` : `/api/session/${sessionId}/prompt`;
-  const body = version === "v1"
-    ? { messageID: "msg_failed_prompt", parts: [{ type: "text", text: "P3" }] }
-    : { id: "msg_failed_prompt", text: "P3" };
-  const response = await fetch(url + path, {
-    method: "POST", body: JSON.stringify(body),
+for (const version of ["v1", "v2"])
+  test(`F2 B3 ${version} async prompt registry failure emits an error and retains visible failed state`, {
+    timeout: 15_000,
+  }, async (t) => {
+    const { url, server } = await startServer(t);
+    const sessionId = await createSession(url);
+    const manager = server["sessions"];
+    const pi = manager.get(sessionId)?.pi;
+    assert.ok(pi);
+    // Use the real failing filesystem boundary, not a mocked rejection.
+    Object.defineProperty(manager, "store", { value: new SessionStore("/dev/null/F2-registry-failure") });
+    const commands: string[] = [];
+    const command = pi.command.bind(pi);
+    pi.command = <T>(...args: Parameters<PiRpcClient["command"]>) => {
+      commands.push(String(args[0].type));
+      return command<T>(...args);
+    };
+    const stream = startEvents(url);
+    t.after(stream.close);
+    await stream.ready;
+    const error = stream.waitFor("session.error", (event) => event.properties?.sessionID === sessionId);
+    void error.catch(() => undefined);
+    const path = version === "v1" ? `/session/${sessionId}/prompt_async` : `/api/session/${sessionId}/prompt`;
+    const body =
+      version === "v1"
+        ? { messageID: "msg_failed_prompt", parts: [{ type: "text", text: "P3" }] }
+        : { id: "msg_failed_prompt", text: "P3" };
+    const response = await fetch(url + path, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, version === "v1" ? 204 : 200);
+    await manager["operations"].get(sessionId);
+    assert.equal(commands.includes("prompt"), false);
+    // The direct control must still propagate the same essential write failure.
+    await assert.rejects(manager.prompt(sessionId, "P3 control"), SessionPersistenceError);
+    const event = await error;
+    assert.ok(isRecord(event.properties?.error));
+    assert.equal(event.properties.error.name, "SessionPersistenceError");
+    const history: unknown = await fetch(`${url}/session/${sessionId}/message`).then((res) => res.json());
+    assert.ok(Array.isArray(history));
+    assert.ok(
+      history.some(
+        (message) =>
+          isRecord(message) &&
+          isRecord(message.info) &&
+          message.info.role === "assistant" &&
+          isRecord(message.info.error) &&
+          message.info.error.name === "SessionPersistenceError",
+      ),
+    );
+    assert.equal(manager.get(sessionId)?.status.type, "idle");
   });
-  assert.equal(response.status, version === "v1" ? 204 : 200);
-  await manager["operations"].get(sessionId);
-  assert.equal(commands.includes("prompt"), false);
-  // The direct control must still propagate the same essential write failure.
-  await assert.rejects(manager.prompt(sessionId, "P3 control"), SessionPersistenceError);
-  const event = await error;
-  assert.ok(isRecord(event.properties?.error));
-  assert.equal(event.properties.error.name, "SessionPersistenceError");
-  const history: unknown = await fetch(`${url}/session/${sessionId}/message`).then((res) => res.json());
-  assert.ok(Array.isArray(history));
-  assert.ok(history.some((message) => isRecord(message) && isRecord(message.info) &&
-    message.info.role === "assistant" && isRecord(message.info.error) &&
-    message.info.error.name === "SessionPersistenceError"));
-  assert.equal(manager.get(sessionId)?.status.type, "idle");
-});
 
-test("a print-only slash command renders its notification and returns idle without agent events", { timeout: 30_000 }, async (t) => {
+test("a print-only slash command renders its notification and returns idle without agent events", {
+  timeout: 30_000,
+}, async (t) => {
   const { url, server } = await startServer(t);
   const sessionId = await createSession(url);
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const output = stream.waitFor("message.part.updated", (event) => JSON.stringify(event).includes("Print-only command output"));
+  const output = stream.waitFor("message.part.updated", (event) =>
+    JSON.stringify(event).includes("Print-only command output"),
+  );
   const idle = stream.waitFor("session.idle", (event) => event.properties?.sessionID === sessionId);
   const response = await fetch(`${url}/session/${sessionId}/command`, {
-    method: "POST", body: JSON.stringify({ command: "notify-fixture", arguments: "" }),
+    method: "POST",
+    body: JSON.stringify({ command: "notify-fixture", arguments: "" }),
   });
   assert.equal(response.status, 200);
   assert.match(JSON.stringify(await response.json()), /Print-only command output/);
@@ -521,21 +600,19 @@ test("a print-only slash command renders its notification and returns idle witho
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
 });
 
-test("shell refreshes persisted entries appended without agent events and retains its bash card", { timeout: 30_000 }, async (t) => {
+test("shell refreshes persisted entries appended without agent events and retains its bash card", {
+  timeout: 30_000,
+}, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
   await sendPrompt(url, sessionId, "before shell");
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const persistedPart = stream.waitFor(
-    "message.part.updated",
-    (event) => JSON.stringify(event).includes("Persisted shell output: exit 7"),
+  const persistedPart = stream.waitFor("message.part.updated", (event) =>
+    JSON.stringify(event).includes("Persisted shell output: exit 7"),
   );
-  const updated = stream.waitFor(
-    "session.updated",
-    (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`),
-  );
+  const updated = stream.waitFor("session.updated", (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`));
   const response = await fetch(`${url}/session/${sessionId}/shell`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -555,21 +632,23 @@ test("shell refreshes persisted entries appended without agent events and retain
 test("compact returns the small-session error and reloads compacted history", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const smallSessionId = await createSession(url);
-  const smallEvents = startEvents(url); t.after(smallEvents.close); await smallEvents.ready;
-  const smallNotice = smallEvents.waitFor("message.part.updated", (event) => JSON.stringify(event).includes("Nothing to compact"));
+  const smallEvents = startEvents(url);
+  t.after(smallEvents.close);
+  await smallEvents.ready;
+  const smallNotice = smallEvents.waitFor("message.part.updated", (event) =>
+    JSON.stringify(event).includes("Nothing to compact"),
+  );
   const small = await fetch(`${url}/session/${smallSessionId}/summarize`, { method: "POST", body: "{}" });
   assert.equal(small.status, 400);
-  assert.match(JSON.stringify(await small.json()), /Nothing to compact \(session too small\)/); await smallNotice;
+  assert.match(JSON.stringify(await small.json()), /Nothing to compact \(session too small\)/);
+  await smallNotice;
 
   const sessionId = await createSession(url);
   await sendPrompt(url, sessionId, "long context");
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const updated = stream.waitFor(
-    "session.updated",
-    (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`),
-  );
+  const updated = stream.waitFor("session.updated", (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`));
   const compacted = await fetch(`${url}/session/${sessionId}/summarize`, { method: "POST", body: "{}" });
   assert.equal(compacted.status, 200);
   assert.equal(await compacted.json(), true);
@@ -580,10 +659,8 @@ test("compact returns the small-session error and reloads compacted history", { 
   assert.match(JSON.stringify(await history.json()), /Compacted summary 1/);
 
   const v2Marker = stream.mark();
-  const updatedV2 = stream.waitForAfter(
-    v2Marker,
-    "session.updated",
-    (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`),
+  const updatedV2 = stream.waitForAfter(v2Marker, "session.updated", (event) =>
+    JSON.stringify(event).includes(`"id":"${sessionId}"`),
   );
   const compactedV2 = await fetch(`${url}/api/session/${sessionId}/summarize`, {
     method: "POST",
@@ -620,11 +697,12 @@ test("unavailable sharing emits a user-visible session error", { timeout: 30_000
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const shareError = stream.waitFor(
-    "session.error",
-    (event) => JSON.stringify(event).includes("Sharing is not available with OmO"),
+  const shareError = stream.waitFor("session.error", (event) =>
+    JSON.stringify(event).includes("Sharing is not available with OmO"),
   );
-  const notice = stream.waitFor("message.part.updated", (event) => JSON.stringify(event).includes('"text":"Sharing is not available with OmO"'));
+  const notice = stream.waitFor("message.part.updated", (event) =>
+    JSON.stringify(event).includes('"text":"Sharing is not available with OmO"'),
+  );
 
   const response = await fetch(`${url}/session/${sessionId}/share`, { method: "POST" });
   assert.equal(response.status, 400);
