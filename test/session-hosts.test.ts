@@ -5,9 +5,68 @@ import { EventEmitter, once } from "node:events";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
-import { stopSessionHosts } from "../src/session-hosts.js";
+import { createSessionHostStopper, stopSessionHosts } from "../src/session-hosts.js";
+import { trackDetachedFixture } from "./fixtures/detached-fixture.js";
+
+test("unsupported private-host teardown warns once without scanning or signalling", async (t) => {
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const warning = t.mock.method(console, "warn", () => undefined);
+  t.mock.method(fs, "readdirSync", () => assert.fail("unsupported teardown must not scan /proc"));
+  t.mock.method(cp, "spawn", () => assert.fail("unsupported teardown must not spawn a helper"));
+  t.mock.method(process, "kill", () => assert.fail("unsupported teardown must not signal numeric PIDs"));
+  syncBuiltinESMExports();
+  for (const platform of ["darwin", "linux"] as const) {
+    let probes = 0;
+    const stop = createSessionHostStopper(platform, () => { probes++; return undefined; });
+    await stop(new Map());
+    assert.equal(warning.mock.callCount(), platform === "darwin" ? 0 : 1);
+    await stop(new Map([["owned", "/fixture"]]));
+    await stop(new Map([["another-owned", "/fixture"]]));
+    assert.equal(probes, platform === "linux" ? 1 : 0);
+  }
+  assert.equal(warning.mock.callCount(), 2, "one warning per stopper, not per shutdown");
+});
+
+for (const scenario of ["PATH", "fallback", "missing", "pidfd-unavailable"] as const) {
+  test(`private-host capability probes ${scenario} once before shutdown`, async (t) => {
+    const previousPath = process.env.PATH;
+    process.env.PATH = "/fixture/bin";
+    t.after(() => {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    const candidates: string[] = [];
+    t.mock.method(cp, "spawnSync", (binary: string, args: string[], options: cp.SpawnSyncOptions) => {
+      candidates.push(binary);
+      assert.equal(args[0], "-I");
+      assert.equal(options.timeout, 1_000);
+      assert.equal(options.killSignal, "SIGKILL");
+      if (scenario === "missing") return { status: null, error: Object.assign(new Error("missing"), { code: "ENOENT" }) };
+      return { status: binary === (scenario === "PATH" ? "/fixture/bin/python3" : scenario === "fallback" ? "/usr/bin/python3" : "") ? 0 : 1 };
+    });
+    const scan = t.mock.method(fs, "readdirSync", () => []);
+    const warning = t.mock.method(console, "warn", () => undefined);
+    t.mock.method(cp, "spawn", () => assert.fail("no fixture hosts exist"));
+    t.mock.method(process, "kill", () => assert.fail("capability checks must not signal numeric PIDs"));
+    syncBuiltinESMExports();
+
+    const stop = createSessionHostStopper("linux");
+    const checked = [...candidates];
+    await stop(new Map([["owned", "/fixture"]]));
+    await stop(new Map([["owned", "/fixture"]]));
+
+    assert.deepEqual(candidates, checked, "shutdown never recomputes capability");
+    assert.deepEqual(checked, scenario === "PATH" ? ["/fixture/bin/python3"] :
+      ["/fixture/bin/python3", "/bin/python3", "/usr/bin/python3"]);
+    const supported = scenario === "PATH" || scenario === "fallback";
+    assert.equal(scan.mock.callCount(), supported ? 2 : 0);
+    assert.equal(warning.mock.callCount(), supported ? 0 : 1);
+  });
+}
 
 interface ProcessRecord {
   pid: number;
@@ -127,7 +186,7 @@ for (const scenario of [
       queueMicrotask(() => watcher.emit("exit", 0, null));
       return watcher;
     }
-    assert.equal(binary, "/bin/python3");
+    assert.equal(basename(binary), "python3");
     assert.ok(Array.isArray(options.stdio));
     const inherited = options.stdio.slice(3).map((fd, index) => {
       assert.equal(typeof fd, "number");
@@ -179,11 +238,7 @@ for (const scenario of [
 
 async function startFixture(t: TestContext, cwd: string, args: readonly string[]) {
   const child = cp.spawn(process.execPath, args, { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-  const exited = once(child, "exit");
-  t.after(async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-    await exited;
-  });
+  const exited = trackDetachedFixture(t, child);
   const [data] = await once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) });
   assert.ok(child.pid);
   return { child, pid: child.pid, exited, data: String(data) };
@@ -211,9 +266,6 @@ test("B4-REUSE real owned group exits while unrelated, shared LSP, OpenChamber a
     const otherIdentity: { pid: number; enginePid: number } = JSON.parse(other.data);
     const ownedPids = [identity.pid, identity.enginePid];
     const protectedPids = [otherIdentity.pid, otherIdentity.enginePid, ...spectators.map((entry) => entry.pid)];
-    for (const pid of [...ownedPids, ...protectedPids]) {
-      assert.doesNotMatch(fs.readFileSync(`/proc/${pid}/cgroup`, "utf8"), /\/openchamber\.service/);
-    }
 
     await stopSessionHosts(new Map([[owner, directory]]));
     await owned.exited;
@@ -226,7 +278,7 @@ test("B4-REUSE real owned group exits while unrelated, shared LSP, OpenChamber a
   }
 });
 
-test("B4-REUSE unavailable Python reports an error and leaves every owned member alive", { timeout: 15_000 }, async (t) => {
+test("B4-REUSE Python removed after capability detection fails closed and leaves owned members alive", { timeout: 15_000 }, async (t) => {
   const directory = fs.mkdtempSync(join(tmpdir(), "antechamber-reuse-no-python-"));
   const owner = randomUUID();
   const originalSpawn = cp.spawn;
@@ -234,7 +286,7 @@ test("B4-REUSE unavailable Python reports an error and leaves every owned member
     const owned = await startFixture(t, directory, hostArgs(directory, owner));
     const identity: { pid: number; enginePid: number } = JSON.parse(owned.data);
     t.mock.method(cp, "spawn", (binary: string, args: string[], options: SpawnOptions) => {
-      assert.equal(binary, "/bin/python3");
+      assert.equal(basename(binary), "python3");
       return originalSpawn(join(directory, "missing-python3"), args, options);
     });
     syncBuiltinESMExports();

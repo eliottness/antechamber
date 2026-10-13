@@ -1,8 +1,51 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { closeSync, constants, openSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, delimiter, resolve } from "node:path";
+
+function findPidfdPython(): string | undefined {
+  const candidates = new Set([
+    ...(process.env.PATH ?? "").split(delimiter).map((directory) => resolve(directory, "python3")),
+    "/bin/python3", "/usr/bin/python3",
+  ]);
+  for (const binary of candidates) {
+    const result = spawnSync(binary, ["-I", "-c", String.raw`
+import os, selectors, signal
+fd = os.pidfd_open(os.getpid())
+try:
+    signal.pidfd_send_signal(fd, 0)
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+finally:
+    os.close(fd)
+`], { stdio: "ignore", timeout: 1_000, killSignal: "SIGKILL" });
+    if (!result.error && result.status === 0) return binary;
+  }
+  return undefined;
+}
+
+/** Capability and warning state are captured once, before any shutdown work. */
+export function createSessionHostStopper(
+  platform: NodeJS.Platform = process.platform,
+  probe: () => string | undefined = findPidfdPython,
+): (created: ReadonlyMap<string, string>) => Promise<void> {
+  const python = platform === "linux" ? probe() : undefined;
+  let warned = false;
+  return async (created) => {
+    if (created.size === 0) return;
+    if (python === undefined) {
+      if (!warned) {
+        warned = true;
+        console.warn("Private OmO host teardown skipped: requires Linux and python3 with working pidfd support (PATH, /bin/python3 or /usr/bin/python3). Hosts are not tracked; nothing is signalled.");
+      }
+      return;
+    }
+    await stopSupportedSessionHosts(created, python);
+  };
+}
+
+export const stopSessionHosts = createSessionHostStopper();
 
 interface HostProcess {
   readonly fd: number;
@@ -99,7 +142,7 @@ with contextlib.ExitStack() as resources:
  * parent session tree. Only connector-created IDs (including their persisted
  * ownership after restart) are authorized; discovered sessions and LSP are not.
  */
-export async function stopSessionHosts(created: ReadonlyMap<string, string>): Promise<void> {
+async function stopSupportedSessionHosts(created: ReadonlyMap<string, string>, python: string): Promise<void> {
   if (created.size === 0) return;
   const sockets = new Map([...created].map(([id, directory]) => [
     `p-${createHash("sha256").update(`p:${id}`).digest("hex").slice(0, 16)}.sock`, directory,
@@ -135,7 +178,7 @@ export async function stopSessionHosts(created: ReadonlyMap<string, string>): Pr
     }));
     // Ownership is the parent-session shard + cwd + supervisor + private group,
     // never the service cgroup (production hosts share it with the connector).
-    const helper = spawn("/bin/python3", ["-I", "-c", stopBoundHosts, JSON.stringify(identities)], {
+    const helper = spawn(python, ["-I", "-c", stopBoundHosts, JSON.stringify(identities)], {
       stdio: ["ignore", "ignore", "pipe", ...members.map((info) => info.fd)],
     });
     let stderr = "";

@@ -12,6 +12,7 @@ import type { LifecycleClock } from "../src/lifecycle.js";
 import { SessionManager } from "../src/sessions.js";
 import { SessionStore } from "../src/session-store.js";
 import { stopSessionHosts } from "../src/session-hosts.js";
+import { trackDetachedFixture } from "./fixtures/detached-fixture.js";
 
 const fixture = resolve("test/fixtures/fake-omo.mjs");
 const deadline = () => AbortSignal.timeout(10_000);
@@ -46,6 +47,25 @@ function gone(pid: number): void {
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 }
 
+test("detached fixture groups are cleaned up after assertion failure", { timeout: 20_000 }, async (t) => {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const runner = spawn(process.execPath, [
+    "--import", "tsx", "--test", "--test-reporter=tap", resolve("test/fixtures/detached-fixture-failure.ts"),
+  ], { env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  trackDetachedFixture(t, runner);
+  const closed = once(runner, "close", { signal: deadline() });
+  let output = "";
+  runner.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+  const [code] = await closed;
+  assert.equal(code, 1, output);
+  const identities = output.match(/fixture-identities (\{[^\n]+\})/);
+  assert.ok(identities?.[1], output);
+  const { pid, enginePid }: { pid: number; enginePid: number } = JSON.parse(identities[1]);
+  gone(pid);
+  gone(enginePid);
+});
+
 function setup(t: TestContext, maxLive = 8, reaperIntervalMs?: number) {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-t9-"));
   const previous = process.env.ANTECHAMBER_PI_BINARY;
@@ -56,7 +76,7 @@ function setup(t: TestContext, maxLive = 8, reaperIntervalMs?: number) {
     clock,
     idleTimeoutMs: 100,
     maxLive,
-    reaperIntervalMs,
+    ...(reaperIntervalMs === undefined ? {} : { reaperIntervalMs }),
   });
   t.after(async () => {
     await manager.disposeAll();
@@ -103,11 +123,7 @@ for (const restarted of [false, true]) test(`F2 B4 shutdown owns private session
       resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor",
       "--socket", join(dir, `p-${key}.sock`),
     ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
-    const exited = once(child, "exit");
-    t.after(async () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-      await exited;
-    });
+    trackDetachedFixture(t, child);
     assert.ok(child.stdout);
     const [output] = await once(child.stdout, "data", { signal: deadline() });
     const identity: { pid: number; enginePid: number } = JSON.parse(String(output));
@@ -135,12 +151,10 @@ test("F2 S1 failed private-host teardown is reported but local state is still re
     resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor",
     "--socket", join(dir, `p-${key}.sock`),
   ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
-  const hostExited = once(host, "exit");
+  trackDetachedFixture(t, host);
   t.after(async () => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
-    if (host.exitCode === null && host.signalCode === null) host.kill("SIGTERM");
-    await hostExited;
     if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
     else process.env.ANTECHAMBER_PI_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
@@ -151,7 +165,7 @@ test("F2 S1 failed private-host teardown is reported but local state is still re
   const childProcess = await import("node:child_process");
   const originalSpawn = childProcess.default.spawn;
   t.mock.method(childProcess.default, "spawn", (binary: string, ...rest: unknown[]) =>
-    Reflect.apply(originalSpawn, childProcess.default, [binary === "/bin/python3" ? join(dir, "missing-python3") : binary, ...rest]));
+    Reflect.apply(originalSpawn, childProcess.default, [binary.endsWith("/python3") ? join(dir, "missing-python3") : binary, ...rest]));
   syncBuiltinESMExports();
 
   await assert.rejects(manager.disposeAll(), { code: "ENOENT" });
@@ -192,19 +206,16 @@ test("F2 B4 private hosts in the connector service cgroup stop while shared LSP 
   const host = spawn(process.execPath, [
     resolve("test/fixtures/fake-omo-host.mjs"), "--internal-rpc-host-supervisor", "--socket", socket,
   ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
-  const hostExited = once(host, "exit", { signal: deadline() });
+  const hostExited = trackDetachedFixture(t, host);
   const lsp = spawn(process.execPath, [
     "-e", 'process.stdout.write("READY\\n"); setInterval(() => {}, 2147483647)',
     "--", "--lsp-daemon", "--socket", socket,
   ], { cwd: dir, detached: true, stdio: ["ignore", "pipe", "ignore"] });
-  const lspExited = once(lsp, "exit", { signal: deadline() });
+  trackDetachedFixture(t, lsp);
   const readFile = fs.readFileSync;
-  t.after(async () => {
+  t.after(() => {
     fs.readFileSync = readFile;
     syncBuiltinESMExports();
-    if (host.exitCode === null && host.signalCode === null) host.kill("SIGTERM");
-    if (lsp.exitCode === null && lsp.signalCode === null) lsp.kill("SIGTERM");
-    await Promise.all([hostExited, lspExited]);
     rmSync(dir, { recursive: true, force: true });
   });
   assert.ok(host.stdout && lsp.stdout && lsp.pid);
@@ -214,10 +225,7 @@ test("F2 B4 private hosts in the connector service cgroup stop while shared LSP 
     once(lsp.stdout, "data", { signal: deadline() }),
   ]);
   const identity: { pid: number; enginePid: number } = JSON.parse(String(output));
-  const pids = [process.pid, identity.pid, identity.enginePid, lsp.pid];
-  for (const pid of pids) {
-    assert.doesNotMatch(readFile(`/proc/${pid}/cgroup`, "utf8"), /\/openchamber\.service/);
-  }
+  const pids = [identity.pid, identity.enginePid, lsp.pid];
   // Only these test-owned identities receive simulated metadata, never the real service.
   const cgroups = new Set(pids.map((pid) => `/proc/${pid}/cgroup`));
   t.mock.method(fs, "readFileSync", (path: fs.PathOrFileDescriptor, ...options: unknown[]) => {
@@ -225,8 +233,9 @@ test("F2 B4 private hosts in the connector service cgroup stop while shared LSP 
     return Reflect.apply(readFile, fs, [path, ...options]);
   });
   syncBuiltinESMExports();
-  assert.equal(fs.readFileSync(`/proc/${process.pid}/cgroup`, "utf8"),
-    fs.readFileSync(`/proc/${identity.pid}/cgroup`, "utf8"));
+  for (const pid of pids) {
+    assert.equal(fs.readFileSync(`/proc/${pid}/cgroup`, "utf8"), "0::/user.slice/openchamber.service\n");
+  }
 
   await stopSessionHosts(new Map([[owner, dir]]));
   await hostExited;
@@ -315,15 +324,15 @@ test("cap disposes the least recently used idle session before concurrent admiss
   assert.ok(manager.get(fourth.id)?.pi);
 });
 
-test("cap permits overflow rather than killing busy or protected sessions", async (t) => {
+test("cap rejects admission rather than killing busy or protected sessions", async (t) => {
   const { manager, dir } = setup(t, 1);
   const first = await manager.create(dir);
   const s = manager.get(first.id);
   assert.ok(s);
   s.hasPendingInteraction = () => true;
-  const second = await manager.create(dir);
+  await assert.rejects(manager.create(dir), /MAX_LIVE=1.*no disposable idle session/);
   assert.ok(s.pi);
-  assert.ok(manager.get(second.id)?.pi);
+  assert.equal(manager.list().length, 1);
 });
 
 test("model selection revives with context and refreshes idle activity", async (t) => {
