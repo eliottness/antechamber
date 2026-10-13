@@ -1,15 +1,21 @@
 import { appendFileSync } from "node:fs";
-import { readdir, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { opendir, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { envSetting } from "./config.js";
 
 let loggingDisabled = false;
+const MAX_DIRECTORY_ENTRIES = 1000;
+const MAX_SEARCH_DIRECTORIES = 1024;
+const MAX_SEARCH_DEPTH = 32;
+const MAX_SEARCH_RESULTS = 1000;
 
 /** One shared failure latch for HTTP and agent-event diagnostics. */
 export function debugLog(line: string): void {
   if (!envSetting("DEBUG") || loggingDisabled) return;
   try {
-    appendFileSync(envSetting("DEBUG_LOG") ?? "/tmp/antechamber-debug.log", line + "\n");
+    appendFileSync(envSetting("DEBUG_LOG") ?? join(tmpdir(), `antechamber-debug-${process.getuid?.() ?? "user"}.log`),
+      line + "\n", { flag: "a", mode: 0o600 });
   } catch (error) {
     loggingDisabled = true;
     console.error(`[debug] logging disabled: ${error instanceof Error ? error.message : String(error)}`);
@@ -21,8 +27,12 @@ interface RouteResult {
   body: unknown;
 }
 
+export function errorBody(name: string, message: string): { name: string; data: { message: string } } {
+  return { name, data: { message } };
+}
+
 function unsupported(message: string): RouteResult {
-  return { status: 400, body: { name: "UnsupportedError", error: message, data: { message } } };
+  return { status: 400, body: errorBody("UnsupportedError", message) };
 }
 
 async function confinedDirectory(root: string, path: string): Promise<string | undefined> {
@@ -58,13 +68,16 @@ export async function miscRoute(method: string, path: string, url: URL, director
   if (path === "/file") {
     const target = await confinedDirectory(root, url.searchParams.get("path") ?? "");
     if (target === undefined) return unsupported("Path must remain inside the session directory");
-    const entries = await readdir(target, { withFileTypes: true });
-    const body = entries.filter((entry) => !entry.isSymbolicLink() && entry.name !== ".git" &&
-      (entry.isFile() || entry.isDirectory())).map((entry) => {
+    const body = [];
+    let scanned = 0;
+    for await (const entry of await opendir(target)) {
+      if (++scanned > MAX_DIRECTORY_ENTRIES) break;
+      if (entry.isSymbolicLink() || entry.name === ".git" || (!entry.isFile() && !entry.isDirectory())) continue;
       const absolute = resolve(target, entry.name);
-      return { name: entry.name, path: relative(root, absolute).split(sep).join("/"), absolute,
-        type: entry.isDirectory() ? "directory" : "file", ignored: false };
-    }).sort((a, b) => a.path.localeCompare(b.path));
+      body.push({ name: entry.name, path: relative(root, absolute).split(sep).join("/"), absolute,
+        type: entry.isDirectory() ? "directory" : "file", ignored: false });
+    }
+    body.sort((a, b) => a.path.localeCompare(b.path));
     return { status: 200, body };
   }
   const query = url.searchParams.get("query") ?? "";
@@ -73,21 +86,26 @@ export async function miscRoute(method: string, path: string, url: URL, director
     return unsupported("Path must remain inside the session directory");
   }
   const limitValue = Number(url.searchParams.get("limit") ?? "100");
-  const limit = Number.isFinite(limitValue) ? Math.min(1000, Math.max(0, Math.floor(limitValue))) : 100;
+  const limit = Number.isFinite(limitValue) ? Math.min(MAX_SEARCH_RESULTS, Math.max(0, Math.floor(limitValue))) : 100;
   const dirs = url.searchParams.get("dirs") !== "false" && url.searchParams.get("type") !== "file";
   const onlyDirs = url.searchParams.get("type") === "directory";
   const files: string[] = [];
-  async function visit(directory: string): Promise<void> {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (files.length >= limit) return;
+  let visited = 0;
+  const lowerQuery = query.toLowerCase();
+  async function visit(directory: string, depth: number): Promise<void> {
+    if (visited >= MAX_SEARCH_DIRECTORIES || depth > MAX_SEARCH_DEPTH || files.length >= limit) return;
+    visited++;
+    let scanned = 0;
+    for await (const entry of await opendir(directory)) {
+      if (++scanned > MAX_DIRECTORY_ENTRIES || files.length >= limit || visited >= MAX_SEARCH_DIRECTORIES) return;
       if (entry.isSymbolicLink() || entry.name === ".git") continue;
       const absolute = resolve(directory, entry.name);
       const path = relative(root, absolute).split(sep).join("/");
       if (((entry.isFile() && !onlyDirs) || (entry.isDirectory() && dirs)) &&
-          path.toLowerCase().includes(query.toLowerCase())) files.push(path);
-      if (entry.isDirectory() && entry.name !== "node_modules") await visit(absolute);
+          path.toLowerCase().includes(lowerQuery)) files.push(path);
+      if (entry.isDirectory() && entry.name !== "node_modules") await visit(absolute, depth + 1);
     }
   }
-  await visit(root);
+  await visit(root, 0);
   return { status: 200, body: files.sort() };
 }

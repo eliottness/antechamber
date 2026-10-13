@@ -12,7 +12,8 @@
  *   antechamber serve --hostname 127.0.0.1 --port 4096 [--directory /path]
  */
 
-import { AdapterServer } from "./server.js";
+import { AdapterServer, isLoopbackHost, serverPassword } from "./server.js";
+import { envSetting } from "./config.js";
 
 function arg(name: string, fallback: string): string {
   const argv = process.argv;
@@ -36,6 +37,12 @@ const serveMode = process.argv[2] === "serve";
 const port = Number(arg("port", "4096"));
 const host = arg("host", arg("hostname", "127.0.0.1"));
 const directory = arg("directory", process.cwd());
+
+if (!isLoopbackHost(host) && serverPassword() === undefined &&
+    !process.argv.includes("--insecure-no-auth") && envSetting("ALLOW_INSECURE") !== "1") {
+  console.error(`antechamber: refusing to bind ${host} without authentication. Set OPENCODE_SERVER_PASSWORD or ANTECHAMBER_SERVER_PASSWORD, or explicitly use --insecure-no-auth (ANTECHAMBER_ALLOW_INSECURE=1).`);
+  process.exit(1);
+}
 
 const server = new AdapterServer({ port, host, defaultDirectory: directory });
 
