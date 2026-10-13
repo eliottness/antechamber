@@ -3,9 +3,9 @@
 Inventory extracted from `reference/openchamber` (commit: shallow clone of
 `main`, 2026-09-20). Sources:
 
-- `packages/ui/src/sync/event-reducer.ts` — authoritative SSE event contract.
+- `packages/ui/src/sync/event-reducer.ts`: authoritative SSE event contract.
 - `packages/ui/src/sync/session-actions.ts`, `bootstrap.ts`,
-  `stores/globalSessions.ts`, `lib/api/` — SDK call sites via
+  `stores/globalSessions.ts`, `lib/api/`: SDK call sites via
   `@opencode-ai/sdk/v2`.
 
 ## REST/SDK methods used
@@ -22,14 +22,14 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `session.messages` | load message history | RPC `get_messages` |
 | `session.promptAsync` | send prompt (async) | RPC `prompt`. **Echo contract** (verified against OpenChamber's event-reducer): reuse the client's optimistic `messageID` from the body for the user message and emit `message.updated` + `message.part.updated` (user text part) so the optimistic insert reconciles in place instead of rendering twice. |
 | `session.abort` | stop generation | RPC `abort` |
-| `session.fork` | fork from a message | RPC `fork` / `get_fork_messages` |
-| `session.revert` / `session.unrevert` | undo file changes | **gap** — pi has no revert; map to git or reject |
+| `session.fork` | fork from a message | RPC `fork` / `get_fork_messages`; conversation-only fork backed by the agent's session tree (see docs/architecture.md) |
+| `session.revert` / `session.unrevert` | undo/redo conversation context | backed by the agent's native session-tree navigation; conversation-only, never touches files on disk |
 | `session.summarize` | compact context | RPC `compact` |
 | `session.status` | busy/idle map | derive from RPC events |
-| `session.todo` | todo list rendering | **gap** — reconstruct or stub empty |
-| `session.shell` | run shell in session ctx | RPC `bash` |
+| `session.todo` | todo list rendering | bridged from the agent's todo tool (`src/todo-bridge.ts`) |
+| `session.shell` | run shell in session ctx | RPC `bash`, with cancellation via `abort_bash` |
 | `session.command` | slash commands | RPC `prompt` with `/cmd` or `get_commands` |
-| `session.share` / `session.unshare` | share links | **n/a** — stub/404 |
+| `session.share` / `session.unshare` | share links | unsupported, returns `400 UnsupportedError`, no pi/OmO equivalent |
 
 ### Permissions & questions
 
@@ -46,7 +46,7 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `config.get` / `config.update` | adapter config (pi flags, session dirs) |
 | `config.providers` | RPC `get_available_models` (translated) |
 | `command.list` | RPC `get_commands` |
-| `app.agents` | static pi agent descriptors — `build` plus pi's own agent name |
+| `app.agents` | static pi agent descriptors: `build` plus pi's own agent name |
 | `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
 | `auth.set`, `provider.oauth`, `mcp.connect/disconnect` | stub or proxy to pi config |
 
@@ -66,26 +66,29 @@ todo.updated                project.updated           vcs.branch.updated
 lsp.updated                 server.instance.disposed  global.disposed
 ```
 
-Minimum viable set for M1 (chat works): `server.connected`,
-`session.created`, `session.updated`, `session.status`, `session.idle`,
-`session.error`, `message.updated`, `message.part.updated`,
-`message.part.delta`.
+Implemented: `server.connected`, `session.created`, `session.updated`,
+`session.status`, `session.idle`, `session.error`, `message.updated`,
+`message.part.updated`, `message.part.delta`, `permission.asked`,
+`permission.replied`, `question.asked`, `question.replied`,
+`question.rejected`, `todo.updated`, `session.diff`. `project.updated`,
+`vcs.branch.updated`, and `lsp.updated` are not emitted (no corresponding
+pi/OmO signal is adapted).
 
 ## pi RPC → OpenCode event mapping (draft)
 
 | pi stdout event | OpenCode SSE |
 |---|---|
 | `message_update` / `assistantMessageEvent: text_delta` | `message.part.delta` + `message.part.updated` |
-| `assistantMessageEvent: toolcall_start/delta/end` | `message.part.updated` (tool part; **M2 implemented** — pending `{raw}` accumulates the streamed JSON fragments, running carries parsed `arguments`, result lands at `turn_end`) |
-| `turn_end` (`toolResults[]`) | `message.part.updated` (tool part → completed `{output}` / error per `isError`, matched by `toolCallId`) |
-| `bash_execution_update` | (unmapped — folded into tool parts above) |
+| `assistantMessageEvent: toolcall_start/delta/end` | `message.part.updated` (tool part; pending `{raw}` accumulates the streamed JSON fragments, running carries parsed `arguments`, result lands at `turn_end`) |
+| `turn_end` (`toolResults[]`) | `message.part.updated` (tool part, completed `{output}` or error per `isError`, matched by `toolCallId`) |
+| `bash_execution_update` | unmapped; folded into tool parts above |
 | turn start / turn end | `session.status` (busy) / `session.idle` |
-| `extension_ui_request` (confirm/select/input) | `permission.asked` / `question.asked` (M1: auto-cancel) |
+| `extension_ui_request` (confirm/select/input) | `permission.asked` / `question.asked`, bridged through the approvals module (`src/approvals.ts`) |
 | `extension_error` / RPC error response | `session.error` |
 | `get_entries` / `get_tree` (polled or on fork) | `session.updated` |
 
-Tool part `state` mirrors `@opencode-ai/sdk` v2 (1.18.31) `ToolState` —
-discriminated union on `.status` with `input`/`output`/`title` inside the
+Tool part `state` mirrors `@opencode-ai/sdk` v2 (1.18.31) `ToolState`:
+a discriminated union on `.status` with `input`/`output`/`title` inside the
 state object (verified against the locally installed
 `dist/v2/gen/types.gen.d.ts`). Live-observed pi shapes (probe, 2026-09-21):
 `toolcall_start {contentIndex, id, toolName}` →
@@ -129,5 +132,5 @@ send ("provider or model not selected"):
 | `GET /global/health` | any 200 JSON |
 
 Gotcha: OpenChamber's model picker ignores `default` when it can't match it
-and silently falls back to the **first listed provider/model** — the adapter
+and silently falls back to the **first listed provider/model**, so antechamber
 sorts pi's active model to the front for this reason.

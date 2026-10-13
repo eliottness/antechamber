@@ -3,14 +3,15 @@
 ## Goal
 
 OpenChamber talks to an OpenCode server over HTTP + SSE via
-`@opencode-ai/sdk/v2`. The pi coding agent exposes headless operation via RPC
-mode (`pi --mode rpc`, JSONL over stdin/stdout) and an in-process SDK
-(`AgentSession` from `@earendil-works/pi-coding-agent`).
+`@opencode-ai/sdk/v2`. The pi coding agent (and OmO, a pi-compatible
+distribution) exposes headless operation via RPC mode (`pi --mode rpc`, JSONL
+over stdin/stdout) and an in-process SDK (`AgentSession` from
+`@earendil-works/pi-coding-agent`).
 
-`openchamber-pi` bridges the two:
+`antechamber` bridges the two:
 
 ```
-OpenChamber ──HTTP/SSE (OpenCode API subset)──▶ openchamber-pi ──JSONL stdio──▶ pi --mode rpc
+OpenChamber ──HTTP/SSE (OpenCode API subset)──▶ antechamber ──JSONL stdio──▶ pi/omo --mode rpc
 ```
 
 OpenChamber is configured to use an **external OpenCode server** pointing at
@@ -24,7 +25,7 @@ this adapter. No OpenChamber fork, no pi fork.
 | RPC subprocess | spawn `pi --mode rpc` per session | Process isolation, version-tolerant, language-stable protocol | One process per session, JSONL framing rules (LF-only) |
 
 Default: **RPC subprocess** (pi documents strict JSONL framing; Node `readline`
-is not compliant because it splits on U+2028/U+2029 — we split on `\n` only).
+is not compliant because it splits on U+2028/U+2029, so we split on `\n` only).
 SDK embed stays an option behind the same internal interface.
 
 ## Mapping concerns
@@ -88,9 +89,9 @@ not across connector restarts: adapter-only cards are not persisted transcripts.
 | OpenCode (SSE `event`) | pi (stdout JSONL) |
 |---|---|
 | `message.updated` / `message.part.updated` | `message_update` (`assistantMessageEvent`: `text_delta` etc.) |
-| `message.part.updated` (tool part) | `message_update` (`toolcall_start`/`toolcall_delta`/`toolcall_end`) + `turn_end` (`toolResults[]` by `toolCallId`) — **M2** |
+| `message.part.updated` (tool part) | `message_update` (`toolcall_start`/`toolcall_delta`/`toolcall_end`) + `turn_end` (`toolResults[]` by `toolCallId`) |
 | `session.status` / `session.idle` | turn lifecycle events (`agent_start`/`agent_end`-family) |
-| `permission.asked` | pi extension-UI sub-protocol (`extension_ui_request`/`extension_ui_response`) — semantics differ, map conservatively |
+| `permission.asked` | pi extension-UI sub-protocol (`extension_ui_request`/`extension_ui_response`); semantics differ, map conservatively |
 | `session.error` | `extension_error`, RPC error responses |
 
 The asynchronous prompt route keeps its HTTP 204 contract. If prompt submission
@@ -191,10 +192,8 @@ notifications received during a slash invocation as assistant text and treats
 that handled response as completion, returning the session to idle. Prompts
 that start an agent turn still use the agent lifecycle events for completion.
 
-The full probe transcript is
-`~/.omo/evidence/openchamber-agent-connector/task-18/rpc-probe.jsonl`; browser
-captures and timings are in the same directory. This is a connector-only
-mapping of the installed OmO protocol, not a change to OmO or its settings.
+This is a connector-only mapping of the installed OmO protocol, not a change
+to OmO or its settings.
 
 ### Capability gaps to decide explicitly
 
@@ -209,25 +208,10 @@ mapping of the installed OmO protocol, not a change to OmO or its settings.
 - **Compaction**: pi `compact` / `set_auto_compaction` ↔ OpenCode
   `session.summarize`.
 
-## Milestones
-
-1. **M0 — API inventory**: enumerate the exact OpenCode endpoints/event types
-   OpenChamber consumes (see `docs/api-surface.md`).
-2. **M1 — Session CRUD + prompt round-trip**: create session, send prompt,
-   stream text deltas as SSE, abort. Enough for OpenChamber to show a chat.
-3. **M2 — Tool calls & file changes**: translate tool events; diffs visible.
-   ✅ tool parts (2026-09-21): streamed `toolcall_*` → OpenCode tool parts
-   with the SDK v2 `ToolState` union; results matched by `toolCallId` from
-   `turn_end.toolResults`; dangling parts finalized as errors on abort/exit.
-   File-diff surfacing beyond tool parts is still open.
-4. **M3 — Permissions/questions bridge**.
-5. **M4 — Model listing/switching, session stats, compaction**.
-6. **M5 — Packaging**: `npx openchamber-pi`, docs, CI, npm publish.
-
 ## Reference sources
 
 Upstream repos are shallow-cloned into `reference/` (gitignored) for local
 inspection:
 
-- `reference/openchamber` — https://github.com/openchamber/openchamber
-- `reference/pi-mono` — https://github.com/badlogic/pi-mono
+- `reference/openchamber`: https://github.com/openchamber/openchamber
+- `reference/pi-mono`: https://github.com/badlogic/pi-mono
