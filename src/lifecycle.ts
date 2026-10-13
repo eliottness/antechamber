@@ -1,4 +1,5 @@
 import type { ManagedSession } from "./sessions.js";
+import { ENV_PREFIX, envSetting } from "./config.js";
 
 /** Time and scheduling seams shared by the reaper and process shutdown tests. */
 export interface LifecycleClock {
@@ -25,8 +26,8 @@ export interface LifecycleOptions {
 }
 
 function positiveEnv(name: string, fallback: number): number {
-  const value = Number(process.env[name] ?? fallback);
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  const value = Number(envSetting(name) ?? fallback);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${ENV_PREFIX}${name} must be a positive integer`);
   return value;
 }
 
@@ -46,8 +47,8 @@ export class SessionLifecycle {
 
   constructor(private sessions: () => Iterable<ManagedSession>, options: LifecycleOptions = {}) {
     this.clock = options.clock ?? systemClock;
-    this.idleTimeoutMs = options.idleTimeoutMs ?? positiveEnv("OCPI_IDLE_TIMEOUT_MS", 900_000);
-    this.maxLive = options.maxLive ?? positiveEnv("OCPI_MAX_LIVE", 8);
+    this.idleTimeoutMs = options.idleTimeoutMs ?? positiveEnv("IDLE_TIMEOUT_MS", 900_000);
+    this.maxLive = options.maxLive ?? positiveEnv("MAX_LIVE", 8);
     this.reaperIntervalMs = options.reaperIntervalMs ??
       Math.min(15_000, Math.max(1_000, Math.floor(this.idleTimeoutMs / 4)));
     if (!Number.isSafeInteger(this.reaperIntervalMs) || this.reaperIntervalMs <= 0) {
@@ -101,7 +102,7 @@ export class SessionLifecycle {
       const candidate = [...this.sessions()].filter((s) => this.idle(s))
         .sort((a, b) => (this.used.get(a) ?? 0) - (this.used.get(b) ?? 0))[0];
       if (candidate === undefined) {
-        console.error(`[lifecycle] OCPI_MAX_LIVE=${this.maxLive} exceeded: no disposable idle session`);
+        console.error(`[lifecycle] ${ENV_PREFIX}MAX_LIVE=${this.maxLive} exceeded: no disposable idle session`);
         return;
       }
       await this.dormant(candidate);

@@ -9,7 +9,7 @@ import { ApprovalBridge } from "../../src/approvals.ts";
 import { SessionManager } from "../../src/sessions.ts";
 import { SessionStore } from "../../src/session-store.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "ocpi-pending-sse-"));
+const dir = mkdtempSync(join(tmpdir(), "antechamber-pending-sse-"));
 const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
 await server.sessions.disposeAll();
 const manager = new SessionManager((directory, event) => server.broadcast(directory, event), new SessionStore(dir));

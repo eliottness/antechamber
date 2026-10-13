@@ -19,9 +19,9 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 function setup(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-status-"));
-  const previous = process.env.OCPI_PI_BINARY;
-  process.env.OCPI_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-status-"));
+  const previous = process.env.ANTECHAMBER_PI_BINARY;
+  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
   const events = new EventEmitter();
   const snapshots: Array<{ event: string; reported: string | undefined }> = [];
   const manager = new SessionManager((_directory, event) => {
@@ -36,8 +36,8 @@ function setup(t: TestContext) {
   const nextIdle = () => bounded(new Promise<void>((resolve) => events.once("session.idle", resolve)));
   t.after(async () => {
     await manager.disposeAll();
-    if (previous === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previous;
+    if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
   });
   return { dir, manager, snapshots, nextIdle };

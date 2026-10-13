@@ -6,7 +6,7 @@ import test from "node:test";
 import { AdapterServer } from "../src/server.js";
 
 test("owned routes return real listings or truthful neutral and unsupported responses", async (t) => {
-  const base = mkdtempSync(join(tmpdir(), "ocpi-t12-routes-"));
+  const base = mkdtempSync(join(tmpdir(), "antechamber-t12-routes-"));
   const dir = join(base, "work");
   mkdirSync(dir);
   mkdirSync(join(dir, "nested"));

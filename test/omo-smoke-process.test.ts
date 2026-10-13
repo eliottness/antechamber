@@ -50,7 +50,7 @@ test("F2 B4 ordinary RPC survivors fail even when fallback cleanup could termina
 });
 
 test("F2 B4 live private survivor fails shutdown even when harness cleanup can kill it", { timeout: 10_000 }, async (t) => {
-  const source = mkdtempSync(join(tmpdir(), "ocpi-smoke-source-"));
+  const source = mkdtempSync(join(tmpdir(), "antechamber-smoke-source-"));
   const previousAgent = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = source;
   const context = new SmokeContext("/unused-omo", AbortSignal.timeout(10_000));

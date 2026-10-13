@@ -13,7 +13,7 @@ export function register(check: Check, context: SmokeContext): void {
   check("models", async (signal) => {
     const catalog = await context.api<{ providers: Array<{ id: string; models: Record<string, unknown> }> }>("/config/providers", signal);
     assert.ok(catalog.providers.some((provider) => Object.keys(provider.models).length > 0),
-      "OmO spawn-dependent model catalog must contain models (check OCPI_PI_BINARY)");
+      "OmO spawn-dependent model catalog must contain models (check ANTECHAMBER_PI_BINARY)");
     assert.ok(catalog.providers.some((provider) => provider.id === "anthropic" && "claude-haiku-4-5" in provider.models),
       "requested anthropic/claude-haiku-4-5 must be available");
   }, { dependsOn: ["health"] });

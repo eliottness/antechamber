@@ -134,7 +134,7 @@ function comparable(part: OCToolPart): unknown {
 }
 
 test("bashExecution history restores ordered terminal cards with stable ids and stored output", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-bash-history-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-bash-history-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const piPath = join(dir, "session.jsonl");
   const messages = [
@@ -196,7 +196,7 @@ test("bashExecution history restores ordered terminal cards with stable ids and 
 });
 
 test("a shell-only persisted session restores a synthetic user and linked assistant bash card", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-bash-only-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-bash-only-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const piPath = join(dir, "session.jsonl");
   writeFileSync(piPath, JSON.stringify({
@@ -220,7 +220,7 @@ test("a shell-only persisted session restores a synthetic user and linked assist
 
 for (const executionEvents of [true, false]) {
 test(`real RPC ${executionEvents ? "execution" : "turn_end-only"} events and JSONL history produce identical tool parts`, (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-tool-map-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-tool-map-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   t.mock.method(Date, "now", () => 1000);
   const piPath = join(dir, "session.jsonl");

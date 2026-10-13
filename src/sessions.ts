@@ -19,6 +19,7 @@ import { SubagentBridge, taskParts, updateTaskParts, taskCompletions } from "./s
 import { sessionDiff, touchedFiles } from "./session-diff.js";
 import { announceSessionNotice, shellTitle, shellUserMessage } from "./session-commands.js";
 import { debugLog } from "./misc-routes.js";
+import { envSetting } from "./config.js";
 import { ocIdFor, piSessionDir, piSessionsRootMtime, scanAllPiSessions, scanPiSessions, SessionPersistenceError, SessionStore, type ScannedSession } from "./session-store.js";
 import type {
   OCAssistantMessage,
@@ -1065,7 +1066,7 @@ export class SessionManager {
   private onPiEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     this.subagents.wake(s, ev);
     const dir = s.info.directory;
-    if (process.env.OCPI_DEBUG) {
+    if (envSetting("DEBUG")) {
       const ame = (ev.assistantMessageEvent as { type?: string } | undefined)?.type;
       debugLog(`[pi-event] ${String(ev.type)}${ame ? `/${ame}` : ""} ${JSON.stringify(ev).slice(0, 300)}`);
     }

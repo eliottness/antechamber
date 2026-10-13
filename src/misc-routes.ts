@@ -1,14 +1,15 @@
 import { appendFileSync } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { envSetting } from "./config.js";
 
 let loggingDisabled = false;
 
 /** One shared failure latch for HTTP and agent-event diagnostics. */
 export function debugLog(line: string): void {
-  if (!process.env.OCPI_DEBUG || loggingDisabled) return;
+  if (!envSetting("DEBUG") || loggingDisabled) return;
   try {
-    appendFileSync(process.env.OCPI_DEBUG_LOG ?? "/tmp/openchamber-pi-debug.log", line + "\n");
+    appendFileSync(envSetting("DEBUG_LOG") ?? "/tmp/antechamber-debug.log", line + "\n");
   } catch (error) {
     loggingDisabled = true;
     console.error(`[debug] logging disabled: ${error instanceof Error ? error.message : String(error)}`);

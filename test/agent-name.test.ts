@@ -9,7 +9,7 @@ const root = process.cwd();
 const probe = "import { getExposedAgentNames } from './src/agent-name.ts'; console.log(JSON.stringify(getExposedAgentNames()));";
 const legacyProbe = `
   import { AdapterServer } from './src/server.ts';
-  const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.OCPI_TEST_DIRECTORY });
+  const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.ANTECHAMBER_TEST_DIRECTORY });
   try {
     await server.start();
     const created = await fetch(\`\${server.url}/session\`, { method: 'POST', body: '{}' });
@@ -35,34 +35,34 @@ function exposedNames(env: NodeJS.ProcessEnv): string[] {
 }
 
 test("resolved OmO agent is first and build remains a compatibility alias", () => {
-  const home = mkdtempSync(join(tmpdir(), "ocpi-agent-name-"));
+  const home = mkdtempSync(join(tmpdir(), "antechamber-agent-name-"));
   try {
-    assert.deepEqual(exposedNames({ HOME: home, OCPI_AGENT: "OmO" }), ["OmO", "build"]);
+    assert.deepEqual(exposedNames({ HOME: home, ANTECHAMBER_AGENT: "OmO" }), ["OmO", "build"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });
 
 test("no resolved agent exposes only build", () => {
-  const home = mkdtempSync(join(tmpdir(), "ocpi-agent-name-"));
+  const home = mkdtempSync(join(tmpdir(), "antechamber-agent-name-"));
   try {
-    assert.deepEqual(exposedNames({ HOME: home, OCPI_AGENT: "" }), ["build"]);
+    assert.deepEqual(exposedNames({ HOME: home, ANTECHAMBER_AGENT: "" }), ["build"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });
 
 test("a legacy build-agent session still accepts a prompt", () => {
-  const state = mkdtempSync(join(tmpdir(), "ocpi-agent-state-"));
+  const state = mkdtempSync(join(tmpdir(), "antechamber-agent-state-"));
   try {
     const result = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", legacyProbe], {
       cwd: root,
       env: {
         ...process.env,
-        OCPI_AGENT: "OmO",
-        OCPI_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
-        OCPI_STATE_DIR: state,
-        OCPI_TEST_DIRECTORY: state,
+        ANTECHAMBER_AGENT: "OmO",
+        ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
+        ANTECHAMBER_STATE_DIR: state,
+        ANTECHAMBER_TEST_DIRECTORY: state,
       },
       encoding: "utf8",
     })) as { prompt: number; alias: number };
@@ -75,7 +75,7 @@ test("a legacy build-agent session still accepts a prompt", () => {
 
 const configProbe = `
   import { AdapterServer } from './src/server.ts';
-  const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.OCPI_TEST_DIRECTORY });
+  const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.ANTECHAMBER_TEST_DIRECTORY });
   try {
     await server.start();
     const v1Config = await fetch(\`\${server.url}/config\`).then(r => r.json());
@@ -97,14 +97,14 @@ function fetchConfigs(env: NodeJS.ProcessEnv): { v1Config: unknown; v2Config: un
 }
 
 test("config includes default_agent with resolved OmO name", () => {
-  const state = mkdtempSync(join(tmpdir(), "ocpi-config-"));
+  const state = mkdtempSync(join(tmpdir(), "antechamber-config-"));
   try {
     const result = fetchConfigs({
       HOME: state,
-      OCPI_AGENT: "OmO",
-      OCPI_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
-      OCPI_STATE_DIR: state,
-      OCPI_TEST_DIRECTORY: state,
+      ANTECHAMBER_AGENT: "OmO",
+      ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
+      ANTECHAMBER_STATE_DIR: state,
+      ANTECHAMBER_TEST_DIRECTORY: state,
     });
     // v1 /config returns { default_agent }
     assert.deepEqual(result.v1Config, { default_agent: "OmO" });
@@ -118,14 +118,14 @@ test("config includes default_agent with resolved OmO name", () => {
 });
 
 test("build agent is hidden when OmO is resolved", () => {
-  const state = mkdtempSync(join(tmpdir(), "ocpi-agents-hidden-"));
+  const state = mkdtempSync(join(tmpdir(), "antechamber-agents-hidden-"));
   try {
     const result = fetchConfigs({
       HOME: state,
-      OCPI_AGENT: "OmO",
-      OCPI_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
-      OCPI_STATE_DIR: state,
-      OCPI_TEST_DIRECTORY: state,
+      ANTECHAMBER_AGENT: "OmO",
+      ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
+      ANTECHAMBER_STATE_DIR: state,
+      ANTECHAMBER_TEST_DIRECTORY: state,
     });
     const v1Agents = result.v1Agents as Array<{ name: string; hidden: boolean }>;
     assert.equal(v1Agents.length, 2, "v1: should expose [OmO, build]");
@@ -139,14 +139,14 @@ test("build agent is hidden when OmO is resolved", () => {
 });
 
 function agentDefaultsFor(level: string): Array<{ model?: unknown; variant?: unknown }> {
-  const state = mkdtempSync(join(tmpdir(), "ocpi-agent-effort-"));
+  const state = mkdtempSync(join(tmpdir(), "antechamber-agent-effort-"));
   try {
     const result = fetchConfigs({
       HOME: state,
-      OCPI_AGENT: "OmO",
-      OCPI_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
-      OCPI_STATE_DIR: state,
-      OCPI_TEST_DIRECTORY: state,
+      ANTECHAMBER_AGENT: "OmO",
+      ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
+      ANTECHAMBER_STATE_DIR: state,
+      ANTECHAMBER_TEST_DIRECTORY: state,
       FAKE_THINKING_LEVEL: level,
     });
     const v2 = (result.v2Agents as unknown as { data: Array<{ model?: unknown; variant?: unknown }> }).data;
@@ -171,14 +171,14 @@ test("a thinking level the model does not offer is not advertised", () => {
 });
 
 test("build agent is visible when no OmO name is resolved", () => {
-  const state = mkdtempSync(join(tmpdir(), "ocpi-build-visible-"));
+  const state = mkdtempSync(join(tmpdir(), "antechamber-build-visible-"));
   try {
     const result = fetchConfigs({
       HOME: state,
-      OCPI_AGENT: "",
-      OCPI_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
-      OCPI_STATE_DIR: state,
-      OCPI_TEST_DIRECTORY: state,
+      ANTECHAMBER_AGENT: "",
+      ANTECHAMBER_PI_BINARY: join(root, "test/fixtures/fake-omo-endpoints.mjs"),
+      ANTECHAMBER_STATE_DIR: state,
+      ANTECHAMBER_TEST_DIRECTORY: state,
     });
     const v1Agents = result.v1Agents as Array<{ name: string; hidden: boolean }>;
     assert.equal(v1Agents.length, 1, "v1: should expose only [build]");

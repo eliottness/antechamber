@@ -34,13 +34,13 @@ function transcript(text: string, childId = "child-pi"): string {
 }
 
 function setup(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-subagents-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-subagents-"));
   const agent = join(dir, "agent");
   const state = join(dir, "state");
   const previousAgent = process.env.PI_CODING_AGENT_DIR;
-  const previousState = process.env.OCPI_STATE_DIR;
+  const previousState = process.env.ANTECHAMBER_STATE_DIR;
   process.env.PI_CODING_AGENT_DIR = agent;
-  process.env.OCPI_STATE_DIR = state;
+  process.env.ANTECHAMBER_STATE_DIR = state;
   const directory = join(dir, "work");
   mkdirSync(directory);
   const parentPath = join(piSessionDir(directory), "parent.jsonl");
@@ -61,8 +61,8 @@ function setup(t: TestContext) {
     await manager.disposeAll();
     if (previousAgent === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgent;
-    if (previousState === undefined) delete process.env.OCPI_STATE_DIR;
-    else process.env.OCPI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
+    else process.env.ANTECHAMBER_STATE_DIR = previousState;
     rmSync(dir, { recursive: true, force: true });
   });
   return { dir, agent, state, directory, parentPath, parent, manager, bus, events, store };

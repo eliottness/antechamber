@@ -12,7 +12,7 @@ import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
 import { V2EventTranslator } from "../src/v2.js";
 
 function temp(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-t12-diff-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-t12-diff-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -102,9 +102,9 @@ test("only completed mapped editing tools contribute files", () => {
 
 test("real RPC editing turns emit diff events and both HTTP diff contracts return fresh data", { timeout: 15_000 }, async (t) => {
   const dir = temp(t);
-  const prior = { binary: process.env.OCPI_PI_BINARY, state: process.env.OCPI_STATE_DIR, agent: process.env.PI_CODING_AGENT_DIR };
-  process.env.OCPI_PI_BINARY = resolve("test/fixtures/diff-omo.mjs");
-  process.env.OCPI_STATE_DIR = join(dir, "state");
+  const prior = { binary: process.env.ANTECHAMBER_PI_BINARY, state: process.env.ANTECHAMBER_STATE_DIR, agent: process.env.PI_CODING_AGENT_DIR };
+  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/diff-omo.mjs");
+  process.env.ANTECHAMBER_STATE_DIR = join(dir, "state");
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
   const events: OCEvent[] = [];
   let accept: ((diff: SessionFileDiff[]) => void) | undefined;
@@ -116,7 +116,7 @@ test("real RPC editing turns emit diff events and both HTTP diff contracts retur
   t.after(async () => {
     await manager.disposeAll();
     await server.stop();
-    for (const [key, value] of [["OCPI_PI_BINARY", prior.binary], ["OCPI_STATE_DIR", prior.state], ["PI_CODING_AGENT_DIR", prior.agent]] as const) {
+    for (const [key, value] of [["ANTECHAMBER_PI_BINARY", prior.binary], ["ANTECHAMBER_STATE_DIR", prior.state], ["PI_CODING_AGENT_DIR", prior.agent]] as const) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });

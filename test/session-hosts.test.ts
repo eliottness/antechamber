@@ -195,7 +195,7 @@ const hostArgs = (directory: string, owner: string) => [
 ] as const;
 
 test("B4-REUSE real owned group exits while unrelated, shared LSP, OpenChamber and another session survive", { timeout: 15_000 }, async (t) => {
-  const directory = fs.mkdtempSync(join(tmpdir(), "ocpi-reuse-real-"));
+  const directory = fs.mkdtempSync(join(tmpdir(), "antechamber-reuse-real-"));
   const owner = randomUUID();
   try {
     const owned = await startFixture(t, directory, hostArgs(directory, owner));
@@ -227,7 +227,7 @@ test("B4-REUSE real owned group exits while unrelated, shared LSP, OpenChamber a
 });
 
 test("B4-REUSE unavailable Python reports an error and leaves every owned member alive", { timeout: 15_000 }, async (t) => {
-  const directory = fs.mkdtempSync(join(tmpdir(), "ocpi-reuse-no-python-"));
+  const directory = fs.mkdtempSync(join(tmpdir(), "antechamber-reuse-no-python-"));
   const owner = randomUUID();
   const originalSpawn = cp.spawn;
   try {

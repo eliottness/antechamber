@@ -13,15 +13,15 @@ import { announceSessionNotice, completeShellMessage, createShellMessage, failSh
 import type { PiRpcClient } from "../src/pi-rpc.js";
 
 function setup(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-t10-"));
-  const previous = process.env.OCPI_PI_BINARY;
-  process.env.OCPI_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-t10-"));
+  const previous = process.env.ANTECHAMBER_PI_BINARY;
+  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
   const state = join(dir, "state");
   const manager = new SessionManager(() => undefined, new SessionStore(state), dir);
   t.after(async () => {
     await manager.disposeAll();
-    if (previous === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previous;
+    if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
   });
   return { dir, state, manager };
@@ -1060,13 +1060,13 @@ test("restored offset ids support fork and reverting the first root message", as
 
 test("unknown and malformed messageIDs return 400 without changing session or tree", async (t) => {
   const { dir } = setup(t);
-  const previous = process.env.OCPI_STATE_DIR;
-  process.env.OCPI_STATE_DIR = join(dir, "http-state");
+  const previous = process.env.ANTECHAMBER_STATE_DIR;
+  process.env.ANTECHAMBER_STATE_DIR = join(dir, "http-state");
   const server = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: dir });
   t.after(async () => {
     await server.stop();
-    if (previous === undefined) delete process.env.OCPI_STATE_DIR;
-    else process.env.OCPI_STATE_DIR = previous;
+    if (previous === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
+    else process.env.ANTECHAMBER_STATE_DIR = previous;
   });
   await server.start();
   const created = await fetch(`${server.url}/session`, { method: "POST" });

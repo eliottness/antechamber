@@ -98,18 +98,18 @@ function startEvents(url: string, path = "/event") {
 }
 
 async function startServer(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), "ocpi-t11-"));
-  const previousBinary = process.env.OCPI_PI_BINARY;
-  const previousState = process.env.OCPI_STATE_DIR;
-  process.env.OCPI_PI_BINARY = fakeRpc;
-  process.env.OCPI_STATE_DIR = join(directory, "state");
+  const directory = mkdtempSync(join(tmpdir(), "antechamber-t11-"));
+  const previousBinary = process.env.ANTECHAMBER_PI_BINARY;
+  const previousState = process.env.ANTECHAMBER_STATE_DIR;
+  process.env.ANTECHAMBER_PI_BINARY = fakeRpc;
+  process.env.ANTECHAMBER_STATE_DIR = join(directory, "state");
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
   t.after(async () => {
     await server.stop();
-    if (previousBinary === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previousBinary;
-    if (previousState === undefined) delete process.env.OCPI_STATE_DIR;
-    else process.env.OCPI_STATE_DIR = previousState;
+    if (previousBinary === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previousBinary;
+    if (previousState === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
+    else process.env.ANTECHAMBER_STATE_DIR = previousState;
     rmSync(directory, { recursive: true, force: true });
   });
   await server.start();

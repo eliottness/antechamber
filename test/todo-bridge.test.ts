@@ -70,7 +70,7 @@ test("state after toolResult patches only that card and emits every state update
 });
 
 test("real RPC emits six todo events and restores identical per-call snapshots including trailing state", (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-todo-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-todo-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const live = session(join(dir, "session.jsonl"));
   const events: (OCEvent | TodoUpdated)[] = [];
@@ -94,7 +94,7 @@ test("real RPC emits six todo events and restores identical per-call snapshots i
 });
 
 test("fetching restored messages hydrates the todo panel through SSE", (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-todo-hydrate-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-todo-hydrate-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const s = session(join(dir, "session.jsonl"));
   writeFileSync(s.piPath!, JSON.stringify(state("completed")));
@@ -122,7 +122,7 @@ test("live result-before-state event order updates the completed card and route 
 });
 
 test("both HTTP flavors return dormant JSONL state after restart and empty sessions return 200", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-todo-route-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-todo-route-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");

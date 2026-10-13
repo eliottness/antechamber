@@ -202,10 +202,10 @@ test("real RPC transport forwards blocking requests without auto-cancellation", 
 
 test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout: 20000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "approval-http-"));
-  const keys = ["OCPI_PI_BINARY", "OCPI_STATE_DIR", "PI_CODING_AGENT_DIR"] as const;
+  const keys = ["ANTECHAMBER_PI_BINARY", "ANTECHAMBER_STATE_DIR", "PI_CODING_AGENT_DIR"] as const;
   const previous = keys.map((key) => process.env[key]);
-  process.env.OCPI_PI_BINARY = new URL("./fixtures/approval-rpc.mjs", import.meta.url).pathname;
-  process.env.OCPI_STATE_DIR = root;
+  process.env.ANTECHAMBER_PI_BINARY = new URL("./fixtures/approval-rpc.mjs", import.meta.url).pathname;
+  process.env.ANTECHAMBER_STATE_DIR = root;
   process.env.PI_CODING_AGENT_DIR = root;
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: root });
   const signal = new AbortController();
@@ -303,8 +303,8 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
 test("real session pending-interaction hook prevents idle reaping until the reply", { timeout: 20000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "approval-reaper-"));
   const binary = new URL("./fixtures/approval-rpc.mjs", import.meta.url).pathname;
-  const previous = process.env.OCPI_PI_BINARY;
-  process.env.OCPI_PI_BINARY = binary;
+  const previous = process.env.ANTECHAMBER_PI_BINARY;
+  process.env.ANTECHAMBER_PI_BINARY = binary;
   let time = 0;
   const manager = new SessionManager(() => undefined, new SessionStore(root), root, {
     clock: { ...systemClock, now: () => time }, idleTimeoutMs: 100, maxLive: 1,
@@ -335,8 +335,8 @@ test("real session pending-interaction hook prevents idle reaping until the repl
     try {
       await bounded(manager.disposeAll(), "session process teardown", 10000);
     } finally {
-      if (previous === undefined) delete process.env.OCPI_PI_BINARY;
-      else process.env.OCPI_PI_BINARY = previous;
+      if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+      else process.env.ANTECHAMBER_PI_BINARY = previous;
       rmSync(root, { recursive: true, force: true });
     }
   }

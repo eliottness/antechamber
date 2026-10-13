@@ -1,0 +1,18 @@
+#!/bin/sh
+# OpenChamber launcher: point `settings.opencodeBinary` (or $OPENCODE_BINARY)
+# at this file. OpenChamber runs `<binary> serve --hostname H --port P` and
+# `<binary> --version`; anything else is rejected.
+# Requires a build (`npm run build`) so that dist/cli.js exists.
+set -eu
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+CLI="$SCRIPT_DIR/../dist/cli.js"
+if [ ! -f "$CLI" ]; then
+  echo "opencode-antechamber: $CLI not found; run 'npm run build' first" >&2
+  exit 1
+fi
+case "${1:-}" in
+  serve) shift; exec node "$CLI" serve "$@" ;;
+  --version|-v) exec node "$CLI" --version ;;
+esac
+echo "opencode-antechamber: unsupported command '${1:-}' (only 'serve' and '--version' are implemented)" >&2
+exit 1

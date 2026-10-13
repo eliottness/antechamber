@@ -36,7 +36,7 @@ function comparable(part: OCToolPart): unknown {
 for (const rawFormat of ["object", "json", "repr"]) {
   test(`server cards pair by id and match live/history with ${rawFormat} raw`, async (t) => {
     // Given: sanitized real-shaped calls with reversed result order.
-    const dir = mkdtempSync(join(tmpdir(), "ocpi-server-tools-"));
+    const dir = mkdtempSync(join(tmpdir(), "antechamber-server-tools-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const piPath = join(dir, "session.jsonl");
     const content = fixture.content.map((block) => {
@@ -93,7 +93,7 @@ for (const rawFormat of ["object", "json", "repr"]) {
 }
 
 test("message_end alone maps server cards and skips malformed or unrelated native blocks", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-server-errors-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-server-errors-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const piPath = join(dir, "session.jsonl");
   const manager = new SessionManager(() => {}, new SessionStore(join(dir, "state")));
@@ -140,7 +140,7 @@ test("incremental partial snapshots update a single card without changing its id
 });
 
 test("server result in a later assistant message completes the original card live and after restart", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-server-later-result-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-server-later-result-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const piPath = join(dir, "session.jsonl");
   const messages = [
@@ -175,7 +175,7 @@ test("server result in a later assistant message completes the original card liv
 for (const count of [1, 2]) {
   for (const withNative of [false, true]) {
     test(`messages route preserves ${count} expanded task cards with native=${withNative}`, async (t) => {
-      const dir = mkdtempSync(join(tmpdir(), "ocpi-mixed-cards-"));
+      const dir = mkdtempSync(join(tmpdir(), "antechamber-mixed-cards-"));
       const piPath = join(dir, "session.jsonl");
       writeFileSync(piPath, JSON.stringify({ type: "message", id: "a", message: { role: "assistant", content: [] } }));
       const manager = new SessionManager(() => {}, new SessionStore(join(dir, "state")));
@@ -276,7 +276,7 @@ test("Python repr escapes preserve the exact query rather than dropping valid ca
 
 for (const later of ["toolUse", "stop"]) {
   test(`F2 S9 a later ${later} turn keeps an earlier aborted server call Cancelled in history`, (t) => {
-    const dir = mkdtempSync(join(tmpdir(), "ocpi-native-run-boundary-"));
+    const dir = mkdtempSync(join(tmpdir(), "antechamber-native-run-boundary-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const piPath = join(dir, "session.jsonl");
     const laterContent = later === "toolUse"
@@ -300,7 +300,7 @@ for (const later of ["toolUse", "stop"]) {
 
 for (const reason of ["toolUse", "stop", "aborted", "error"]) {
   test(`unresolved server call with ${reason} is never successful live or in history`, async (t) => {
-    const dir = mkdtempSync(join(tmpdir(), "ocpi-native-incomplete-"));
+    const dir = mkdtempSync(join(tmpdir(), "antechamber-native-incomplete-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const piPath = join(dir, "session.jsonl");
     const message = { role: "assistant", timestamp: 1000, stopReason: reason, content: [fixture.content[1]] };

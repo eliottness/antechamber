@@ -225,7 +225,7 @@ export class SmokeContext {
     }
   }
 
-  async start(signal: AbortSignal, isolatedDiscovery = false, idleTimeoutMs = 900_000, piArgs = process.env.OCPI_PI_ARGS ?? ""): Promise<void> {
+  async start(signal: AbortSignal, isolatedDiscovery = false, idleTimeoutMs = 900_000, piArgs = process.env.ANTECHAMBER_PI_ARGS ?? ""): Promise<void> {
     const port = await freePort();
     this.output = "";
     const cwd = fileURLToPath(new URL("../../", import.meta.url));
@@ -242,12 +242,12 @@ export class SmokeContext {
       env: {
         ...environment,
         HOME: join(this.root, "home"),
-        OCPI_PI_BINARY: this.wrapper,
-        OCPI_PI_ARGS: piArgs,
-        OCPI_STATE_DIR: this.state,
+        ANTECHAMBER_PI_BINARY: this.wrapper,
+        ANTECHAMBER_PI_ARGS: piArgs,
+        ANTECHAMBER_STATE_DIR: this.state,
         PI_CODING_AGENT_DIR: isolatedDiscovery ? this.agent : this.sourceAgent,
-        OCPI_IDLE_TIMEOUT_MS: String(idleTimeoutMs),
-        OCPI_MAX_LIVE: "8",
+        ANTECHAMBER_IDLE_TIMEOUT_MS: String(idleTimeoutMs),
+        ANTECHAMBER_MAX_LIVE: "8",
       },
     });
     this.exited = childExit(this.launcher);

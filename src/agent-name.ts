@@ -3,7 +3,7 @@
  * When the pi instance runs the oh-my-pi extension, the real agent name comes
  * from ~/.pi/oh-my-pi.jsonc (orchestrator.agentName); otherwise we fall back
  * to the historical "build" name. Resolution order:
- *   1. OCPI_AGENT env override
+ *   1. ANTECHAMBER_AGENT env override
  *   2. ~/.pi/oh-my-pi.jsonc → orchestrator.agentName
  *   3. ~/.pi/agent/settings.json packages containing oh-my-pi → "oh-my-pi"
  *   4. "build"
@@ -13,6 +13,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { envSetting } from "./config.js";
 
 /** Strip `//` line comments that are not inside string literals (JSONC). */
 function stripLineComments(text: string): string {
@@ -44,7 +45,7 @@ function stripLineComments(text: string): string {
 }
 
 function detect(): string {
-  const fromEnv = process.env.OCPI_AGENT;
+  const fromEnv = envSetting("AGENT");
   if (typeof fromEnv === "string" && fromEnv.trim() !== "") return fromEnv.trim();
 
   try {

@@ -8,7 +8,7 @@
  *   restart → archived state must survive via the registry + pi JSONL scan.
  *
  *   npx tsx contrib/probe-archive.ts
- *   OCPI_PI_BINARY=/path/to/pi npx tsx contrib/probe-archive.ts
+ *   ANTECHAMBER_PI_BINARY=/path/to/pi npx tsx contrib/probe-archive.ts
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -18,9 +18,9 @@ import { AdapterServer } from "../src/server.js";
 import { piSessionDir } from "../src/session-store.js";
 import type { OCSession } from "../src/types.js";
 
-const WORKSPACE = mkdtempSync(join(tmpdir(), "ocpi-archive-"));
+const WORKSPACE = mkdtempSync(join(tmpdir(), "antechamber-archive-"));
 const STATE_DIR = join(WORKSPACE, "state");
-process.env.OCPI_STATE_DIR = STATE_DIR;
+process.env.ANTECHAMBER_STATE_DIR = STATE_DIR;
 
 let failures = 0;
 let checks = 0;

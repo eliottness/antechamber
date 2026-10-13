@@ -3,9 +3,9 @@
 Run from the repository with Node 22 or newer:
 
 ```sh
-OCPI_PI_BINARY=/path/to/omo npm run omo-smoke
-OCPI_PI_BINARY=/path/to/omo npm run omo-smoke -- --only prompt,abort
-OCPI_PI_BINARY=/path/to/omo npm run omo-smoke -- --only shutdown
+ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke
+ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke -- --only prompt,abort
+ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke -- --only shutdown
 ```
 
 `PI_CODING_AGENT_DIR` selects the existing agent directory for read-only

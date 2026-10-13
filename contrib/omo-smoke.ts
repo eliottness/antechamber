@@ -1,6 +1,6 @@
 /**
  * Part A: real OmO, private state, HTTP + future-only SSE assertions.
- * OCPI_PI_BINARY=/path/to/omo npm run omo-smoke [-- --only prompt,abort]
+ * ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke [-- --only prompt,abort]
  * Add sorted checks/*.ts modules exporting register(check, context) for part B.
  * Prerequisites are included by --only; the first failure skips remaining work.
  */
@@ -26,8 +26,8 @@ process.on("SIGTERM", onSigterm);
 try {
   const only = parseOnly(process.argv.slice(2));
   const isolatedShutdown = only?.size === 1 && only.has("shutdown");
-  const binary = process.env.OCPI_PI_BINARY;
-  if (!binary?.trim()) throw new Error("OCPI_PI_BINARY is required; set it to the OmO executable");
+  const binary = process.env.ANTECHAMBER_PI_BINARY;
+  if (!binary?.trim()) throw new Error("ANTECHAMBER_PI_BINARY is required; set it to the OmO executable");
   context = new SmokeContext(binary, shutdown.signal);
   const registry = new SmokeRegistry();
   const directory = new URL("./smoke/checks/", import.meta.url);

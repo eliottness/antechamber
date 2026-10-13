@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * openchamber-pi-connector CLI.
+ * antechamber CLI.
  *
  * Default mode:
- *   openchamber-pi [--port 4096] [--host 127.0.0.1] [--directory /path]
+ *   antechamber [--port 4096] [--host 127.0.0.1] [--directory /path]
  *
  * OpenCode-compatible serve mode — OpenChamber spawns
  * `$OPENCODE_BINARY serve --hostname H --port P` and waits for the stdout
  * line "opencode server listening on <url>", then health-checks
  * GET /global/health:
- *   openchamber-pi serve --hostname 127.0.0.1 --port 4096 [--directory /path]
+ *   antechamber serve --hostname 127.0.0.1 --port 4096 [--directory /path]
  */
 
 import { AdapterServer } from "./server.js";
@@ -44,13 +44,13 @@ await server.start();
 if (serveMode) {
   console.log(`opencode server listening on ${server.url}`);
 } else {
-  console.log(`openchamber-pi-connector listening on ${server.url}`);
+  console.log(`antechamber listening on ${server.url}`);
   console.log(`default directory: ${directory}`);
 }
 
 const shutdown = (): void => {
   void server.stop().then(() => process.exit(0), (error: unknown) => {
-    console.error("openchamber-pi-connector: shutdown failed:", error);
+    console.error("antechamber: shutdown failed:", error);
     process.exit(1);
   });
 };

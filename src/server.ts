@@ -32,6 +32,7 @@ import {
   type V2Session,
 } from "./v2.js";
 import type { OCEvent, OCModelRef, OCPromptBody, OCSession } from "./types.js";
+import { envSetting } from "./config.js";
 
 // This connector is not opencode — it only implements an OpenCode API subset.
 // OpenChamber reads /global/health's `version` as the installed opencode version
@@ -39,8 +40,8 @@ import type { OCEvent, OCModelRef, OCPromptBody, OCSession } from "./types.js";
 // contract version (1.18.31) made every adapter profile look permanently
 // outdated, and the resulting "update" then failed with "Unknown installation
 // method". Report no version so upgrade-status returns available:null and the UI
-// shows no prompt. Set OCPI_OPENCODE_COMPAT_VERSION to advertise one on purpose.
-const OPENCODE_COMPAT_VERSION = process.env.OCPI_OPENCODE_COMPAT_VERSION?.trim() || null;
+// shows no prompt. Set ANTECHAMBER_OPENCODE_COMPAT_VERSION to advertise one on purpose.
+const OPENCODE_COMPAT_VERSION = envSetting("OPENCODE_COMPAT_VERSION")?.trim() || null;
 
 /**
  * `archived` list filter per SDK v2 (`boolean | "true" | "false"`):
@@ -249,7 +250,7 @@ export class AdapterServer {
     if ((method === "POST" || method === "GET") && path === "/global/upgrade") {
       this.json(res, 409, {
         success: false,
-        error: "This endpoint is served by the pi adapter (openchamber-pi-connector), not a real opencode install — there is nothing to upgrade.",
+        error: "This endpoint is served by antechamber (a pi adapter), not a real opencode install — there is nothing to upgrade.",
       });
       return;
     }
@@ -559,8 +560,8 @@ export class AdapterServer {
         name,
         description:
           name === piName
-            ? `${piName} (pi coding agent via openchamber-pi-connector)`
-            : `${name} — ${piName} (pi coding agent via openchamber-pi-connector)`,
+            ? `${piName} (pi coding agent via antechamber)`
+            : `${name} — ${piName} (pi coding agent via antechamber)`,
         mode: "primary",
         hidden: name === "build" && piName !== "build",
         options: {},
@@ -584,8 +585,8 @@ export class AdapterServer {
       name,
       description:
         name === piName
-          ? `${piName} (pi coding agent via openchamber-pi-connector)`
-          : `${name} — ${piName} (pi coding agent via openchamber-pi-connector)`,
+          ? `${piName} (pi coding agent via antechamber)`
+          : `${name} — ${piName} (pi coding agent via antechamber)`,
       mode: "primary",
       hidden: name === "build" && piName !== "build",
       options: {},

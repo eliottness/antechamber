@@ -7,3 +7,4 @@ pi-probe-events.jsonl
 
 # Local reference clones of upstream projects (not part of this repo)
 reference/
+.omo/

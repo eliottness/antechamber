@@ -47,9 +47,9 @@ function gone(pid: number): void {
 }
 
 function setup(t: TestContext, maxLive = 8, reaperIntervalMs?: number) {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-t9-"));
-  const previous = process.env.OCPI_PI_BINARY;
-  process.env.OCPI_PI_BINARY = fixture;
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-t9-"));
+  const previous = process.env.ANTECHAMBER_PI_BINARY;
+  process.env.ANTECHAMBER_PI_BINARY = fixture;
   const clock = new Clock();
   const store = new SessionStore(join(dir, "state"));
   const manager = new SessionManager(() => undefined, store, dir, {
@@ -60,8 +60,8 @@ function setup(t: TestContext, maxLive = 8, reaperIntervalMs?: number) {
   });
   t.after(async () => {
     await manager.disposeAll();
-    if (previous === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previous;
+    if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
   });
   return { manager, clock, store, dir };
@@ -123,9 +123,9 @@ for (const restarted of [false, true]) test(`F2 B4 shutdown owns private session
 });
 
 test("F2 S1 failed private-host teardown is reported but local state is still released", { timeout: 20_000 }, async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-s1-"));
-  const previous = process.env.OCPI_PI_BINARY;
-  process.env.OCPI_PI_BINARY = fixture;
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-s1-"));
+  const previous = process.env.ANTECHAMBER_PI_BINARY;
+  process.env.ANTECHAMBER_PI_BINARY = fixture;
   const manager = new SessionManager(() => undefined, new SessionStore(join(dir, "state")), dir, { clock: new Clock() });
   const info = await manager.create(dir);
   const sessionId = manager.get(info.id)?.piSessionId;
@@ -141,8 +141,8 @@ test("F2 S1 failed private-host teardown is reported but local state is still re
     syncBuiltinESMExports();
     if (host.exitCode === null && host.signalCode === null) host.kill("SIGTERM");
     await hostExited;
-    if (previous === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previous;
+    if (previous === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previous;
     rmSync(dir, { recursive: true, force: true });
   });
   assert.ok(host.stdout);
@@ -186,7 +186,7 @@ test("hung OmO receives SIGKILL at the injected five second deadline", { timeout
 });
 
 test("F2 B4 private hosts in the connector service cgroup stop while shared LSP survives", { timeout: 20_000 }, async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-service-host-"));
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-service-host-"));
   const owner = randomUUID();
   const socket = join(dir, `p-${createHash("sha256").update(`p:${owner}`).digest("hex").slice(0, 16)}.sock`);
   const host = spawn(process.execPath, [

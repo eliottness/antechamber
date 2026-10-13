@@ -16,7 +16,7 @@
  *   npm run model-smoke
  *
  * Requires the connector's agent on PATH (pi), since the prompt is a real agent
- * run. Point it at another binary with OCPI_PI_BINARY.
+ * run. Point it at another binary with ANTECHAMBER_PI_BINARY.
  */
 
 import { mkdtempSync, realpathSync } from "node:fs";
@@ -29,7 +29,7 @@ import { AdapterServer } from "../src/server.js";
 // header, and the restore scan matches on that header — an unresolved workspace
 // would make every restored session invisible.
 const WORKSPACE = realpathSync(mkdtempSync(join(tmpdir(), "oc-model-smoke-")));
-process.env.OCPI_STATE_DIR = join(WORKSPACE, "pi-state");
+process.env.ANTECHAMBER_STATE_DIR = join(WORKSPACE, "pi-state");
 process.env.OCMC_TURN_TIMEOUT = process.env.OCMC_TURN_TIMEOUT ?? "240s";
 
 let failures = 0;

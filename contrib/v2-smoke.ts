@@ -10,7 +10,7 @@
  *
  * Requires the connector's agent on PATH (mcode / pi), since the prompt is a
  * real agent run. Point it at another binary with the connector's env override
- * (OCMC_MCODE_BINARY / OCPI_PI_BINARY).
+ * (OCMC_MCODE_BINARY / ANTECHAMBER_PI_BINARY).
  */
 
 import { mkdtempSync } from "node:fs";
@@ -20,7 +20,7 @@ import { AdapterServer } from "../src/server.js";
 
 const WORKSPACE = mkdtempSync(join(tmpdir(), "oc-v2-smoke-"));
 process.env.OCMC_STATE_FILE = join(WORKSPACE, "adapter-state.json");
-process.env.OCPI_STATE_DIR = join(WORKSPACE, "pi-state");
+process.env.ANTECHAMBER_STATE_DIR = join(WORKSPACE, "pi-state");
 process.env.OCMC_TURN_TIMEOUT = process.env.OCMC_TURN_TIMEOUT ?? "240s";
 
 let failures = 0;

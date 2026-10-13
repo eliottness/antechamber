@@ -32,6 +32,7 @@ import { join } from "node:path";
 import { piAgentDir } from "./agent-dir.js";
 import type { SessionTreeState } from "./session-tree.js";
 import type { ChildTask } from "./subagents.js";
+import { defaultStateDir, envSetting } from "./config.js";
 
 /** pi's session directory for a given cwd (see pi docs/session-format.md). */
 export function piSessionDir(cwd: string): string {
@@ -275,7 +276,7 @@ export class SessionStore {
   private entries: Map<string, SessionRegistryEntry> | undefined;
 
   constructor(stateDir?: string) {
-    const dir = stateDir ?? process.env.OCPI_STATE_DIR ?? join(homedir(), ".config", "openchamber-pi-connector");
+    const dir = stateDir ?? envSetting("STATE_DIR") ?? defaultStateDir();
     this.stateDir = dir;
     this.file = join(dir, "sessions.json");
   }

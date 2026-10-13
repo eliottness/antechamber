@@ -13,6 +13,7 @@ import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { systemClock, type LifecycleClock } from "./lifecycle.js";
+import { envSetting } from "./config.js";
 
 export interface PiRpcCommand {
   id?: string;
@@ -31,7 +32,7 @@ export interface PiRpcResponse {
 
 export interface PiRpcClientOptions {
   cwd: string;
-  /** Path/name of the pi binary. Defaults to OCPI_PI_BINARY env or "pi" from PATH. */
+  /** Path/name of the pi binary. Defaults to ANTECHAMBER_PI_BINARY env or "pi" from PATH. */
   piBinary?: string;
   /** Extra CLI flags, e.g. ["--no-session"] or ["--provider", "x"]. */
   args?: string[];
@@ -74,9 +75,9 @@ export class PiRpcClient extends EventEmitter {
 
   constructor(private options: PiRpcClientOptions) {
     super();
-    const extraArgs = process.env.OCPI_PI_ARGS?.trim().split(/\s+/).filter(Boolean) ?? [];
+    const extraArgs = envSetting("PI_ARGS")?.trim().split(/\s+/).filter(Boolean) ?? [];
     const args = ["--mode", "rpc", ...(options.args ?? []), ...extraArgs];
-    this.proc = spawn(options.piBinary ?? process.env.OCPI_PI_BINARY ?? "pi", args, {
+    this.proc = spawn(options.piBinary ?? envSetting("PI_BINARY") ?? "pi", args, {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,

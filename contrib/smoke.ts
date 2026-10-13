@@ -7,7 +7,7 @@
  * agent behind every prompt.
  *
  *   npm run smoke
- *   OCPI_PI_BINARY=/path/to/pi npm run smoke
+ *   ANTECHAMBER_PI_BINARY=/path/to/pi npm run smoke
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { AdapterServer } from "../src/server.js";
 import type { OCEvent, OCSession, OCMessageWithParts } from "../src/types.js";
 
-const WORKSPACE = mkdtempSync(join(tmpdir(), "ocpi-smoke-"));
+const WORKSPACE = mkdtempSync(join(tmpdir(), "antechamber-smoke-"));
 
 let failures = 0;
 let checks = 0;

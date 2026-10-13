@@ -21,7 +21,7 @@ test("F2 B3 failed registry writes reject essential metadata instead of acknowle
 });
 
 test("F2 B3 failed registry updates and removals preserve the last committed cache", (t) => {
-  const root = mkdtempSync(join(tmpdir(), "ocpi-store-f2-"));
+  const root = mkdtempSync(join(tmpdir(), "antechamber-store-f2-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const state = join(root, "state");
   const store = new SessionStore(state);
@@ -62,7 +62,7 @@ function sessionDir(agentDir: string, cwd: string): string {
 }
 
 test("scanAllPiSessions finds OmO sessions across cwd folders", () => {
-  const agentDir = mkdtempSync(join(tmpdir(), "ocpi-agent-"));
+  const agentDir = mkdtempSync(join(tmpdir(), "antechamber-agent-"));
   const firstCwd = "/tmp/openchamber-first";
   const secondCwd = "/tmp/openchamber-second";
   try {
@@ -91,7 +91,7 @@ test("scanAllPiSessions finds OmO sessions across cwd folders", () => {
 });
 
 test("scanPiSessions skips a header whose cwd mismatches its folder", () => {
-  const agentDir = mkdtempSync(join(tmpdir(), "ocpi-agent-"));
+  const agentDir = mkdtempSync(join(tmpdir(), "antechamber-agent-"));
   const expectedCwd = "/tmp/openchamber-expected";
   try {
     withAgentDir(agentDir, () => {

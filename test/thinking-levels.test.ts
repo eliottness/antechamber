@@ -11,10 +11,10 @@ import { systemClock } from "../src/lifecycle.js";
 import type { OCModelRef } from "../src/types.js";
 
 function setup(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), "ocpi-thinking-"));
-  const previous = { binary: process.env.OCPI_PI_BINARY, state: process.env.OCPI_STATE_DIR };
-  process.env.OCPI_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
-  process.env.OCPI_STATE_DIR = join(directory, "state");
+  const directory = mkdtempSync(join(tmpdir(), "antechamber-thinking-"));
+  const previous = { binary: process.env.ANTECHAMBER_PI_BINARY, state: process.env.ANTECHAMBER_STATE_DIR };
+  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
+  process.env.ANTECHAMBER_STATE_DIR = join(directory, "state");
   let time = 0;
   const manager = new SessionManager(() => undefined, new SessionStore(join(directory, "manager-state")), directory, {
     clock: { ...systemClock, now: () => time },
@@ -22,10 +22,10 @@ function setup(t: TestContext) {
   });
   t.after(async () => {
     await manager.disposeAll();
-    if (previous.binary === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previous.binary;
-    if (previous.state === undefined) delete process.env.OCPI_STATE_DIR;
-    else process.env.OCPI_STATE_DIR = previous.state;
+    if (previous.binary === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previous.binary;
+    if (previous.state === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
+    else process.env.ANTECHAMBER_STATE_DIR = previous.state;
     rmSync(directory, { recursive: true, force: true });
   });
   return { directory, manager, expire: () => { time += 100; } };

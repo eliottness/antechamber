@@ -10,11 +10,11 @@ import { AdapterServer } from "../src/server.js";
 import { SessionManager } from "../src/sessions.js";
 
 test("busy shutdown completes while the SSE client tries to reconnect during disposal", { timeout: 15_000 }, async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "ocpi-shutdown-"));
-  const previousBinary = process.env.OCPI_PI_BINARY;
-  const previousState = process.env.OCPI_STATE_DIR;
-  process.env.OCPI_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
-  process.env.OCPI_STATE_DIR = join(dir, "state");
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-shutdown-"));
+  const previousBinary = process.env.ANTECHAMBER_PI_BINARY;
+  const previousState = process.env.ANTECHAMBER_STATE_DIR;
+  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/fake-omo.mjs");
+  process.env.ANTECHAMBER_STATE_DIR = join(dir, "state");
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
   let releaseDisposal: () => void = () => undefined;
   let stopping: Promise<void> | undefined;
@@ -23,10 +23,10 @@ test("busy shutdown completes while the SSE client tries to reconnect during dis
     releaseDisposal();
     for (const client of clients) client.destroy();
     await (stopping ?? server.stop());
-    if (previousBinary === undefined) delete process.env.OCPI_PI_BINARY;
-    else process.env.OCPI_PI_BINARY = previousBinary;
-    if (previousState === undefined) delete process.env.OCPI_STATE_DIR;
-    else process.env.OCPI_STATE_DIR = previousState;
+    if (previousBinary === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
+    else process.env.ANTECHAMBER_PI_BINARY = previousBinary;
+    if (previousState === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
+    else process.env.ANTECHAMBER_STATE_DIR = previousState;
     rmSync(dir, { recursive: true, force: true });
   });
 

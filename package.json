@@ -1,17 +1,17 @@
 {
-  "name": "openchamber-pi-connector",
+  "name": "antechamber",
   "version": "0.1.0",
-  "description": "OpenCode-API-compatible adapter that lets OpenChamber drive the pi coding agent",
+  "description": "OpenCode-compatible HTTP/SSE server that lets OpenChamber drive the pi coding agent (and OmO) over RPC",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "openchamber-pi": "./dist/cli.js"
+    "antechamber": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test --import ./test/setup.ts test/*.test.ts",
     "probe": "tsx contrib/probe.ts",
     "smoke": "tsx contrib/smoke.ts",
     "omo-smoke": "tsx contrib/omo-smoke.ts",
