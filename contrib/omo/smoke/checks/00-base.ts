@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { OCSession } from "../../../src/types.js";
+import type { OCSession } from "../../../../src/types.js";
 import type { Check } from "../core.js";
 import { assistantText, type SmokeContext } from "../context.js";
 

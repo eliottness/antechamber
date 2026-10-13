@@ -218,7 +218,7 @@ for (const count of [1, 2]) {
       manager["onPiEvent"](live, { type: "agent_end" });
       const response = await fetch(`${server.url}/session/${live.info.id}/message`);
       assert.equal(response.status, 200);
-      const messages: Array<{ parts: OCPart[] }> = await response.json();
+      const messages = await response.json() as Array<{ parts: OCPart[] }>;
       const returned = tools(messages.flatMap((m) => m.parts)).filter((part) => part.tool === "task");
       assert.deepEqual(returned.map((part) => part.id), original.map((part) => part.id));
       returned.forEach((part, i) => {

@@ -9,6 +9,7 @@ import { AdapterServer } from "../src/server.js";
 import { SessionManager } from "../src/sessions.js";
 import { SessionStore } from "../src/session-store.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
+import type { TodoUpdated } from "../src/todo-bridge.js";
 import { V2EventTranslator } from "../src/v2.js";
 
 function temp(t: TestContext) {
@@ -106,7 +107,7 @@ test("real RPC editing turns emit diff events and both HTTP diff contracts retur
   process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/diff-omo.mjs");
   process.env.ANTECHAMBER_STATE_DIR = join(dir, "state");
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
-  const events: OCEvent[] = [];
+  const events: Array<OCEvent | TodoUpdated> = [];
   let accept: ((diff: SessionFileDiff[]) => void) | undefined;
   const manager = new SessionManager((_, event) => {
     events.push(structuredClone(event));
@@ -135,8 +136,8 @@ test("real RPC editing turns emit diff events and both HTTP diff contracts retur
   const base = server.url + "/session/" + info.id;
   const response = await fetch(base + "/diff");
   assert.equal(response.status, 200);
-  assert.equal((await response.json())[0]?.after, "RPC content\n");
+  assert.equal((await response.json() as SessionFileDiff[])[0]?.after, "RPC content\n");
   const alternate = await fetch(server.url + "/api/session/" + info.id + "/diff");
   assert.equal(alternate.status, 200);
-  assert.equal((await alternate.json()).data[0]?.after, "RPC content\n");
+  assert.equal((await alternate.json() as { data: SessionFileDiff[] }).data[0]?.after, "RPC content\n");
 });

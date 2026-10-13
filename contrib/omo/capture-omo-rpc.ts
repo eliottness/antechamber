@@ -9,9 +9,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 
-const WORK_DIR = "/tmp/antechamber-qa/t4/work";
+const WORK_DIR = process.argv[2] ?? process.env.OMO_CAPTURE_WORK_DIR ?? "";
 const OUTPUT = join(process.cwd(), "test", "fixtures", "omo-rpc", "run1.jsonl");
-const OMO = "/home/user/.bun/install/global/node_modules/.bin/omo";
+const OMO = process.argv[3] ?? process.env.ANTECHAMBER_PI_BINARY ?? "";
+if (!WORK_DIR.trim() || !OMO.trim()) {
+  throw new Error("Usage: tsx contrib/omo/capture-omo-rpc.ts <work-directory> <omo-binary> (or OMO_CAPTURE_WORK_DIR and ANTECHAMBER_PI_BINARY)");
+}
 const SECRET_KEY = /key|token|secret|password|auth|cookie/i;
 const FORBIDDEN = /sk-[A-Za-z0-9]{10,}|gh[pousr]_[A-Za-z0-9]{20,}/g;
 const PRIVATE_KEY = "BEGIN" + " PRIVATE KEY";
@@ -35,8 +38,8 @@ function redact(value: unknown, key?: string): unknown {
 
 const prompt = [
   "Use the todo tool to create a two-phase todo list with one task in each phase.",
-  "Read /tmp/antechamber-qa/t4/work/seed.txt.",
-  "Write /tmp/antechamber-qa/t4/work/note.txt with exactly the text initial.",
+  `Read ${join(WORK_DIR, "seed.txt")}.`,
+  `Write ${join(WORK_DIR, "note.txt")} with exactly the text initial.`,
   "Edit that file so its complete content is updated.",
   "Run one foreground subagent with the task tool using category quick and a trivial prompt.",
   "Finally ask the user one question using ask_user_question.",

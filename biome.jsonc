@@ -1,0 +1,51 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": ["**", "!dist", "!node_modules", "!reference", "!.omo"]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  },
+  "linter": {
+    "rules": {
+      "preset": "recommended",
+      "complexity": {
+        // Existing protocol guards use explicit null checks; leave source edits to its owners.
+        "useOptionalChain": "off"
+      },
+      "correctness": {
+        // Source owners are concurrently changing imports; do not rewrite their files.
+        "noUnusedImports": "off"
+      },
+      "style": {
+        // Existing routing and tests assert checked indexes; converting them is a separate cleanup.
+        "noNonNullAssertion": "off",
+        // Preserve existing source declarations during this tooling-only change.
+        "useConst": "off"
+      },
+      "suspicious": {
+        // Existing streaming parsers assign regex matches inside loop conditions.
+        "noAssignInExpressions": "off",
+        // Transcript parsing and RPC fixtures deliberately match protocol control characters.
+        "noControlCharactersInRegex": "off",
+        // Existing forEach callbacks return Map/Array mutation results that callers ignore.
+        "useIterableCallbackReturn": "off",
+        // Tool mapping uses an existing local `arguments` binding.
+        "noShadowRestrictedNames": "off"
+      }
+    }
+  }
+}

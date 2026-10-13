@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OCSession } from "../../../src/types.js";
+import type { OCSession } from "../../../../src/types.js";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
 
 export function register(check: Check, context: SmokeContext): void {
   check("routes", async (signal) => {
-    const inventory = readFileSync(new URL("../../../docs/omo-endpoint-inventory.md", import.meta.url), "utf8");
+    const inventory = readFileSync(new URL("../../../../docs/omo-endpoint-inventory.md", import.meta.url), "utf8");
     const rows = inventory.split("\n").flatMap((line) => {
       const row = line.match(/^\| (GET|POST|PUT|PATCH|DELETE) \| `([^`]+)` \|/);
       return row?.[1] && row[2] ? [{

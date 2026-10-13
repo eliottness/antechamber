@@ -34,14 +34,14 @@ test("busy shutdown completes while the SSE client tries to reconnect during dis
   await server.start();
   const info: { id: string } = await fetch(server.url + "/session", {
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
-  }).then((response) => response.json());
+  }).then((response) => response.json()) as { id: string };
   const prompt = await fetch(server.url + `/session/${info.id}/message`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ parts: [{ type: "text", text: "pending-turn" }] }),
   });
   await prompt.json();
-  const statuses = await fetch(server.url + "/session/status").then((response) => response.json());
-  assert.equal(statuses[info.id].type, "busy");
+  const statuses = await fetch(server.url + "/session/status").then((response) => response.json()) as Record<string, { type: string }>;
+  assert.equal(statuses[info.id]!.type, "busy");
   const connect = (): Promise<IncomingMessage> => new Promise((resolveClient, reject) => {
     const request = get(server.url + "/event", { agent: false }, (response) => {
       clients.push(response);

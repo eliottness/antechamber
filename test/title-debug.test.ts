@@ -29,7 +29,7 @@ test("unwritable debug log preserves health and agent events with exactly one wa
     AbortSignal.timeout(5000).addEventListener("abort", () => reject(new Error("startup deadline")), { once: true });
   });
   assert.equal((await fetch(url + "/global/health")).status, 200);
-  const session = await (await fetch(url + "/session", { method: "POST", body: "{}" })).json();
+  const session = await (await fetch(url + "/session", { method: "POST", body: "{}" })).json() as { id: string };
   const prompted = await fetch(url + "/session/" + session.id + "/message", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }),
@@ -56,7 +56,7 @@ test("title matches GET, sidebar lists and session.updated through prompts, rena
     rmSync(dir, { recursive: true, force: true });
   });
   await server.start();
-  const session = await (await fetch(server.url + "/session", { method: "POST", body: JSON.stringify({ title: "   " }) })).json();
+  const session = await (await fetch(server.url + "/session", { method: "POST", body: JSON.stringify({ title: "   " }) })).json() as { id: string };
   const controller = new AbortController();
   const stream = await fetch(server.url + "/event", { signal: controller.signal });
   assert.ok(stream.body);
@@ -86,14 +86,14 @@ test("title matches GET, sidebar lists and session.updated through prompts, rena
   controller.abort();
   assert.equal(eventInfo.title, "[]");
   for (const path of ["/session/" + session.id, "/session", "/experimental/session", "/experimental/session?archived=true"]) {
-    const body = await (await fetch(server.url + path)).json();
-    assert.equal((Array.isArray(body) ? body.find((entry) => entry.id === session.id) : body).title, "[]");
+    const body = await (await fetch(server.url + path)).json() as { title: string } | Array<{ id: string; title: string }>;
+    assert.equal((Array.isArray(body) ? body.find((entry) => entry.id === session.id) : body)!.title, "[]");
   }
   await fetch(server.url + "/session/" + session.id, { method: "PATCH", body: JSON.stringify({ title: "Renamed session" }) });
   await fetch(server.url + "/session/" + session.id + "/message", { method: "POST", body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }) });
-  assert.equal((await (await fetch(server.url + "/session/" + session.id)).json()).title, "Renamed session");
+  assert.equal((await (await fetch(server.url + "/session/" + session.id)).json() as { title: string }).title, "Renamed session");
   await server.stop();
   server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
   await server.start();
-  assert.equal((await (await fetch(server.url + "/session/" + session.id)).json()).title, "Renamed session");
+  assert.equal((await (await fetch(server.url + "/session/" + session.id)).json() as { title: string }).title, "Renamed session");
 });

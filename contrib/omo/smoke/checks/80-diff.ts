@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SessionFileDiff } from "../../../src/session-diff.js";
-import type { OCSession } from "../../../src/types.js";
+import type { SessionFileDiff } from "../../../../src/session-diff.js";
+import type { OCSession } from "../../../../src/types.js";
 import type { Check, SmokeEvent } from "../core.js";
 import type { SmokeContext } from "../context.js";
 

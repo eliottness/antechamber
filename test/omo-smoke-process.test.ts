@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ownsSmokeWorkspace, processKind, SmokeContext } from "../contrib/smoke/context.js";
+import { ownsSmokeWorkspace, processKind, SmokeContext } from "../contrib/omo/smoke/context.js";
 
 test("F2 B4 private task hosts fail before any harness termination can hide them", async () => {
   let survivors = [

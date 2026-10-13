@@ -28,7 +28,7 @@ test("owned routes return real listings or truthful neutral and unsupported resp
   for (const route of ["/file?path=../", "/file?path=escape", "/find/file?query=../secret", "/find/file?path=../", "/find/file?query=" + encodeURIComponent(base)]) {
     assert.equal((await get(route)).status, 400, route);
   }
-  assert.ok(!(await get("/file")).body.some((entry: { name: string }) => entry.name === "escape"));
+  assert.ok(!((await get("/file")).body as Array<{ name: string }>).some((entry) => entry.name === "escape"));
   for (const path of ["/skill", "/lsp", "/formatter", "/experimental/tool/ids"]) {
     assert.deepEqual(await get(path), { status: 200, body: [] });
   }
@@ -41,6 +41,6 @@ test("owned routes return real listings or truthful neutral and unsupported resp
   ] as const) {
     const response = await fetch(server.url + path, { method, body: JSON.stringify({}), headers: { "Content-Type": "application/json" } });
     assert.equal(response.status, 400, `${method} ${path}`);
-    assert.equal((await response.json()).name, "UnsupportedError");
+    assert.equal((await response.json() as { name: string }).name, "UnsupportedError");
   }
 });

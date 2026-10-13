@@ -178,7 +178,7 @@ for (const [route, body] of [
     const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
     t.after(() => server.stop());
     await server.start();
-    const session: { id: string } = await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json();
+    const session = await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json() as { id: string };
     const path = route === "api-model" ? `/api/session/${session.id}/model` : `/session/${session.id}/message`;
     const response = await fetch(server.url + path, { method: "POST", body: JSON.stringify(body) });
     assert.equal(response.status, route === "api-model" ? 204 : 200);

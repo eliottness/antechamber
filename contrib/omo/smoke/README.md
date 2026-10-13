@@ -9,7 +9,7 @@ ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke -- --only shutdown
 ```
 
 `PI_CODING_AGENT_DIR` selects the existing agent directory for read-only
-discovery (default `/home/user/.omo/agent`). New sessions use a private
+discovery (default `~/.omo/agent`). New sessions use a private
 copy of small configuration and credential files, a private HOME, and
 connector state under `/tmp/antechamber-qa/smoke-<timestamp>-<suffix>`. No existing
 session receives prompts. The private directory, including credentials,

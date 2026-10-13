@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { OCMessageWithParts, OCToolPart } from "../../../src/types.js";
+import type { OCMessageWithParts, OCToolPart } from "../../../../src/types.js";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
 

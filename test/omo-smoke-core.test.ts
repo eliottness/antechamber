@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SmokeRegistry, parseOnly, summarize, SseCollector } from "../contrib/smoke/core.js";
+import { SmokeRegistry, parseOnly, summarize, SseCollector } from "../contrib/omo/smoke/core.js";
 
 test("registry reports passes, failures, and blocked checks", async () => {
   const registry = new SmokeRegistry();

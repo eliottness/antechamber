@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
-import type { OCSession } from "../../../src/types.js";
+import type { OCSession } from "../../../../src/types.js";
 
 /** Keep shutdown after part B's checks, which belong between 00 and 99. */
 export function register(check: Check, context: SmokeContext, isolated = false): void {

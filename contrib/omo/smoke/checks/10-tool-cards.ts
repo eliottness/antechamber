@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OCToolPart } from "../../../src/types.js";
+import type { OCToolPart } from "../../../../src/types.js";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
 

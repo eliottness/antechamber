@@ -30,7 +30,6 @@ import { AdapterServer } from "../src/server.js";
 // would make every restored session invisible.
 const WORKSPACE = realpathSync(mkdtempSync(join(tmpdir(), "oc-model-smoke-")));
 process.env.ANTECHAMBER_STATE_DIR = join(WORKSPACE, "pi-state");
-process.env.OCMC_TURN_TIMEOUT = process.env.OCMC_TURN_TIMEOUT ?? "240s";
 
 let failures = 0;
 let checks = 0;

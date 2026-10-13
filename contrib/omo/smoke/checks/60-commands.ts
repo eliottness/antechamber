@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { OCSession } from "../../../src/types.js";
+import type { OCSession } from "../../../../src/types.js";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
 
@@ -73,7 +73,7 @@ export function register(check: Check, context: SmokeContext): void {
       signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
     });
     assert.equal(response.status, 400);
-    const body: { data: { message: string } } = await response.json();
+    const body = await response.json() as { data: { message: string } };
     assert.equal(body.data.message, "Sharing is not available with OmO");
     context.session = previous;
   }, { dependsOn: ["fork-revert"], timeoutMs: 120_000 });

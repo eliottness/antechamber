@@ -8,9 +8,8 @@
  *
  *   npm run v2-smoke
  *
- * Requires the connector's agent on PATH (mcode / pi), since the prompt is a
- * real agent run. Point it at another binary with the connector's env override
- * (OCMC_MCODE_BINARY / ANTECHAMBER_PI_BINARY).
+ * Requires the connector's agent on PATH (pi), since the prompt is a
+ * real agent run. Point it at another binary with ANTECHAMBER_PI_BINARY.
  */
 
 import { mkdtempSync } from "node:fs";
@@ -19,9 +18,7 @@ import { join } from "node:path";
 import { AdapterServer } from "../src/server.js";
 
 const WORKSPACE = mkdtempSync(join(tmpdir(), "oc-v2-smoke-"));
-process.env.OCMC_STATE_FILE = join(WORKSPACE, "adapter-state.json");
 process.env.ANTECHAMBER_STATE_DIR = join(WORKSPACE, "pi-state");
-process.env.OCMC_TURN_TIMEOUT = process.env.OCMC_TURN_TIMEOUT ?? "240s";
 
 let failures = 0;
 let checks = 0;
@@ -159,8 +156,8 @@ async function main(): Promise<void> {
   const location = await api<{ directory: string; project: { id: string; directory: string; canonical: string } }>(url, "/api/location");
   ok("GET /api/location envelope", location.status === 200 && typeof location.body.directory === "string" && typeof location.body.project?.directory === "string" && typeof location.body.project?.canonical === "string");
 
-  const config = await api<unknown[]>(url, "/api/config");
-  ok("GET /api/config is an array of documents", config.status === 200 && Array.isArray(config.body));
+  const config = await api<{ location?: { directory?: string }; data?: { default_agent?: string } }>(url, "/api/config");
+  ok("GET /api/config {location,data}", config.status === 200 && typeof config.body.location?.directory === "string" && typeof config.body.data?.default_agent === "string");
 
   for (const listPath of ["/api/provider", "/api/model", "/api/command", "/api/skill"]) {
     const r = await api<{ location?: { directory?: string }; data?: unknown[] }>(url, listPath);
@@ -276,8 +273,8 @@ async function main(): Promise<void> {
   const interrupted = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/interrupt`, { method: "POST" });
   ok("POST /api/session/:id/interrupt → 200", interrupted.status === 200);
 
-  const diff = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}/diff`);
-  ok("GET /api/session/:id/diff → 501 (optional panel)", diff.status === 501);
+  const diff = await api<{ data?: unknown[] }>(url, `/api/session/${encodeURIComponent(sessionId)}/diff`);
+  ok("GET /api/session/:id/diff → 200 {data}", diff.status === 200 && Array.isArray(diff.body.data));
 
   const removed = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
   ok("DELETE /api/session/:id → 204", removed.status === 204);

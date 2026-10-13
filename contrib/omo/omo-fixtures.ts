@@ -2,7 +2,7 @@
  * Extract redacted OmO tool-result fixtures from persisted session JSONL files.
  *
  * Usage:
- *   npx tsx contrib/omo-fixtures.ts
+ *   npx tsx contrib/omo/omo-fixtures.ts
  *
  * Environment:
  *   PI_CODING_AGENT_DIR      OmO agent root (default: ~/.omo/agent)

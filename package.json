@@ -4,17 +4,34 @@
   "description": "OpenCode-compatible HTTP/SSE server that lets OpenChamber drive the pi coding agent (and OmO) over RPC",
   "type": "module",
   "license": "MIT",
+  "author": "Eliott Bouhana",
+  "contributors": ["xiuli.qz (original openchamber-pi-connector)"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eliottness/antechamber.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eliottness/antechamber/issues"
+  },
+  "homepage": "https://github.com/eliottness/antechamber#readme",
+  "keywords": ["openchamber", "opencode", "pi", "coding-agent", "omo", "adapter"],
+  "files": ["dist", "bin/opencode-antechamber", "bin/opencode-pi", "README.md", "LICENSE", "CHANGELOG.md"],
   "bin": {
     "antechamber": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "dev": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "lint": "biome lint . --error-on-warnings",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "npm run typecheck && npm run lint && npm test",
     "test": "tsx --test --import ./test/setup.ts test/*.test.ts",
     "probe": "tsx contrib/probe.ts",
     "smoke": "tsx contrib/smoke.ts",
-    "omo-smoke": "tsx contrib/omo-smoke.ts",
+    "omo-smoke": "tsx contrib/omo/omo-smoke.ts",
     "model-smoke": "tsx contrib/model-consistency.ts",
     "v2-smoke": "tsx contrib/v2-smoke.ts"
   },
@@ -22,8 +39,9 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "@opencode-ai/sdk": "^1.18.31",
-    "@types/node": "^26.6.2",
+    "@types/node": "^22.0.0",
     "tsx": "^4.23.14",
     "typescript": "^7.0.2"
   }

@@ -383,12 +383,12 @@ test("restart resolves archived children by id through real session and message 
   await server.start();
   t.after(() => server.stop());
   const childID = ocIdFor("st_child");
-  const info = await fetch(`${server.url}/session/${childID}`).then((response) => response.json());
+  const info = await fetch(`${server.url}/session/${childID}`).then((response) => response.json()) as { parentID?: string };
   assert.equal(info.parentID, parent.info.id);
-  const history = await fetch(`${server.url}/session/${childID}/message`).then((response) => response.json());
+  const history = await fetch(`${server.url}/session/${childID}/message`).then((response) => response.json()) as OCMessageWithParts[];
   assert.match(texts(history), /survives eviction/);
-  const roots = await fetch(`${server.url}/experimental/session?roots=true`).then((response) => response.json());
-  const all = await fetch(`${server.url}/experimental/session?roots=false`).then((response) => response.json());
+  const roots = await fetch(`${server.url}/experimental/session?roots=true`).then((response) => response.json()) as Array<{ id: string }>;
+  const all = await fetch(`${server.url}/experimental/session?roots=false`).then((response) => response.json()) as Array<{ id: string; parentID?: string }>;
   assert.ok(!roots.some((session: { id: string }) => session.id === childID));
   assert.ok(all.some((session: { id: string; parentID?: string }) => session.id === childID && session.parentID === parent.info.id));
 });

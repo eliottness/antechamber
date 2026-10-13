@@ -1,5 +1,5 @@
-import type { OCEvent } from "../../src/types.js";
-import type { TodoUpdated } from "../../src/todo-bridge.js";
+import type { OCEvent } from "../../../src/types.js";
+import type { TodoUpdated } from "../../../src/todo-bridge.js";
 
 export type SmokeEvent = OCEvent | TodoUpdated;
 

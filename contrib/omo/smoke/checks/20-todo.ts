@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { Todo } from "../../../src/todo-bridge.js";
+import type { Todo } from "../../../../src/todo-bridge.js";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
 

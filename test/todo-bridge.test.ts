@@ -149,7 +149,7 @@ test("both HTTP flavors return dormant JSONL state after restart and empty sessi
         for (const [piID, expected] of [["pi-todo", flattenTodos(ocIdFor("pi-todo"), state("completed").data)], ["pi-empty", []]] as const) {
           const response = await fetch(`${server.url}${prefix}/session/${ocIdFor(piID)}/todo`);
           assert.equal(response.status, 200);
-          const body = await response.json();
+          const body = await response.json() as { data: unknown };
           assert.deepEqual(prefix === "" ? body : body.data, expected);
         }
       }

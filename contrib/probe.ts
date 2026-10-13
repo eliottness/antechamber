@@ -1,7 +1,7 @@
 /**
  * Live protocol probe for pi's RPC mode — dumps every stdout event to
  * pi-probe-events.jsonl so tool-call event shapes can be verified before
- * the adapter maps them (same M0 discipline as the mcode repo).
+ * the adapter maps them.
  *
  *   npm run probe [-- <prompt>]
  */

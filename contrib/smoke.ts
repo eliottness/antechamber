@@ -90,6 +90,11 @@ class SseCollector {
   waitFor(test: (e: OCEvent) => boolean, timeoutMs: number, label: string): Promise<OCEvent> {
     const existing = this.events.find(test);
     if (existing) return Promise.resolve(existing);
+    return this.waitForNext(test, timeoutMs, label);
+  }
+
+  /** Register before the triggering request; historical events cannot satisfy this wait. */
+  waitForNext(test: (e: OCEvent) => boolean, timeoutMs: number, label: string): Promise<OCEvent> {
     return new Promise((resolve, reject) => {
       const waiter = {
         test,
@@ -121,7 +126,7 @@ async function api<T>(url: string, path: string, init?: RequestInit): Promise<{ 
   } catch {
     body = text as unknown as T;
   }
-  return { status: res.status, body: text === "" ? undefined : body };
+  return { status: res.status, body };
 }
 
 function promptBody(text: string): string {
@@ -221,15 +226,17 @@ async function main(): Promise<void> {
 
   // 4. abort mid-run, then prove the session is still usable
   console.log("— abort mid-run + reuse —");
-  await api<unknown>(url, `/session/${sessionId}/prompt_async`, { method: "POST", body: promptBody("Write a very detailed 4000-word essay about the history of computing, starting from the abacus. Do not summarize.") });
-  await sse.waitFor(
+  const firstDelta = sse.waitForNext(
     (e) => e.type === "message.part.updated" && typeof (e.properties as { delta?: string }).delta === "string",
     180_000,
     "first delta of long run",
   );
+  await api<unknown>(url, `/session/${sessionId}/prompt_async`, { method: "POST", body: promptBody("Write a very detailed 4000-word essay about the history of computing, starting from the abacus. Do not summarize.") });
+  await firstDelta;
+  const idleAfterAbort = sse.waitForNext((e) => e.type === "session.idle" && (e.properties as { sessionID: string }).sessionID === sessionId, 60_000, "idle after abort");
   const abortRes = await api<unknown>(url, `/session/${sessionId}/abort`, { method: "POST" });
   ok("POST /abort", abortRes.status === 200);
-  await sse.waitFor((e) => e.type === "session.idle" && (e.properties as { sessionID: string }).sessionID === sessionId, 60_000, "idle after abort");
+  await idleAfterAbort;
   ok("idle after abort", true);
 
   const syncRes2 = await api<OCMessageWithParts>(url, `/session/${sessionId}/message`, { method: "POST", body: promptBody("Reply with exactly: PI-AFTER-ABORT-OK") });

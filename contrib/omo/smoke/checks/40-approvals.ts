@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PermissionRequest } from "@opencode-ai/sdk/v2";
-import type { OCSession } from "../../../src/types.js";
+import type { OCSession } from "../../../../src/types.js";
 import type { Check, SmokeEvent } from "../core.js";
 import type { SmokeContext } from "../context.js";
 
