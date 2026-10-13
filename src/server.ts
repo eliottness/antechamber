@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { SessionManager, type ManagedSession } from "./sessions.js";
 import { ApprovalInputError, toV2Permission } from "./approvals.js";
+import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-forms.js";
 import type { TodoUpdated } from "./todo-bridge.js";
 import { getAgentName, getExposedAgentNames } from "./agent-name.js";
 import { agentDefaults, loadCatalog, type Catalog } from "./catalog.js";
@@ -194,8 +195,9 @@ export class AdapterServer {
     model?: ModelSelection,
     noReply = false,
     messageID?: string,
+    delivery: "steer" | "queue" = "steer",
   ): void {
-    void this.sessions.prompt(session.info.id, text, model, noReply, messageID).catch((error: unknown) => {
+    void this.sessions.prompt(session.info.id, text, model, noReply, messageID, delivery).catch((error: unknown) => {
       announceSessionError(
         { sessions: this.sessions, session, emit: this.broadcast.bind(this) },
         error instanceof Error ? error.name : "UnknownError",
@@ -637,10 +639,14 @@ export class AdapterServer {
     const questionReply = path.match(/^\/question\/([^/]+)\/reply$/);
     if (questionReply && method === "POST") {
       const requestID = decodeURIComponent(questionReply[1]!);
-      const body = (await this.body(req)) as { answers?: Array<string[]> };
+      const body = (await this.body(req)) as { answers?: Array<string[]>; comment?: string };
       const pending = this.sessions.questions().find((question) => question.id === requestID);
-      if (!pending || !this.sessions.replyQuestion(pending.sessionID, requestID, body.answers ?? [])) {
+      if (!pending) {
         this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestID}`));
+        return;
+      }
+      if (!(await this.sessions.replyQuestion(pending.sessionID, requestID, body.answers ?? [], body.comment))) {
+        this.json(res, 409, errorBody("QuestionReplyError", "native question response refused"));
         return;
       }
       this.json(res, 200, true);
@@ -650,8 +656,12 @@ export class AdapterServer {
     if (questionReject && method === "POST") {
       const requestID = decodeURIComponent(questionReject[1]!);
       const pending = this.sessions.questions().find((question) => question.id === requestID);
-      if (!pending || !this.sessions.rejectQuestion(pending.sessionID, requestID)) {
+      if (!pending) {
         this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestID}`));
+        return;
+      }
+      if (!(await this.sessions.rejectQuestion(pending.sessionID, requestID))) {
+        this.json(res, 409, errorBody("QuestionReplyError", "native question cancellation refused"));
         return;
       }
       this.json(res, 200, true);
@@ -881,7 +891,7 @@ export class AdapterServer {
       return;
     }
     if (path === "/api/form" && method === "GET") {
-      this.json(res, 200, withLocation([]));
+      this.json(res, 200, withLocation(this.sessions.questions().map(toQuestionForm)));
       return;
     }
     if (path === "/api/vcs" && method === "GET") {
@@ -962,22 +972,34 @@ export class AdapterServer {
         return;
       }
 
-      // Forms/permissions have no adapter-side store; answer the lifecycle routes
-      // the 2.0.4 UI polls rather than 404ing the whole panel.
       const formMatch = sub.match(/^\/form\/([^/]+)(\/reply)?$/);
       if (formMatch) {
         const formId = decodeURIComponent(formMatch[1]!);
+        const pending = this.sessions.questions(sessionId).find((q) => questionFormID(q.id) === formId);
+        if (!pending) {
+          this.json(res, 404, errorBody("FormNotFoundError", `form not found: ${formId}`));
+          return;
+        }
         if (formMatch[2] === "/reply" && method === "POST") {
-          await this.body(req);
+          const body = (await this.body(req)) as { answer?: unknown };
+          const reply = formQuestionAnswer(pending, body.answer);
+          if (!(await this.sessions.replyQuestion(sessionId, pending.id, reply.answers, reply.comment))) {
+            this.json(res, 409, errorBody("FormReplyError", "native question response refused"));
+            return;
+          }
           res.writeHead(204).end();
           return;
         }
         if (method === "DELETE") {
+          if (!(await this.sessions.rejectQuestion(sessionId, pending.id))) {
+            this.json(res, 409, errorBody("FormReplyError", "native question cancellation refused"));
+            return;
+          }
           res.writeHead(204).end();
           return;
         }
         if (method === "GET") {
-          this.json(res, 404, errorBody("FormNotFoundError", `form not found: ${formId}`));
+          this.json(res, 200, { data: { ...toQuestionForm(pending), state: { status: "pending" } } });
           return;
         }
       }
@@ -985,17 +1007,25 @@ export class AdapterServer {
       if (questionMatch) {
         const requestId = decodeURIComponent(questionMatch[1]!);
         if (questionMatch[2] === "/reply" && method === "POST") {
-          const body = (await this.body(req)) as { answers?: Array<string[]> };
-          if (!this.sessions.replyQuestion(sessionId, requestId, body.answers ?? [])) {
+          const body = (await this.body(req)) as { answers?: Array<string[]>; comment?: string };
+          if (!this.sessions.questions(sessionId).some((q) => q.id === requestId)) {
             this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
+            return;
+          }
+          if (!(await this.sessions.replyQuestion(sessionId, requestId, body.answers ?? [], body.comment))) {
+            this.json(res, 409, errorBody("QuestionReplyError", "native question response refused"));
             return;
           }
           res.writeHead(204).end();
           return;
         }
         if (questionMatch[2] === "/reject" && method === "POST") {
-          if (!this.sessions.rejectQuestion(sessionId, requestId)) {
+          if (!this.sessions.questions(sessionId).some((q) => q.id === requestId)) {
             this.json(res, 404, errorBody("QuestionNotFoundError", `question not found: ${requestId}`));
+            return;
+          }
+          if (!(await this.sessions.rejectQuestion(sessionId, requestId))) {
+            this.json(res, 409, errorBody("QuestionReplyError", "native question cancellation refused"));
             return;
           }
           res.writeHead(204).end();
@@ -1133,8 +1163,12 @@ export class AdapterServer {
             body.model ?? (body.variant !== undefined ? managed.model : undefined),
             body.variant,
           );
-          this.promptAsync(managed, text, model, false, messageID);
-          const delivery = typeof body.delivery === "string" ? body.delivery : "steer";
+          if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue") {
+            this.json(res, 400, errorBody("BadRequestError", 'delivery must be "steer" or "queue"'));
+            return;
+          }
+          const delivery = body.delivery ?? "steer";
+          this.promptAsync(managed, text, model, false, messageID, delivery);
           this.json(res, 200, {
             data: {
               id: messageID,
@@ -1196,7 +1230,7 @@ export class AdapterServer {
           return;
         }
         case "GET /form": {
-          this.json(res, 200, { data: [] });
+          this.json(res, 200, { data: this.sessions.questions(sessionId).map(toQuestionForm) });
           return;
         }
         case "GET /question": {

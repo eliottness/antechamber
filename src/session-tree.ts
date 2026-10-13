@@ -19,6 +19,7 @@ export interface TreeEntry {
   parentId: string | null;
   message?: {
     role: string;
+    clientMessageId?: string;
     content?: Array<{ type: string; text?: string }>;
     command?: string;
     output?: string;
@@ -137,6 +138,14 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
     if (known >= 0) {
       if (known < visible.length) cursor = known + 1;
       continue;
+    }
+    if (entry.message?.role === "user" && entry.message.clientMessageId !== undefined) {
+      const identity = messages.findIndex((message) => message.info.id === entry.message?.clientMessageId);
+      if (identity >= 0) {
+        s.tree.messageEntries[entry.message.clientMessageId] = entry.id;
+        // Queue order can differ from delivery order; identity takes priority over the text cursor.
+        continue;
+      }
     }
     if (shell) {
       if (Object.values(s.tree.messageEntries).includes(entry.id)) continue;

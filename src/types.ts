@@ -139,6 +139,15 @@ export type OCSessionStatus =
   | { type: "retry"; attempt: number; message: string; next: number };
 
 export type OCEvent =
+  | {
+      type: "session.inbox.enqueued";
+      properties: {
+        sessionID: string;
+        inboxID: string;
+        item: { type: "user"; delivery: "steer" | "queue"; payload: { text: string } };
+      };
+    }
+  | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string } }
   | { type: "session.diff"; properties: { sessionID: string; diff: import("./session-diff.js").SessionFileDiff[] } }
   | { type: "server.connected"; properties: Record<string, unknown> }
   | { type: "session.created"; properties: { info: OCSession } }
@@ -179,9 +188,20 @@ export type OCEvent =
           custom?: boolean;
         }>;
         tool?: { messageID: string; callID: string };
+        questionIDs?: string[];
+        metadata?: Record<string, unknown>;
       };
     }
-  | { type: "question.replied"; properties: { sessionID: string; requestID: string; answers: Array<string[]> } }
+  | {
+      type: "question.replied";
+      properties: {
+        sessionID: string;
+        requestID: string;
+        answers: Array<string[]>;
+        comment?: string;
+        formAnswer?: Record<string, string | string[]>;
+      };
+    }
   | { type: "question.rejected"; properties: { sessionID: string; requestID: string } }
   /**
    * The model pi is actually running changed — either the UI asked for it or pi

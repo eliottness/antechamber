@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -69,6 +69,41 @@ function sessionDir(agentDir: string, cwd: string): string {
   const sanitized = cwd.replace(/^[/\\]+/, "").replace(/[\\/:\u0000]/g, "-");
   return join(agentDir, "sessions", `--${sanitized}--`);
 }
+
+test("native names beyond scanner head limits and appended renames agree in both scans", () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "antechamber-title-scan-"));
+  try {
+    withAgentDir(agentDir, () => {
+      const cwd = "/tmp/native-title";
+      const dir = sessionDir(agentDir, cwd);
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, "title.jsonl");
+      writeFileSync(
+        file,
+        sessionHeader("title", cwd) +
+          JSON.stringify({
+            type: "message",
+            message: { role: "user", content: [{ type: "text", text: "provisional" }] },
+          }) +
+          "\n" +
+          (JSON.stringify({ type: "custom", data: "x".repeat(2000) }) + "\n").repeat(220) +
+          JSON.stringify({ type: "session_info", name: "First native" }) +
+          "\n" +
+          JSON.stringify({ type: "session_info", name: "Latest native" }) +
+          "\n" +
+          JSON.stringify({ type: "session_info", name: "  " }) +
+          "\n",
+      );
+      assert.equal(scanPiSessions(cwd)[0]?.title, "Latest native");
+      assert.equal(scanAllPiSessions()[0]?.title, "Latest native");
+      appendFileSync(file, JSON.stringify({ type: "session_info", name: "Appended native" }) + "\n");
+      assert.equal(scanPiSessions(cwd)[0]?.title, "Appended native");
+      assert.equal(scanAllPiSessions()[0]?.title, "Appended native");
+    });
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
 
 test("scanAllPiSessions finds OmO sessions across cwd folders", () => {
   const agentDir = mkdtempSync(join(tmpdir(), "antechamber-agent-"));

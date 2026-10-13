@@ -7,6 +7,37 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Turn statistics now use the native assistant stop reason independently of
+  usage, normalize tool-call finishes, and preserve tokens, cost, errors, and
+  response-model attribution in v1 and v2 history. Restored messages retain
+  their provider-to-append duration when valid timestamps are available.
+- Native session titles replace provisional first-message titles and persist
+  through reload and revival. Explicit user titles win over delayed native
+  generation; scans read the latest native name even beyond the transcript
+  head limit. Both OmO and Senpi client capability variables now advertise
+  `auto_title_sessions` and `question` while preserving inherited capabilities.
+  Historical title generation for old unnamed sessions is deferred to a
+  follow-up; existing native names are restored without adding a conversation
+  turn.
+- Busy prompts now carry native steer/follow-up admission behavior and stable
+  client message IDs instead of waiting behind a running turn until the RPC
+  timeout. v1 defaults to steering; v2 validates and honors steer/queue delivery,
+  publishes inbox acceptance and consumption, and restores durable pending
+  input without duplicating consumed user cards or changing assistant parents.
+- Structured `ask_user_question` requests now remain visible after a
+  nonblocking tool finishes. OpenChamber 1.24.2 receives v1 question
+  events and lists; OpenChamber 2.x receives native forms, including
+  multiselect, custom text, partial answers, comments, and cancellation.
+  Replies use correlated native acknowledgments rather than sending a
+  duplicate prompt.
+- Pending native questions hydrate on session revival with stable public
+  IDs and refreshed connection IDs. Dormant-session dangling-question
+  scanning without revival is deliberately omitted: those questions enter
+  lists only after revival. Native repeated-crash recovery limitations
+  remain; no native recovery code is changed.
+
 ### Added
 
 - Security hardening in progress: optional HTTP Basic auth

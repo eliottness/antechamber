@@ -6,6 +6,116 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { AdapterServer } from "../src/server.js";
+import { bugHarness } from "./bug-harness.js";
+import { SessionStore } from "../src/session-store.js";
+
+test("an explicit placeholder title remains user owned after the first prompt", async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root, "New session");
+  await h.manager.prompt(session.id, "normal");
+  assert.equal(h.manager.get(session.id)?.info.title, "New session");
+});
+
+test("get_state supplies a native title without a session name event", async (t) => {
+  const h = bugHarness(t);
+  const previous = process.env.ANTECHAMBER_TEST_NATIVE_TITLE;
+  process.env.ANTECHAMBER_TEST_NATIVE_TITLE = "Existing native title";
+  t.after(() => {
+    if (previous === undefined) delete process.env.ANTECHAMBER_TEST_NATIVE_TITLE;
+    else process.env.ANTECHAMBER_TEST_NATIVE_TITLE = previous;
+  });
+  const session = await h.manager.create(h.root);
+  assert.equal(session.title, "Existing native title");
+  assert.ok(h.events.some((e) => e.type === "session.updated" && e.properties.info.title === session.title));
+});
+
+test("native titles replace fallback after idle without rename feedback and preserve user ownership on revive", async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal");
+  const pi = h.manager.get(session.id)?.pi;
+  assert.ok(pi);
+  await pi.command({ type: "native_title", name: "  Native task\nname  " });
+  assert.equal(h.manager.get(session.id)?.info.title, "Native task name");
+  assert.ok(h.events.some((e) => e.type === "session.updated" && e.properties.info.title === "Native task name"));
+  assert.ok(h.frames.some((e) => e.type === "session.renamed" && e.data.title === "Native task name"));
+  const inspection = await pi.command<{ commands: Array<{ type: string }> }>({ type: "inspect" });
+  assert.equal(inspection.data?.commands.filter((c) => c.type === "set_session_name").length, 0);
+  h.manager.update(session.id, { title: "My override" });
+  await pi.command({ type: "native_title", name: "Delayed native title" });
+  assert.equal(h.manager.get(session.id)?.info.title, "My override");
+  const renamed = await pi.command<{ commands: Array<{ type: string }> }>({ type: "inspect" });
+  assert.equal(renamed.data?.commands.filter((c) => c.type === "set_session_name").length, 1);
+  await h.restart();
+  assert.equal(h.manager.get(session.id)?.info.title, "My override");
+  h.manager.update(session.id, { title: "Dormant override" });
+  await h.manager.prompt(session.id, "normal");
+  const revived = await h.manager
+    .get(session.id)
+    ?.pi?.command<{ commands: Array<{ type: string; name?: string }> }>({ type: "inspect" });
+  assert.deepEqual(
+    revived?.data?.commands.filter((c) => c.type === "set_session_name").map((c) => c.name),
+    ["Dormant override"],
+  );
+  assert.equal(h.manager.get(session.id)?.info.title, "Dormant override");
+});
+
+test("legacy provisional metadata yields to native names while legacy overrides win", async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal");
+  await h.manager.get(session.id)?.pi?.command({ type: "native_title", name: "Native name" });
+  const store = new SessionStore(join(h.root, "state"));
+  const entry = store.get(session.id);
+  assert.ok(entry);
+  await h.restart();
+  const legacy = { ...entry, title: "normal" };
+  delete legacy.titleSource;
+  store.set(session.id, legacy);
+  await h.restart();
+  assert.equal(h.manager.get(session.id)?.info.title, "Native name");
+  store.set(session.id, { ...legacy, title: "Manual name" });
+  await h.restart();
+  assert.equal(h.manager.get(session.id)?.info.title, "Manual name");
+});
+
+test("create reconciles get_state names and advertises merged capabilities under both brand prefixes", async (t) => {
+  const h = bugHarness(t);
+  const keys = ["OMO_RPC_CLIENT_CAPABILITIES", "SENPI_RPC_CLIENT_CAPABILITIES"] as const;
+  const previous = keys.map((key) => process.env[key]);
+  t.after(() =>
+    keys.forEach((key, i) => {
+      if (previous[i] === undefined) delete process.env[key];
+      else process.env[key] = previous[i];
+    }),
+  );
+  process.env.OMO_RPC_CLIENT_CAPABILITIES = "extension_events, question";
+  process.env.SENPI_RPC_CLIENT_CAPABILITIES = "custom_ui,extension_events";
+  const session = await h.manager.create(h.root, "Explicit title");
+  const inspection = await h.manager
+    .get(session.id)
+    ?.pi?.command<{ capabilities: string[]; commands: Array<{ type: string; name?: string }> }>({ type: "inspect" });
+  assert.ok(inspection?.data);
+  for (const value of inspection.data.capabilities) {
+    assert.deepEqual(
+      new Set(value.split(",")),
+      new Set(["extension_events", "custom_ui", "auto_title_sessions", "question"]),
+    );
+  }
+  assert.deepEqual(
+    inspection.data.commands.filter((c) => c.type === "set_session_name").map((c) => c.name),
+    ["Explicit title"],
+  );
+  const pi = h.manager.get(session.id)?.pi;
+  assert.ok(pi);
+  h.manager.get(session.id)?.unwirePi?.();
+  await pi.command({ type: "native_title", name: "Unobserved title" });
+  // The persisted native name is adopted without needing another name event.
+  const second = await h.manager.create(h.root);
+  await h.manager.get(second.id)?.pi?.command({ type: "native_title", name: "Existing native" });
+  await h.restart();
+  assert.equal(h.manager.get(second.id)?.info.title, "Existing native");
+});
 
 test("unwritable debug log preserves health and agent events with exactly one warning", {
   timeout: 15_000,

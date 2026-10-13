@@ -36,7 +36,68 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | SDK method | pi counterpart |
 |---|---|
 | `permission.list` / `permission.reply` | extension-UI sub-protocol (`select`/`confirm` requests) |
-| `question.list` / `question.reply` / `question.reject` | extension-UI `input`/`select` requests |
+| `question.list` / `question.reply` / `question.reject` | structured extension-UI `question` requests plus legacy `input`/`select`/`confirm`/`editor` dialogs |
+| v2 `form.list` / `form.get` / `form.reply` / `form.cancel` | same pending question registry, projected to native FormInfo |
+
+#### Structured questions (OpenChamber 1.24.2)
+
+`GET /question` returns pending v1 question cards. `POST /question/{id}/reply`
+accepts ordered `answers: string[][]` and an optional `comment`. Known option
+labels become native selections; custom answers become text. Empty arrays
+leave questions unanswered. A comment alone can settle a request.
+`POST /question/{id}/reject` cancels it. Replies return `200 true` only after
+the native acknowledgment; unknown or settled IDs return 404, refused native
+responses return 409, and malformed answers return 400.
+
+The v1 stream emits `question.asked`, then exactly one `question.replied` or
+`question.rejected` when the native question resolves. A nonblocking request
+survives tool completion, turn completion, and agent idle; its presence keeps
+the process from idle eviction but does not change the session's busy/idle
+status. Native `question_updated` frames refresh stored deadlines and drafts.
+Deadlines do not cause adapter-local settlement: native timeout is authoritative.
+The native extension delivers the later answer to the agent; the adapter sends
+only a correlated `extension_ui_response`, never another answer prompt.
+
+#### Forms (OpenChamber 2.x)
+
+| Route | Result |
+|---|---|
+| `GET /api/form` | `{location, data: FormInfo[]}` |
+| `GET /api/session/{sessionID}/form` | `{data: FormInfo[]}` |
+| `GET /api/session/{sessionID}/form/{formID}` | `{data: FormInfo & {state: {status: "pending"}}}` |
+| `POST /api/session/{sessionID}/form/{formID}/reply` | `{answer: {q1: "A", q2: ["B"], comment: "..."}}`; 204 after native acknowledgment |
+| `DELETE /api/session/{sessionID}/form/{formID}` | cancel; 204 after native acknowledgment |
+
+Unknown or settled form IDs return 404, native refusals return 409, and malformed
+answers return 400. The v2 stream emits `form.created` with `{form}`,
+`form.replied` with `{id, sessionID, answer}`, and `form.cancelled` with
+`{id, sessionID}`. It does not emit legacy `question.v2.*` events.
+
+Forms use stable `frm_` IDs, canonical native question IDs as field keys,
+string or multiselect fields with custom options, and an optional reserved
+`comment` field for structured requests. Metadata carries the native request
+ID, `waitForAnswer`, deadline, and any received draft. Legacy dialogs also
+appear as forms, with their original native label/value response contract.
+Stock OpenChamber 2.x treats forms as blocking UI requests; metadata alone
+does not make it label a nonblocking native question as "answer later".
+
+#### Restart scope
+
+Revival installs live subscriptions before requesting `get_state`, then merges
+`pendingQuestions` by stable native tool request ID. A new connection UI ID
+replaces the old reply target without changing the question or form public ID.
+Live settlements prevent stale snapshots from resurrecting cards.
+
+Dormant/scanned-session dangling-question detection **without spawning** is
+deliberately omitted. Global and per-session lists expose pending state from
+live/revived sessions, not yet-unrevived JSONL files. Revive a session through
+a native RPC operation or prompt to hydrate its cards. Durable native
+settlements, including graceful-shutdown cancellation, are not reconstructed
+as pending cards.
+
+The native runtime currently skips a tool ID with an `ask-user:resumed` marker
+even after a second crash. Repeated-crash recovery needs a companion native
+fix; this adapter does not invent a reply target absent from native state.
 
 ### Project / config / misc
 

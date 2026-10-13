@@ -82,10 +82,26 @@ export class PiRpcClient extends EventEmitter {
     super();
     const extraArgs = envSetting("PI_ARGS")?.trim().split(/\s+/).filter(Boolean) ?? [];
     const args = ["--mode", "rpc", ...(options.args ?? []), ...extraArgs];
+    const capabilities = [
+      ...new Set(
+        [
+          ...(process.env.OMO_RPC_CLIENT_CAPABILITIES ?? "").split(","),
+          ...(process.env.SENPI_RPC_CLIENT_CAPABILITIES ?? "").split(","),
+          "auto_title_sessions",
+          "question",
+        ]
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    ].join(",");
     this.proc = spawn(options.piBinary ?? envSetting("PI_BINARY") ?? "pi", args, {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: {
+        ...process.env,
+        OMO_RPC_CLIENT_CAPABILITIES: capabilities,
+        SENPI_RPC_CLIENT_CAPABILITIES: capabilities,
+      },
       detached: true,
     });
 
@@ -203,7 +219,7 @@ export class PiRpcClient extends EventEmitter {
     const id = msg.id as string | undefined;
     if (!id || !method) return;
     const blocking = new Set(["select", "confirm", "input", "editor"]);
-    if (!blocking.has(method) && method !== "notify") return;
+    if (!blocking.has(method) && method !== "notify" && method !== "question") return;
     this.emit("extension_ui_request", msg);
   }
 

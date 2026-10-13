@@ -51,6 +51,8 @@ import {
   SessionPersistenceError,
   SessionStore,
   type ScannedSession,
+  readSessionTitle,
+  type TitleSource,
 } from "./session-store.js";
 import type {
   OCAssistantMessage,
@@ -81,6 +83,9 @@ interface StreamingState {
 }
 
 export interface ManagedSession extends ThinkingState {
+  titleSource?: TitleSource;
+  activeUserMessageID?: string;
+  inputs?: Map<string, { text: string; delivery: "steer" | "queue"; accepted: boolean; delivered: boolean }>;
   tree: SessionTreeState;
   info: OCSession;
   /** undefined while dormant (restored from disk, no pi process spawned yet). */
@@ -128,8 +133,10 @@ interface PiState {
   model: PiModel | null;
   sessionId: string;
   sessionFile?: string;
+  sessionName?: string;
   isStreaming: boolean;
   thinkingLevel?: string;
+  pendingQuestions?: unknown;
 }
 
 /**
@@ -138,6 +145,30 @@ interface PiState {
  */
 function piModelId(responseModel: unknown, model: unknown): unknown {
   return typeof responseModel === "string" && responseModel !== "" ? responseModel : model;
+}
+
+function piStopReason(
+  stopReason: string | undefined,
+  errorMessage?: string,
+): Pick<OCAssistantMessage, "finish" | "error"> {
+  switch (stopReason) {
+    case "stop":
+    case "length":
+      return { finish: stopReason };
+    case "toolUse":
+      return { finish: "tool-calls" };
+    case "error":
+    case "aborted":
+      return {
+        finish: "error",
+        error: {
+          name: stopReason === "aborted" ? "MessageAbortedError" : "UnknownError",
+          data: { message: errorMessage ?? (stopReason === "aborted" ? "Cancelled" : "Provider error") },
+        },
+      };
+    default:
+      return {};
+  }
 }
 
 export class SessionManager {
@@ -204,6 +235,7 @@ export class SessionManager {
 
     const managed: ManagedSession = {
       tree: { messageEntries: {} },
+      titleSource: title?.trim() ? "user" : "fallback",
       info,
       pi,
       messages: [],
@@ -244,7 +276,34 @@ export class SessionManager {
         .catch((error: unknown) => this.reportPersistenceError(managed, error));
     }
 
+    if (managed.titleSource === "user") {
+      const renamed = await pi.command({ type: "set_session_name", name: info.title });
+      if (!renamed.success) throw new Error(renamed.error ?? "session rename rejected");
+    } else {
+      this.applyNativeTitle(managed, state.data.sessionName);
+    }
+    const reconciled = await pi.command<PiState>({ type: "get_state" });
+    if (reconciled.success) this.applyNativeTitle(managed, reconciled.data?.sessionName);
     return info;
+  }
+
+  private applyNativeTitle(s: ManagedSession, value: unknown): void {
+    if (s.titleSource === "user" || typeof value !== "string") return;
+    const title = value.trim().replace(/\s+/g, " ");
+    if (title === "" || title === s.info.title) return;
+    s.info.title = title;
+    s.titleSource = "native";
+    s.info.time.updated = Date.now();
+    this.persistMeta(s);
+    this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+  }
+
+  private refreshNativeTitles(): void {
+    for (const s of this.sessions.values()) {
+      if (s.pi !== undefined || s.restored === undefined || !existsSync(s.restored.piPath)) continue;
+      const metadata = readSessionTitle(s.restored.piPath, s.restored.piSessionId);
+      if (metadata.titleSource === "native") this.applyNativeTitle(s, metadata.title);
+    }
   }
 
   private wirePi(s: ManagedSession, pi: PiRpcClient): void {
@@ -252,6 +311,7 @@ export class SessionManager {
     const onEvent = (payload: Record<string, unknown>): void => {
       if (s.pi !== pi) return;
       this.lifecycle.touch(s);
+      s.approvals?.observeQuestion(payload);
       try {
         this.onPiEvent(s, payload);
       } catch (error) {
@@ -309,6 +369,7 @@ export class SessionManager {
   }
 
   list(directory?: string): OCSession[] {
+    this.refreshNativeTitles();
     this.subagents.restoreAll();
     if (directory !== undefined) {
       this.ensureScanned(directory);
@@ -324,6 +385,7 @@ export class SessionManager {
    * global/recent view; `list(directory)` stays the per-project source of truth.
    */
   listAll(): OCSession[] {
+    this.refreshNativeTitles();
     this.ensureAllScanned();
     this.subagents.restoreAll();
     return [...this.sessions.values()].map((s) => s.info);
@@ -332,7 +394,10 @@ export class SessionManager {
   get(sessionId: string): ManagedSession | undefined {
     if (this.disposed) return undefined;
     const live = this.sessions.get(sessionId);
-    if (live !== undefined) return live;
+    if (live !== undefined) {
+      this.refreshNativeTitles();
+      return live;
+    }
     return this.subagents.restore(sessionId) ?? this.resolveRestored(sessionId);
   }
 
@@ -373,7 +438,10 @@ export class SessionManager {
   ): OCSession | undefined {
     const s = this.get(sessionId);
     if (!s) return undefined;
-    if (typeof patch.title === "string" && patch.title !== "") s.info.title = patch.title;
+    if (typeof patch.title === "string" && patch.title.trim() !== "") {
+      s.info.title = patch.title.trim().replace(/\s+/g, " ");
+      s.titleSource = "user";
+    }
     if (patch.archived !== undefined) {
       if (patch.archived > 0) s.info.time.archived = patch.archived;
       else delete s.info.time.archived; // 0 = unarchive
@@ -381,7 +449,7 @@ export class SessionManager {
     s.info.time.updated = Date.now();
     this.persistMeta(s);
     if (typeof patch.title === "string" && patch.title !== "" && s.pi !== undefined) {
-      void s.pi.command({ type: "set_session_name", name: patch.title }).catch(() => undefined);
+      void s.pi.command({ type: "set_session_name", name: s.info.title }).catch(() => undefined);
     }
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     return s.info;
@@ -663,12 +731,23 @@ export class SessionManager {
     return this.get(sessionID)?.approvals?.replyPermission(requestID, reply, message) ?? false;
   }
 
-  replyQuestion(sessionID: string, requestID: string, answers: Array<string[]>): boolean {
-    return this.get(sessionID)?.approvals?.replyQuestion(requestID, answers) ?? false;
+  async replyQuestion(
+    sessionID: string,
+    requestID: string,
+    answers: Array<string[]>,
+    comment?: string,
+  ): Promise<boolean> {
+    const s = this.get(sessionID);
+    if (!s) return false;
+    if (!s.pi) await this.revive(s);
+    return s.approvals?.replyQuestion(requestID, answers, undefined, comment) ?? false;
   }
 
-  rejectQuestion(sessionID: string, requestID: string): boolean {
-    return this.get(sessionID)?.approvals?.rejectQuestion(requestID) ?? false;
+  async rejectQuestion(sessionID: string, requestID: string): Promise<boolean> {
+    const s = this.get(sessionID);
+    if (!s) return false;
+    if (!s.pi) await this.revive(s);
+    return s.approvals?.rejectQuestion(requestID) ?? false;
   }
 
   private approvalsFor(s: ManagedSession): ApprovalBridge {
@@ -679,6 +758,11 @@ export class SessionManager {
       (response) => s.pi?.respondExtensionUI(response),
       () =>
         s.streaming?.message.id ?? [...(s.messages ?? [])].reverse().find((m) => m.info.role === "assistant")?.info.id,
+      async (response) => {
+        if (!s.pi) return false;
+        const reply = await s.pi.command({ ...response, type: "extension_ui_response" });
+        return reply.success;
+      },
     );
   }
 
@@ -795,10 +879,11 @@ export class SessionManager {
     model?: ModelSelection,
     noReply = false,
     messageID?: string,
+    delivery: "steer" | "queue" = "steer",
   ): Promise<void> {
     const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
-    return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID));
+    return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID, delivery));
   }
 
   private async promptLive(
@@ -807,6 +892,7 @@ export class SessionManager {
     model?: ModelSelection,
     noReply = false,
     messageID?: string,
+    delivery: "steer" | "queue" = "steer",
   ): Promise<void> {
     const sessionId = s.info.id;
     if (s.pi === undefined) await this.revive(s);
@@ -867,8 +953,9 @@ export class SessionManager {
     const parts: OCPart[] = [{ id: id("prt"), sessionID: s.info.id, messageID: userMsg.id, type: "text", text }];
     s.messages?.push({ info: userMsg, parts });
     s.info.time.updated = Date.now();
-    if (s.info.title === "New session") {
+    if (s.info.title === "New session" && s.titleSource !== "user" && s.titleSource !== "native") {
       s.info.title = text.trim().replace(/\s+/g, " ").slice(0, 60) || "New session";
+      s.titleSource = "fallback";
     }
     this.persistMeta(s);
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
@@ -880,10 +967,22 @@ export class SessionManager {
 
     if (noReply) return; // register-only semantics: record the message, do not run the agent
 
-    s.toolByCallId = new Map(); // results for this run arrive by toolCallId
-
-    // pi streams asynchronously after accepting the prompt.
-    this.setStatus(s, { type: "busy" });
+    const wasIdle = s.status.type === "idle";
+    if (wasIdle) {
+      s.toolByCallId = new Map();
+      this.setStatus(s, { type: "busy" });
+    }
+    const input = { text, delivery, accepted: false, delivered: false };
+    (s.inputs ??= new Map()).set(userMsg.id, input);
+    const rejectInput = (): void => {
+      s.inputs?.delete(userMsg.id);
+      s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
+      this.emit(s.info.directory, {
+        type: "message.removed",
+        properties: { sessionID: s.info.id, messageID: userMsg.id },
+      });
+      if (wasIdle) this.setStatus(s, { type: "idle" });
+    };
     const onNotification = (request: Record<string, unknown>): void => {
       if (request.method === "notify" && typeof request.message === "string") {
         announceSessionNotice({ sessions: this, session: s, emit: this.emit }, request.message);
@@ -891,16 +990,21 @@ export class SessionManager {
     };
     if (text.startsWith("/")) pi.onExtensionUI(onNotification);
     const res = await pi
-      .command({ type: "prompt", message: text })
+      .command({
+        type: "prompt",
+        message: text,
+        streamingBehavior: delivery === "queue" ? "followUp" : "steer",
+        clientMessageId: userMsg.id,
+      })
       .catch((error: unknown) => {
-        this.setStatus(s, { type: "idle" });
+        rejectInput();
         throw error;
       })
       .finally(() => {
         pi.off("extension_ui_request", onNotification);
       });
     if (!res.success) {
-      this.setStatus(s, { type: "idle" });
+      rejectInput();
       this.emit(s.info.directory, {
         type: "session.error",
         properties: {
@@ -910,6 +1014,12 @@ export class SessionManager {
       });
       return;
     }
+    input.accepted = true;
+    this.emit(s.info.directory, {
+      type: "session.inbox.enqueued",
+      properties: { sessionID: s.info.id, inboxID: userMsg.id, item: { type: "user", delivery, payload: { text } } },
+    });
+    if (input.delivered) this.deliverInput(s, userMsg.id);
     // Extension commands can finish without starting an agent turn.
     if (
       res.data !== null &&
@@ -917,7 +1027,7 @@ export class SessionManager {
       "disposition" in res.data &&
       res.data.disposition === "handled"
     ) {
-      this.setStatus(s, { type: "idle" });
+      if (wasIdle) this.setStatus(s, { type: "idle" });
     }
 
     // First message makes pi write the session file — bind it now so the
@@ -972,9 +1082,19 @@ export class SessionManager {
       args: ["--session", restored.piPath],
       clock: this.lifecycle.clock,
     });
+    s.pi = pi;
+    s.approvals = this.approvalsFor(s);
+    this.wirePi(s, pi);
     try {
       const state = await pi.command<PiState>({ type: "get_state" });
       if (!state.success || !state.data) throw new Error(`pi get_state failed on resume: ${state.error ?? "no data"}`);
+      s.approvals.hydrate(state.data.pendingQuestions);
+      if (s.titleSource === "user") {
+        const renamed = await pi.command({ type: "set_session_name", name: s.info.title });
+        if (!renamed.success) throw new Error(renamed.error ?? "session rename rejected");
+      } else {
+        this.applyNativeTitle(s, state.data.sessionName);
+      }
       // Restore selection before publishing a runtime that prompts can use.
       const thinking: ThinkingState =
         state.data.thinkingLevel === undefined ? {} : { thinkingLevel: state.data.thinkingLevel };
@@ -988,15 +1108,15 @@ export class SessionManager {
       if (thinking.thinkingLevel !== undefined) s.thinkingLevel = thinking.thinkingLevel;
       s.piPath = restored.piPath;
       s.piSessionId = restored.piSessionId;
-      s.approvals = this.approvalsFor(s);
       this.applyPiModel(s, state.data.model?.provider, state.data.model?.id);
       this.refreshMessageCache(s);
       this.persistMeta(s);
-      this.wirePi(s, pi);
-      s.pi = pi;
       delete s.restored;
       this.lifecycle.touch(s);
     } catch (error) {
+      s.unwirePi?.();
+      s.pi = undefined;
+      delete s.approvals;
       await pi.dispose();
       throw error;
     }
@@ -1080,11 +1200,15 @@ export class SessionManager {
   private adopt(sc: ScannedSession): ManagedSession {
     const ocId = ocIdFor(sc.piSessionId);
     const reg = this.store.get(ocId);
+    const titleSource =
+      reg?.titleSource ??
+      (reg?.title && reg.title !== "New session" && reg.title !== sc.fallbackTitle ? "user" : "fallback");
+    const useRegistry = titleSource === "user" || (sc.titleSource !== "native" && titleSource === "generated");
     const info: OCSession = {
       id: ocId,
       projectID: sc.directory,
       directory: sc.directory,
-      title: reg?.title ?? sc.title,
+      title: useRegistry ? (reg?.title ?? sc.title) : sc.title,
       ...(reg?.tree?.revert ? { revert: { messageID: reg.tree.revert.messageID } } : {}),
       version: ADAPTER_VERSION,
       time: {
@@ -1095,6 +1219,7 @@ export class SessionManager {
     };
     const managed: ManagedSession = {
       tree: durableShellTree(reg?.tree ?? { messageEntries: {} }),
+      titleSource: useRegistry ? titleSource : (sc.titleSource ?? "fallback"),
       info,
       pi: undefined,
       messages: undefined,
@@ -1120,7 +1245,7 @@ export class SessionManager {
         piSessionId: reg.piSessionId,
         piPath: reg.piPath,
         directory: reg.directory,
-        title: reg.title ?? "New session",
+        ...readSessionTitle(reg.piPath, reg.piSessionId),
         created: reg.created,
         updated: reg.updated,
       });
@@ -1151,6 +1276,7 @@ export class SessionManager {
       directory: s.info.directory,
       // "New session" is a placeholder — let the scan-derived title win.
       ...(s.info.title !== "New session" ? { title: s.info.title } : {}),
+      ...(s.titleSource !== undefined ? { titleSource: s.titleSource } : {}),
       ...(s.info.time.archived !== undefined ? { archived: s.info.time.archived } : {}),
       ...(s.model !== undefined ? { model: { providerID: s.model.providerID, modelID: s.model.modelID } } : {}),
       created: s.info.time.created,
@@ -1189,6 +1315,59 @@ export class SessionManager {
     });
   }
 
+  private deliverInput(s: ManagedSession, messageID: string): void {
+    this.emit(s.info.directory, {
+      type: "session.inbox.delivered",
+      properties: { sessionID: s.info.id, inboxID: messageID },
+    });
+    s.inputs?.delete(messageID);
+  }
+
+  private reconcileUser(s: ManagedSession, ev: Record<string, unknown>): boolean {
+    const message = ev.message as PiFileMessage | undefined;
+    if (message?.role !== "user") return false;
+    const text = textOf(message.content);
+    const correlated = typeof ev.clientMessageId === "string" ? ev.clientMessageId : message.clientMessageId;
+    const pending =
+      correlated ?? [...(s.inputs ?? [])].find(([, input]) => !input.delivered && input.text === text)?.[0];
+    const messageID = pending ?? (ev.type === "message_end" ? s.activeUserMessageID : undefined) ?? id("msg");
+    let user = this.ensureMessages(s).find((item) => item.info.id === messageID);
+    if (user === undefined) {
+      user = {
+        info: {
+          id: messageID,
+          sessionID: s.info.id,
+          role: "user",
+          time: { created: message.timestamp ?? Date.now() },
+          agent: getAgentName(),
+          model: s.model ?? { providerID: "unknown", modelID: "unknown" },
+        },
+        parts: [{ id: id("prt"), sessionID: s.info.id, messageID, type: "text", text }],
+      };
+      s.messages?.push(user);
+      this.emit(s.info.directory, { type: "message.updated", properties: { info: user.info } });
+      for (const part of user.parts) this.emitPart(s, part);
+      if (pending === undefined) {
+        this.emit(s.info.directory, {
+          type: "session.inbox.enqueued",
+          properties: {
+            sessionID: s.info.id,
+            inboxID: messageID,
+            item: { type: "user", delivery: "steer", payload: { text } },
+          },
+        });
+        this.deliverInput(s, messageID);
+      }
+    }
+    s.activeUserMessageID = messageID;
+    const input = s.inputs?.get(messageID);
+    if (input && !input.delivered) {
+      input.delivered = true;
+      if (input.accepted) this.deliverInput(s, messageID);
+    }
+    return true;
+  }
+
   private onPiEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     this.subagents.wake(s, ev);
     const dir = s.info.directory;
@@ -1203,6 +1382,9 @@ export class SessionManager {
         if (event !== undefined) this.emit(dir, event);
         break;
       }
+      case "session_info_changed":
+        this.applyNativeTitle(s, ev.name);
+        break;
       case "agent_start":
         this.setStatus(s, { type: "busy" });
         break;
@@ -1285,6 +1467,7 @@ export class SessionManager {
       }
 
       case "message_start": {
+        if (this.reconcileUser(s, ev)) break;
         const msg = ev.message as
           | { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown }
           | undefined;
@@ -1299,7 +1482,10 @@ export class SessionManager {
           sessionID: s.info.id,
           role: "assistant",
           time: { created: Date.now() },
-          parentID: parent?.info.id ?? "",
+          parentID:
+            typeof ev.clientMessageId === "string"
+              ? ev.clientMessageId
+              : (s.activeUserMessageID ?? parent?.info.id ?? ""),
           modelID: s.model?.modelID ?? "unknown",
           providerID: s.model?.providerID ?? "unknown",
           mode: getAgentName(),
@@ -1318,10 +1504,12 @@ export class SessionManager {
         break;
 
       case "message_end": {
+        if (this.reconcileUser(s, ev)) break;
         const ended = ev.message as
           | {
               role?: string;
               stopReason?: string;
+              errorMessage?: string;
               usage?: PiUsage;
               provider?: unknown;
               model?: unknown;
@@ -1348,6 +1536,7 @@ export class SessionManager {
             s.streaming.message.modelID = s.model.modelID;
           }
           this.applyUsage(s.streaming.message, ended.usage);
+          Object.assign(s.streaming.message, piStopReason(ended.stopReason, ended.errorMessage));
           s.streaming.message.time.completed = Date.now();
           this.emit(dir, { type: "message.updated", properties: { info: s.streaming.message } });
           this.finishStreaming(s);
@@ -1651,7 +1840,6 @@ export class SessionManager {
       cache: { read: usage.cacheRead ?? 0, write: usage.cacheWrite ?? 0 },
     };
     if (usage.cost?.total !== undefined) msg.cost = usage.cost.total;
-    if (usage.stopReason !== undefined) msg.finish = usage.stopReason;
   }
 }
 
@@ -1662,7 +1850,6 @@ interface PiUsage {
   cacheRead?: number;
   cacheWrite?: number;
   cost?: { total?: number };
-  stopReason?: string;
 }
 
 // ----------------------------------------------------------------------
@@ -1679,15 +1866,24 @@ interface PiFileEntry {
   message?: PiFileMessage;
   customType?: string;
   details?: unknown;
+  data?: {
+    durableSessionId?: string;
+    clientMessageId?: string;
+    state?: string;
+    prepared?: { text?: string; mode?: string; enqueueOrder?: number };
+  };
 }
 
 interface PiFileMessage {
+  clientMessageId?: string;
   role?: string;
   content?: Array<Record<string, unknown>>;
   usage?: PiUsage;
   provider?: string;
   model?: string;
+  responseModel?: string;
   stopReason?: string;
+  errorMessage?: string;
   timestamp?: number;
   toolCallId?: string;
   toolName?: string;
@@ -1795,6 +1991,7 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
             : {
                 message: {
                   role: m.role,
+                  ...(m.clientMessageId === undefined ? {} : { clientMessageId: m.clientMessageId }),
                   ...(m.role === "user" ? { content: [{ type: "text", text: textOf(m.content) }] } : {}),
                   ...(m.command === undefined ? {} : { command: m.command }),
                   ...(m.output === undefined ? {} : { output: m.output }),
@@ -1841,6 +2038,7 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
       const text = textOf(m.content);
       if (text === "") continue;
       const msgId =
+        m.clientMessageId ??
         Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ??
         `msg_${sessionID}_r${idx}`;
       if (e.id) s.tree.messageEntries[msgId] = e.id;
@@ -1924,8 +2122,9 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
 
     if (m.role === "assistant") {
       runAssistant = e;
-      if (typeof m.provider === "string" && typeof m.model === "string") {
-        currentModel = { providerID: m.provider, modelID: m.model };
+      const responseModel = piModelId(m.responseModel, m.model);
+      if (typeof m.provider === "string" && typeof responseModel === "string") {
+        currentModel = { providerID: m.provider, modelID: responseModel };
       }
       const msgId =
         Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ??
@@ -1935,7 +2134,13 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
         id: msgId,
         sessionID,
         role: "assistant",
-        time: { created, completed: created },
+        time: {
+          created:
+            typeof m.timestamp === "number" && Number.isFinite(m.timestamp) && m.timestamp <= created
+              ? m.timestamp
+              : created,
+          completed: created,
+        },
         parentID: lastUserId,
         modelID: currentModel.modelID,
         providerID: currentModel.providerID,
@@ -1948,7 +2153,7 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
           reasoning: m.usage?.reasoning ?? 0,
           cache: { read: m.usage?.cacheRead ?? 0, write: m.usage?.cacheWrite ?? 0 },
         },
-        ...(typeof m.stopReason === "string" ? { finish: m.stopReason } : {}),
+        ...piStopReason(m.stopReason, m.errorMessage),
       };
       const parts: OCPart[] = [];
       const blocks = Array.isArray(m.content) ? m.content : [];
@@ -2087,6 +2292,42 @@ function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): 
         }
       }
     }
+  }
+  const admissions = new Map<string, PiFileEntry>();
+  for (const entry of entries) {
+    if (
+      entry.type === "custom" &&
+      entry.customType === "rpc_client_message_admission" &&
+      entry.data !== undefined &&
+      entry.data?.durableSessionId === (s.piSessionId ?? s.restored?.piSessionId) &&
+      typeof entry.data.clientMessageId === "string"
+    )
+      admissions.set(entry.data.clientMessageId, entry);
+  }
+  for (const [messageID, entry] of [...admissions].sort(
+    (a, b) => (a[1].data?.prepared?.enqueueOrder ?? 0) - (b[1].data?.prepared?.enqueueOrder ?? 0),
+  )) {
+    const data = entry.data;
+    if (
+      data?.state !== "queued" ||
+      typeof data.prepared?.text !== "string" ||
+      out.some((message) => message.info.id === messageID)
+    )
+      continue;
+    const text = data.prepared.text;
+    const delivery = data.prepared.mode === "followUp" ? "queue" : "steer";
+    out.push({
+      info: {
+        id: messageID,
+        sessionID,
+        role: "user",
+        time: { created: entryTime(entry) },
+        agent: agentName,
+        model: currentModel,
+      },
+      parts: [{ id: `prt_${messageID}_pending`, sessionID, messageID, type: "text", text }],
+    });
+    (s.inputs ??= new Map()).set(messageID, { text, delivery, accepted: true, delivered: false });
   }
   return out;
 }

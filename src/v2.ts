@@ -24,6 +24,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
+import { questionFormID, toQuestionForm } from "./question-forms.js";
 import type {
   OCAssistantMessage,
   OCMessageWithParts,
@@ -196,6 +197,10 @@ export interface V2Message {
   agent?: string;
   model?: { id: string; providerID: string; variant?: string };
   content?: Array<Record<string, unknown>>;
+  finish?: string;
+  cost?: number;
+  tokens?: V2Tokens;
+  error?: OCAssistantMessage["error"];
 }
 
 /** v2 user message (list + prompt response): the UI reads `.text`. */
@@ -240,6 +245,10 @@ export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
   if (i.time.completed !== undefined) msg.time.completed = i.time.completed;
   msg.agent = i.mode;
   msg.model = model;
+  if (i.finish !== undefined) msg.finish = i.finish;
+  msg.cost = i.cost;
+  msg.tokens = i.tokens;
+  if (i.error !== undefined) msg.error = i.error;
   return msg;
 }
 
@@ -351,6 +360,16 @@ export class V2EventTranslator {
 
   translate(directory: string, ev: OCEvent): V2Envelope[] {
     switch (ev.type) {
+      case "session.inbox.enqueued":
+      case "session.inbox.delivered":
+        return [this.frame(directory, ev.type, ev.properties)];
+      case "message.removed":
+        return [
+          this.frame(directory, "session.inbox.cancelled", {
+            sessionID: ev.properties.sessionID,
+            inboxID: ev.properties.messageID,
+          }),
+        ];
       case "session.created": {
         const info = ev.properties.info;
         return [
@@ -445,11 +464,24 @@ export class V2EventTranslator {
       case "permission.replied":
         return [this.frame(directory, "permission.v2.replied", ev.properties)];
       case "question.asked":
-        return [this.frame(directory, "question.v2.asked", ev.properties)];
+        return [this.frame(directory, "form.created", { form: toQuestionForm(ev.properties) })];
       case "question.replied":
-        return [this.frame(directory, "question.v2.replied", ev.properties)];
+        return [
+          this.frame(directory, "form.replied", {
+            id: questionFormID(ev.properties.requestID),
+            sessionID: ev.properties.sessionID,
+            answer:
+              ev.properties.formAnswer ??
+              Object.fromEntries(ev.properties.answers.map((a, i) => [`q${i + 1}`, a.length === 1 ? a[0] : a])),
+          }),
+        ];
       case "question.rejected":
-        return [this.frame(directory, "question.v2.rejected", ev.properties)];
+        return [
+          this.frame(directory, "form.cancelled", {
+            id: questionFormID(ev.properties.requestID),
+            sessionID: ev.properties.sessionID,
+          }),
+        ];
       default:
         return [];
     }
@@ -518,7 +550,7 @@ export class V2EventTranslator {
       this.frame(directory, "session.step.ended", {
         sessionID: st.sessionID,
         assistantMessageID: st.messageID,
-        finish: st.finish ?? "stop",
+        ...(st.finish !== undefined ? { finish: st.finish } : {}),
         cost: st.cost,
         tokens: st.tokens,
       }),

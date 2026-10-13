@@ -51,9 +51,13 @@ export interface ScannedSession {
   piPath: string;
   directory: string;
   title: string;
+  titleSource?: TitleSource;
+  fallbackTitle?: string;
   created: number;
   updated: number;
 }
+
+export type TitleSource = "user" | "native" | "fallback" | "generated";
 
 /** Adapter-owned metadata that pi's files do not carry. */
 export interface SessionRegistryEntry {
@@ -66,6 +70,7 @@ export interface SessionRegistryEntry {
   piPath: string;
   directory: string;
   title?: string;
+  titleSource?: TitleSource;
   /** Archive timestamp (absent/0 = live) — OpenChamber's archive toggle. */
   archived?: number;
   /**
@@ -131,6 +136,44 @@ function titleFromHead(head: string, piSessionId: string): string {
   return `pi session ${piSessionId.slice(0, 8)}`;
 }
 
+const titleCache = new Map<
+  string,
+  { mtimeMs: number; size: number; title: string; fallbackTitle: string; titleSource: TitleSource }
+>();
+
+/** Native renames append anywhere in the transcript; directory mtimes do not change. */
+export function readSessionTitle(
+  piPath: string,
+  piSessionId: string,
+): { title: string; fallbackTitle: string; titleSource: TitleSource } {
+  const stat = statSync(piPath);
+  const cached = titleCache.get(piPath);
+  if (cached?.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached;
+  const raw = readFileSync(piPath, "utf8");
+  const fallbackTitle = titleFromHead(raw, piSessionId);
+  let native: string | undefined;
+  for (const line of raw.split("\n")) {
+    try {
+      const entry = JSON.parse(line);
+      if (entry?.type === "session_info" && typeof entry.name === "string") {
+        const name = entry.name.trim().replace(/\s+/g, " ");
+        if (name !== "") native = name;
+      }
+    } catch {
+      // Partial trailing writes do not erase the last valid title.
+    }
+  }
+  const metadata = {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    title: native ?? fallbackTitle,
+    fallbackTitle,
+    titleSource: native === undefined ? ("fallback" as const) : ("native" as const),
+  };
+  titleCache.set(piPath, metadata);
+  return metadata;
+}
+
 function parseSessionHeader(head: string): SessionHeader | undefined {
   const firstLine = head.split("\n", 1)[0] ?? "";
   let header: SessionHeader;
@@ -144,7 +187,7 @@ function parseSessionHeader(head: string): SessionHeader | undefined {
   return header;
 }
 
-function buildScanned(piPath: string, directory: string, head: string, header: SessionHeader): ScannedSession {
+function buildScanned(piPath: string, directory: string, header: SessionHeader): ScannedSession {
   const piSessionId = header.id as string;
   const created = typeof header.timestamp === "string" ? Date.parse(header.timestamp) : NaN;
   let updated = created;
@@ -157,7 +200,7 @@ function buildScanned(piPath: string, directory: string, head: string, header: S
     piSessionId,
     piPath,
     directory,
-    title: titleFromHead(head, piSessionId),
+    ...readSessionTitle(piPath, piSessionId),
     created: Number.isNaN(created) ? Math.floor(updated) : created,
     updated: Math.floor(updated),
   };
@@ -169,7 +212,7 @@ function scanOne(piPath: string, directory: string): ScannedSession | undefined 
   if (header === undefined) return undefined;
   // The directory-name sanitization is lossy; the header cwd is authoritative.
   if (typeof header.cwd === "string" && header.cwd !== directory) return undefined;
-  return buildScanned(piPath, directory, head, header);
+  return buildScanned(piPath, directory, header);
 }
 
 /** Like scanOne, but the true cwd comes from the file header (global enumeration). */
@@ -178,7 +221,7 @@ function scanOneAnyDirectory(piPath: string): ScannedSession | undefined {
   const header = parseSessionHeader(head);
   if (header === undefined) return undefined;
   if (typeof header.cwd !== "string" || header.cwd === "") return undefined;
-  return buildScanned(piPath, header.cwd, head, header);
+  return buildScanned(piPath, header.cwd, header);
 }
 
 /** Root of pi's session storage: one subdirectory per cwd. */

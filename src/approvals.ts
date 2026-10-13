@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   PermissionRequest,
   PermissionV2Request,
@@ -5,18 +6,27 @@ import type {
   QuestionRequest,
   EventPermissionAsked,
   EventPermissionReplied,
-  EventQuestionAsked,
   EventQuestionReplied,
   EventQuestionRejected,
 } from "@opencode-ai/sdk/v2";
 
 type WithoutEventID<T> = T extends { id: string } ? Omit<T, "id"> : never;
-export type ApprovalEvent = WithoutEventID<
-  EventPermissionAsked | EventPermissionReplied | EventQuestionAsked | EventQuestionReplied | EventQuestionRejected
->;
+export type ApprovalEvent =
+  | WithoutEventID<EventPermissionAsked | EventPermissionReplied | EventQuestionRejected>
+  | { type: "question.asked"; properties: PendingQuestion }
+  | {
+      type: "question.replied";
+      properties: EventQuestionReplied["properties"] & {
+        comment?: string;
+        formAnswer?: Record<string, string | string[]>;
+      };
+    };
 export type PermissionReply = "once" | "always" | "reject";
 export type PendingPermission = PermissionRequest;
-export type PendingQuestion = QuestionRequest;
+export type PendingQuestion = QuestionRequest & {
+  questionIDs?: string[];
+  metadata?: Record<string, unknown>;
+};
 export type ExtensionUiResponse = Record<string, unknown>;
 export class ApprovalInputError extends Error {}
 
@@ -29,18 +39,24 @@ interface Context {
 
 interface UIRequest {
   id: string;
-  method: "select" | "confirm" | "input" | "editor";
+  method: "select" | "confirm" | "input" | "editor" | "question";
   title: string;
   options: string[];
   toolCallId?: string;
   timeout?: number;
+  requestId?: string;
+  questions?: Array<QuestionInfo & { id: string }>;
+  waitForAnswer?: boolean;
+  deadlineAtMs?: number;
+  draft?: Record<string, unknown>;
 }
 
 type Pending = {
   context: Context;
   request: UIRequest;
   timer?: ReturnType<typeof setTimeout>;
-} & ({ kind: "permission"; card: PermissionRequest } | { kind: "question"; card: QuestionRequest });
+  replying?: boolean;
+} & ({ kind: "permission"; card: PermissionRequest } | { kind: "question"; card: PendingQuestion });
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -51,6 +67,51 @@ function record(value: unknown): Record<string, unknown> | undefined {
 export function extensionUiRequestFrom(value: Record<string, unknown>): UIRequest | undefined {
   const { id, method, title, options, toolCallId, timeout } = value;
   if (typeof id !== "string" || id === "") return undefined;
+  if (method === "question") {
+    const requestId = typeof value.requestId === "string" ? value.requestId : toolCallId;
+    if (typeof requestId !== "string" || !requestId || !Array.isArray(value.questions) || !value.questions.length)
+      return undefined;
+    const questions: Array<QuestionInfo & { id: string }> = [];
+    for (const item of value.questions) {
+      const q = record(item);
+      if (
+        !q ||
+        typeof q.id !== "string" ||
+        typeof q.question !== "string" ||
+        typeof q.header !== "string" ||
+        !Array.isArray(q.options)
+      )
+        return undefined;
+      const parsedOptions: QuestionInfo["options"] = [];
+      for (const option of q.options) {
+        const o = record(option);
+        if (!o || typeof o.label !== "string") return undefined;
+        parsedOptions.push({ label: o.label, description: typeof o.description === "string" ? o.description : "" });
+      }
+      if (questions.some((question) => question.id === q.id) || q.id === "comment") return undefined;
+      questions.push({
+        id: q.id,
+        question: q.question,
+        header: q.header,
+        options: parsedOptions,
+        multiple: q.multiSelect === true || q.multiple === true,
+        custom: true,
+      });
+    }
+    const draft = record(value.draft);
+    return {
+      id,
+      method,
+      title: "",
+      options: [],
+      requestId,
+      toolCallId: requestId,
+      questions,
+      waitForAnswer: value.waitForAnswer !== false,
+      ...(typeof value.deadlineAtMs === "number" ? { deadlineAtMs: value.deadlineAtMs } : {}),
+      ...(draft ? { draft } : {}),
+    };
+  }
   if (method !== "select" && method !== "confirm" && method !== "input" && method !== "editor") return undefined;
   return {
     id,
@@ -95,12 +156,14 @@ export class ApprovalBridge {
   private questionCalls = new Map<string, Map<string, QuestionInfo[]>>();
   private followups = new Map<string, Map<string, { value: string; kind: "permission" | "question" }>>();
   private emit: (directory: string, event: ApprovalEvent) => void;
+  private settled = new Set<string>();
 
   constructor(
     private sessionID: string,
     emit: (event: ApprovalEvent) => void,
     private send: (response: ExtensionUiResponse) => void,
     private messageID: () => string | undefined,
+    private acknowledge?: (response: ExtensionUiResponse) => Promise<boolean>,
   ) {
     this.emit = (_directory, event) => emit(event);
   }
@@ -140,7 +203,7 @@ export class ApprovalBridge {
       .flatMap((p) => (p.kind === "permission" ? [p.card] : []));
   }
 
-  questionRequests(sessionID?: string, directory?: string): QuestionRequest[] {
+  questionRequests(sessionID?: string, directory?: string): PendingQuestion[] {
     return [...this.pending.values()]
       .filter(
         (p) =>
@@ -151,7 +214,7 @@ export class ApprovalBridge {
       .flatMap((p) => (p.kind === "question" ? [p.card] : []));
   }
 
-  questions(): QuestionRequest[] {
+  questions(): PendingQuestion[] {
     return this.questionRequests();
   }
 
@@ -160,6 +223,64 @@ export class ApprovalBridge {
       [...this.pending.values()].some((p) => p.context.sessionID === sessionID) ||
       (this.followups.get(sessionID)?.size ?? 0) > 0
     );
+  }
+
+  /** Merge a snapshot only after live subscriptions have been installed. */
+  hydrate(questions: unknown): void {
+    if (!Array.isArray(questions)) return;
+    for (const value of questions) {
+      const frame = record(value);
+      if (!frame) continue;
+      const request = extensionUiRequestFrom({ ...frame, method: "question" });
+      if (request && ![...this.pending.values()].some((p) => p.request.requestId === request.requestId))
+        this.handle(request);
+    }
+  }
+
+  observeQuestion(ev: Record<string, unknown>): void {
+    if (ev.type !== "question_updated" && ev.type !== "question_resolved") return;
+    const p = [...this.pending.values()].find(
+      (p) =>
+        p.request.method === "question" &&
+        (p.request.id === ev.id || (typeof ev.requestId === "string" && p.request.requestId === ev.requestId)),
+    );
+    if (ev.type === "question_resolved" && typeof ev.requestId === "string") this.settled.add(ev.requestId);
+    if (!p || p.kind !== "question") return;
+    if (ev.type === "question_updated") {
+      if (typeof ev.deadlineAtMs === "number") p.request.deadlineAtMs = ev.deadlineAtMs;
+      const draft = record(ev.draft) ?? (record(ev.answers) ? { answers: ev.answers, comment: ev.comment } : undefined);
+      if (draft) p.request.draft = draft;
+      p.card.metadata = { ...p.card.metadata, deadlineAtMs: p.request.deadlineAtMs, draft: p.request.draft };
+      return;
+    }
+    this.settled.add(p.request.requestId ?? "");
+    if (ev.outcome !== "answered" && ev.outcome !== "comment-submitted") {
+      this.remove(p, true);
+      return;
+    }
+    const native = record(ev.answers) ?? {};
+    const formAnswer: Record<string, string | string[]> = {};
+    const answers = (p.request.questions ?? []).map((q) => {
+      const answer = record(native[q.id]);
+      const selected = Array.isArray(answer?.selected)
+        ? answer.selected.filter((v): v is string => typeof v === "string")
+        : [];
+      const values = typeof answer?.text === "string" ? [...selected, answer.text] : selected;
+      if (values.length) formAnswer[q.id] = q.multiple ? values : (values[0] ?? "");
+      return values;
+    });
+    if (typeof ev.comment === "string") formAnswer.comment = ev.comment;
+    this.remove(p, false);
+    this.emit(p.context.directory, {
+      type: "question.replied",
+      properties: {
+        sessionID: this.sessionID,
+        requestID: p.card.id,
+        answers,
+        formAnswer,
+        ...(typeof ev.comment === "string" ? { comment: ev.comment } : {}),
+      },
+    });
   }
 
   observe(context: Context, ev: Record<string, unknown>): void {
@@ -207,7 +328,43 @@ export class ApprovalBridge {
 
   private ask(context: Context, ev: Record<string, unknown>): void {
     const request = extensionUiRequestFrom(ev);
-    if (!request || this.pending.has(request.id)) return;
+    if (!request) return;
+    if (request.method === "question") {
+      if (this.settled.has(request.requestId ?? "")) return;
+      const publicID = `que_${createHash("sha256")
+        .update(JSON.stringify([context.sessionID, request.requestId]))
+        .digest("hex")
+        .slice(0, 32)}`;
+      const existing = this.pending.get(publicID);
+      if (existing) {
+        existing.request = request;
+        if (existing.kind === "question")
+          existing.card.metadata = {
+            requestId: request.requestId,
+            waitForAnswer: request.waitForAnswer,
+            deadlineAtMs: request.deadlineAtMs,
+            draft: request.draft,
+          };
+        return;
+      }
+      const card: PendingQuestion = {
+        id: publicID,
+        sessionID: context.sessionID,
+        questions: (request.questions ?? []).map(({ id: _id, ...q }) => q),
+        questionIDs: (request.questions ?? []).map((q) => q.id),
+        metadata: {
+          requestId: request.requestId,
+          waitForAnswer: request.waitForAnswer,
+          deadlineAtMs: request.deadlineAtMs,
+          draft: request.draft,
+        },
+        tool: { messageID: context.messageID, callID: request.requestId ?? "" },
+      };
+      this.pending.set(publicID, { kind: "question", card, context, request });
+      this.emit(context.directory, { type: "question.asked", properties: card });
+      return;
+    }
+    if (this.pending.has(request.id)) return;
     const calls = this.questionCalls.get(context.sessionID);
     const matched =
       request.method === "select"
@@ -305,9 +462,28 @@ export class ApprovalBridge {
     return true;
   }
 
-  replyQuestion(id: string, answers: string[][], sessionID?: string): boolean {
+  replyQuestion(id: string, answers: string[][], sessionID?: string, comment?: string): boolean | Promise<boolean> {
     const p = this.pending.get(id);
     if (!p || p.kind !== "question" || (sessionID !== undefined && p.context.sessionID !== sessionID)) return false;
+    if (p.request.method === "question") {
+      if (
+        !Array.isArray(answers) ||
+        answers.length > p.card.questions.length ||
+        answers.some((a) => !Array.isArray(a) || a.some((v) => typeof v !== "string")) ||
+        (comment !== undefined && typeof comment !== "string")
+      )
+        throw new ApprovalInputError("invalid structured question answers");
+      const native: Record<string, { selected: string[]; text?: string }> = {};
+      (p.request.questions ?? []).forEach((q, index) => {
+        const values = answers[index] ?? [];
+        if (!q.multiple && values.length > 1) throw new ApprovalInputError("single select question accepts one answer");
+        if (!values.length) return;
+        const selected = values.filter((value) => q.options.some((o) => o.label === value));
+        const text = values.filter((value) => !q.options.some((o) => o.label === value)).join("\n");
+        native[q.id] = { selected, ...(text ? { text } : {}) };
+      });
+      return this.respondStructured(p, { answers: native, ...(comment !== undefined ? { comment } : {}) });
+    }
     if (
       !Array.isArray(answers) ||
       answers.length !== 1 ||
@@ -343,12 +519,26 @@ export class ApprovalBridge {
     return true;
   }
 
-  rejectQuestion(id: string, sessionID?: string): boolean {
+  rejectQuestion(id: string, sessionID?: string): boolean | Promise<boolean> {
     const p = this.pending.get(id);
     if (!p || p.kind !== "question" || (sessionID !== undefined && p.context.sessionID !== sessionID)) return false;
+    if (p.request.method === "question") return this.respondStructured(p, { cancelled: true });
     p.context.send({ type: "extension_ui_response", id, cancelled: true });
     this.remove(p, true);
     return true;
+  }
+
+  private async respondStructured(p: Pending, fields: Record<string, unknown>): Promise<boolean> {
+    if (p.replying) return false;
+    p.replying = true;
+    try {
+      const response = { type: "extension_ui_response", uiRequestId: p.request.id, ...fields };
+      if (this.acknowledge) return await this.acknowledge(response);
+      p.context.send({ ...response, id: `reply_${createHash("sha256").update(p.request.id).digest("hex")}` });
+      return true;
+    } finally {
+      p.replying = false;
+    }
   }
 
   private follow(p: Pending, value: string, kind: "permission" | "question"): void {
@@ -360,7 +550,7 @@ export class ApprovalBridge {
   }
 
   private remove(p: Pending, rejected: boolean): void {
-    if (!this.pending.delete(p.request.id)) return;
+    if (!this.pending.delete(p.card.id)) return;
     if (p.timer !== undefined) clearTimeout(p.timer);
     if (!rejected) return;
     this.emit(
@@ -368,11 +558,11 @@ export class ApprovalBridge {
       p.kind === "permission"
         ? {
             type: "permission.replied",
-            properties: { sessionID: p.context.sessionID, requestID: p.request.id, reply: "reject" },
+            properties: { sessionID: p.context.sessionID, requestID: p.card.id, reply: "reject" },
           }
         : {
             type: "question.rejected",
-            properties: { sessionID: p.context.sessionID, requestID: p.request.id },
+            properties: { sessionID: p.context.sessionID, requestID: p.card.id },
           },
     );
   }
@@ -380,6 +570,8 @@ export class ApprovalBridge {
   clear(sessionID: string, cancel: boolean, callID?: string): void {
     for (const p of this.pending.values()) {
       if (p.context.sessionID !== sessionID || (callID !== undefined && p.request.toolCallId !== callID)) continue;
+      if (p.request.method === "question" && !cancel) continue;
+      if (cancel && p.request.requestId) this.settled.add(p.request.requestId);
       if (cancel) p.context.send({ type: "extension_ui_response", id: p.request.id, cancelled: true });
       this.remove(p, true);
     }
