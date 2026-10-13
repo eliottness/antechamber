@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - name: Verify published package contents
+        run: |
+          npm pack --dry-run --json > "$RUNNER_TEMP/package.json"
+          node --input-type=module - "$RUNNER_TEMP/package.json" <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const [pack] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const paths = pack.files.map(({ path }) => path);
+          assert.ok(paths.includes("dist/cli.js"), "package must contain dist/cli.js");
+          assert.ok(!paths.some((path) => /^(test|contrib)\//.test(path)),
+            "package must not contain test/ or contrib/");
+          NODE
