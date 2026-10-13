@@ -1,0 +1,194 @@
+{
+  "tool": "ask_user_question",
+  "samples": [
+    {
+      "arguments": {
+        "questions": [
+          {
+            "question": "Where should the patched connector live? I'll need a durable home for ~6-10 patch commits and a pinned version that the service runs from.",
+            "header": "Code home",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "GitHub fork (Recommended)",
+                "description": "Fork example/example-adapter to your account, clone to ~/git/example-adapter, work on a branch, service pins a commit. Generic fixes (agent-dir env, approvals) also offered upstream as PRs."
+              },
+              {
+                "label": "Local clone only",
+                "description": "Same clone at ~/git/example-adapter with local commits, no remote fork. Simpler, but no off-machine backup and no upstream PRs."
+              },
+              {
+                "label": "Upstream PRs, then pin",
+                "description": "Only send PRs upstream and wait for merges before deploying. Cleanest long-term, but blocks deployment on a single maintainer."
+              }
+            ]
+          }
+        ],
+        "waitForAnswer": true
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Code home: GitHub fork (Recommended)"
+        }
+      ],
+      "details": {
+        "resolvedBy": "local_ui",
+        "questions": [
+          {
+            "id": "q1",
+            "header": "Code home",
+            "question": "Where should the patched connector live? I'll need a durable home for ~6-10 patch commits and a pinned version that the service runs from.",
+            "options": [
+              {
+                "label": "GitHub fork (Recommended)",
+                "description": "Fork example/example-adapter to your account, clone to ~/git/example-adapter, work on a branch, service pins a commit. Generic fixes (agent-dir env, approvals) also offered upstream as PRs."
+              },
+              {
+                "label": "Local clone only",
+                "description": "Same clone at ~/git/example-adapter with local commits, no remote fork. Simpler, but no off-machine backup and no upstream PRs."
+              },
+              {
+                "label": "Upstream PRs, then pin",
+                "description": "Only send PRs upstream and wait for merges before deploying. Cleanest long-term, but blocks deployment on a single maintainer."
+              }
+            ],
+            "multiSelect": false
+          }
+        ],
+        "answers": {
+          "Where should the patched connector live? I'll need a durable home for ~6-10 patch commits and a pinned version that the service runs from.": "GitHub fork (Recommended)"
+        },
+        "unanswered": [],
+        "status": "answered"
+      },
+      "isError": false
+    },
+    {
+      "arguments": {
+        "questions": [
+          {
+            "question": "Which deployment should the synthetic example use?",
+            "header": "Instance",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "New example service (Recommended)",
+                "description": "Start a separate local example service with its own configuration directory."
+              },
+              {
+                "label": "Reuse main OpenChamber",
+                "description": "Reuse the existing example profile and preserve its settings."
+              },
+              {
+                "label": "Replace example service later",
+                "description": "Validate on localhost before replacing the synthetic example service."
+              }
+            ]
+          }
+        ],
+        "waitForAnswer": true
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Instance: Reuse main OpenChamber"
+        }
+      ],
+      "details": {
+        "resolvedBy": "local_ui",
+        "questions": [
+          {
+            "id": "q1",
+            "header": "Instance",
+            "question": "Which deployment should the synthetic example use?",
+            "options": [
+              {
+                "label": "New example service (Recommended)",
+                "description": "Start a separate local example service with its own configuration directory."
+              },
+              {
+                "label": "Reuse main OpenChamber",
+                "description": "Reuse the existing example profile and preserve its settings."
+              },
+              {
+                "label": "Replace example service later",
+                "description": "Validate on localhost before replacing the synthetic example service."
+              }
+            ],
+            "multiSelect": false
+          }
+        ],
+        "answers": {
+          "Which deployment should the synthetic example use?": "Reuse main OpenChamber"
+        },
+        "unanswered": [],
+        "status": "answered"
+      },
+      "isError": false
+    },
+    {
+      "arguments": {
+        "questions": [
+          {
+            "question": "OpenCode's revert undoes both the conversation and the file changes since a message. OmO has session-tree branching but no file snapshots. What should revert do?",
+            "header": "Revert",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Conversation + files (Recommended)",
+                "description": "Connector snapshots the git working tree before each user turn (dangling `git stash create` commit refs, no branch/stash pollution) and on revert restores files + branches the OmO session back to before that message; unrevert restores the post-turn snapshot. Non-git dirs: conversation-only with a visible notice."
+              },
+              {
+                "label": "Conversation only",
+                "description": "Revert branches the OmO session back to before the message; files are left as they are, with a clear notice in the UI that file changes were not undone."
+              },
+              {
+                "label": "Keep disabled",
+                "description": "Revert/unrevert stay unavailable and return a clear error; use fork instead."
+              }
+            ]
+          }
+        ],
+        "waitForAnswer": true
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Revert: Conversation only"
+        }
+      ],
+      "details": {
+        "resolvedBy": "local_ui",
+        "questions": [
+          {
+            "id": "q1",
+            "header": "Revert",
+            "question": "OpenCode's revert undoes both the conversation and the file changes since a message. OmO has session-tree branching but no file snapshots. What should revert do?",
+            "options": [
+              {
+                "label": "Conversation + files (Recommended)",
+                "description": "Connector snapshots the git working tree before each user turn (dangling `git stash create` commit refs, no branch/stash pollution) and on revert restores files + branches the OmO session back to before that message; unrevert restores the post-turn snapshot. Non-git dirs: conversation-only with a visible notice."
+              },
+              {
+                "label": "Conversation only",
+                "description": "Revert branches the OmO session back to before the message; files are left as they are, with a clear notice in the UI that file changes were not undone."
+              },
+              {
+                "label": "Keep disabled",
+                "description": "Revert/unrevert stay unavailable and return a clear error; use fork instead."
+              }
+            ],
+            "multiSelect": false
+          }
+        ],
+        "answers": {
+          "OpenCode's revert undoes both the conversation and the file changes since a message. OmO has session-tree branching but no file snapshots. What should revert do?": "Conversation only"
+        },
+        "unanswered": [],
+        "status": "answered"
+      },
+      "isError": false
+    }
+  ]
+}

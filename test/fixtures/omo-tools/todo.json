@@ -1,0 +1,231 @@
+{
+  "tool": "todo",
+  "samples": [
+    {
+      "arguments": {
+        "op": "init",
+        "list": [
+          {
+            "phase": "Investigation",
+            "items": ["Locate example-ui install, config, and docs", "Determine how example-ui connects to OmO"]
+          },
+          {
+            "phase": "Configuration",
+            "items": ["Configure example-ui to use OmO provider", "Set up daemon autostart on example platform boot"]
+          },
+          {
+            "phase": "Verification",
+            "items": ["Verify example-ui daemon runs and reaches OmO", "Verify autostart mechanism is enabled"]
+          }
+        ]
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Ask: Your goal is to configure example-ui to connect to OmO properly and make sure the daemon starts at the start of example platform\nNow: Locate example-ui install, config, and docs (Investigation)\nNext: Determine how example-ui connects to OmO (Investigation)\n\nRemaining items (6):\n  - Locate example-ui install, config, and docs [in_progress] (Investigation)\n  - Determine how example-ui connects to OmO [pending] (Investigation)\n  - C…"
+        },
+        {
+          "type": "text",
+          "text": "<system-reminder>\nNew todo tasks were added, but this thread has no goal registered.\nRegister one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round.\nOtherwise continue without a goal.\n</system-reminder>"
+        }
+      ],
+      "details": {
+        "op": "init",
+        "phases": [
+          {
+            "name": "Investigation",
+            "tasks": [
+              {
+                "content": "Locate example-ui install, config, and docs",
+                "status": "in_progress"
+              },
+              {
+                "content": "Determine how example-ui connects to OmO",
+                "status": "pending"
+              }
+            ]
+          },
+          {
+            "name": "Configuration",
+            "tasks": [
+              {
+                "content": "Configure example-ui to use OmO provider",
+                "status": "pending"
+              },
+              {
+                "content": "Set up daemon autostart on example platform boot",
+                "status": "pending"
+              }
+            ]
+          },
+          {
+            "name": "Verification",
+            "tasks": [
+              {
+                "content": "Verify example-ui daemon runs and reaches OmO",
+                "status": "pending"
+              },
+              {
+                "content": "Verify autostart mechanism is enabled",
+                "status": "pending"
+              }
+            ]
+          }
+        ],
+        "storage": "session",
+        "ask": {
+          "entryId": "cf2bca9a",
+          "text": "Your goal is to configure example-ui to connect to OmO properly and make sure the daemon starts at the start of example platform",
+          "capturedAt": 1791394568081
+        }
+      },
+      "isError": false
+    },
+    {
+      "arguments": {
+        "op": "done",
+        "phase": "Investigation"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Ask: Your goal is to configure example-ui to connect to OmO properly and make sure the daemon starts at the start of example platform\nNow: Configure example-ui to use OmO provider (Configuration)\nNext: Set up daemon autostart on example platform boot (Configuration)\n\nRemaining items (4):\n  - Configure example-ui to use OmO provider [in_progress] (Configuration)\n  - Set up daemon autostart on example platform boot [pending] (Configuration)\n  - Verify …"
+        }
+      ],
+      "details": {
+        "op": "done",
+        "phases": [
+          {
+            "name": "Investigation",
+            "tasks": [
+              {
+                "content": "Locate example-ui install, config, and docs",
+                "status": "completed"
+              },
+              {
+                "content": "Determine how example-ui connects to OmO",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "name": "Configuration",
+            "tasks": [
+              {
+                "content": "Configure example-ui to use OmO provider",
+                "status": "in_progress"
+              },
+              {
+                "content": "Set up daemon autostart on example platform boot",
+                "status": "pending"
+              }
+            ]
+          },
+          {
+            "name": "Verification",
+            "tasks": [
+              {
+                "content": "Verify example-ui daemon runs and reaches OmO",
+                "status": "pending"
+              },
+              {
+                "content": "Verify autostart mechanism is enabled",
+                "status": "pending"
+              }
+            ]
+          }
+        ],
+        "storage": "session",
+        "ask": {
+          "entryId": "cf2bca9a",
+          "text": "Your goal is to configure example-ui to connect to OmO properly and make sure the daemon starts at the start of example platform",
+          "capturedAt": 1791394568081
+        },
+        "completedTasks": [
+          {
+            "phase": "Investigation",
+            "content": "Locate example-ui install, config, and docs"
+          },
+          {
+            "phase": "Investigation",
+            "content": "Determine how example-ui connects to OmO"
+          }
+        ]
+      },
+      "isError": false
+    },
+    {
+      "arguments": {
+        "op": "done",
+        "phase": "Configuration"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Ask: Your goal is to configure example-ui to connect to OmO properly and make sure the daemon starts at the start of example platform\nNow: Verify example-ui daemon runs and reaches OmO (Verification)\nNext: Verify autostart mechanism is enabled (Verification)\n\nRemaining items (2):\n  - Verify example-ui daemon runs and reaches OmO [in_progress] (Verification)\n  - Verify autostart mechanism is enabled [pending] (Verification)\nO…"
+        }
+      ],
+      "details": {
+        "op": "done",
+        "phases": [
+          {
+            "name": "Investigation",
+            "tasks": [
+              {
+                "content": "Locate example-ui install, config, and docs",
+                "status": "completed"
+              },
+              {
+                "content": "Determine how example-ui connects to OmO",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "name": "Configuration",
+            "tasks": [
+              {
+                "content": "Configure example-ui to use OmO provider",
+                "status": "completed"
+              },
+              {
+                "content": "Set up daemon autostart on example platform boot",
+                "status": "completed"
+              }
+            ]
+          },
+          {
+            "name": "Verification",
+            "tasks": [
+              {
+                "content": "Verify example-ui daemon runs and reaches OmO",
+                "status": "in_progress"
+              },
+              {
+                "content": "Verify autostart mechanism is enabled",
+                "status": "pending"
+              }
+            ]
+          }
+        ],
+        "storage": "session",
+        "ask": {
+          "entryId": "cf2bca9a",
+          "text": "Your goal is to configure example-ui to connect to OmO properly and make sure the daemon starts at the start of example platform",
+          "capturedAt": 1791394568081
+        },
+        "completedTasks": [
+          {
+            "phase": "Configuration",
+            "content": "Configure example-ui to use OmO provider"
+          },
+          {
+            "phase": "Configuration",
+            "content": "Set up daemon autostart on example platform boot"
+          }
+        ]
+      },
+      "isError": false
+    }
+  ]
+}
