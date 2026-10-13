@@ -127,6 +127,29 @@ async function createSession(url: string): Promise<string> {
 
 async function sendPrompt(url: string, sessionId: string, text: string): Promise<void> { assert.equal((await fetch(`${url}/session/${sessionId}/message`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parts: [{ type: "text", text }] }) })).status, 200); }
 
+for (const failure of ["rejected", "unsuccessful"]) test(`abort ${failure} returns an OpenCode error without cancelling children`, { timeout: 30_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionId = await createSession(url);
+  const pi = server["sessions"].get(sessionId)?.pi;
+  assert.ok(pi);
+  const original = pi.command.bind(pi);
+  t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
+    if (args[0].type !== "abort") return original(...args);
+    if (failure === "rejected") throw new Error("abort transport failed");
+    return { type: "response", id: "abort", command: "abort", success: false, error: "abort denied" };
+  });
+  const stop = t.mock.method(server["sessions"].subagents, "stopParent", () => {});
+  for (const path of [`/session/${sessionId}/abort`, `/api/session/${sessionId}/interrupt`]) {
+    const response = await fetch(`${url}${path}`, { method: "POST" });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      name: "UnknownError",
+      data: { message: failure === "rejected" ? "abort transport failed" : "abort denied" },
+    });
+    assert.equal(stop.mock.callCount(), 0);
+  }
+});
+
 test("command catalog maps OmO commands for v1 and v2", { timeout: 30_000 }, async (t) => {
   const { url, directory } = await startServer(t);
   const expected = [{ name: "fixture", description: "Fixture command", template: "" }];

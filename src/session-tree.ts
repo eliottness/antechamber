@@ -1,4 +1,4 @@
-import type { PiRpcClient } from "./pi-rpc.js";
+import { RPC_COMMAND_TIMEOUT_MS, type PiRpcClient } from "./pi-rpc.js";
 import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts } from "./types.js";
@@ -43,15 +43,29 @@ export function durableShellTree(tree: SessionTreeState): SessionTreeState {
 }
 
 export async function getEntries(pi: PiRpcClient, signal?: AbortSignal): Promise<Entries> {
-  const response = await pi.command<Entries>({ type: "get_entries" }, 60_000, signal);
+  const response = await pi.command<Entries>({ type: "get_entries" }, RPC_COMMAND_TIMEOUT_MS, signal);
   if (!response.success || !response.data) throw new SessionTreeError(response.error ?? "OmO returned no session entries");
   return response.data;
 }
 
 export function readSessionTree(piPath: string): Entries {
-  const entries: TreeEntry[] = readFileSync(piPath, "utf8").trim().split("\n")
-    .filter((line) => line.length !== 0).map((line) => JSON.parse(line) as TreeEntry)
-    .filter((entry) => entry.type !== "session" && typeof entry.id === "string");
+  const lines = readFileSync(piPath, "utf8").trimEnd().split("\n");
+  const entries: TreeEntry[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (line.trim().length === 0) continue;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (typeof value !== "object" || value === null || Array.isArray(value) ||
+          !("type" in value) || typeof value.type !== "string") throw new SyntaxError("Invalid session entry");
+      const entry = value as TreeEntry;
+      if (entry.type !== "session" && typeof entry.id === "string") entries.push(entry);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      if (index !== lines.length - 1) {
+        throw new SessionTreeError(`Malformed session line ${index + 1} in ${piPath}`, { cause: error });
+      }
+    }
+  }
   return { entries, leafId: entries.at(-1)?.id ?? null };
 }
 
@@ -181,6 +195,7 @@ export async function forkConversation(s: ManagedSession, pi: PiRpcClient, tree:
   if (!response.success) throw new SessionTreeError(response.error ?? "OmO fork failed");
   if (response.data?.cancelled) throw new SessionTreeError("Conversation fork was cancelled");
   // Fork switches the process; detach it before any new-identity events arrive.
+  s.unwirePi?.();
   s.pi = undefined;
   if (s.piPath && s.piSessionId) s.restored = { piPath: s.piPath, piSessionId: s.piSessionId };
   try {
@@ -224,7 +239,7 @@ export async function navigate(pi: PiRpcClient, targetId: string | null, signal?
     if (tree.leafId === null) return null;
     const root = tree.entries.find((entry) => entry.parentId === null && entry.message?.role === "user");
     if (!root) throw new SessionTreeError("Cannot locate the root conversation message");
-    const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>({ type: "navigate_tree", targetId: root.id }, 60_000, signal);
+    const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>({ type: "navigate_tree", targetId: root.id }, RPC_COMMAND_TIMEOUT_MS, signal);
     if (!response.success || !response.data || response.data.cancelled) {
       throw new SessionTreeError(response.error ?? "Root conversation navigation was cancelled");
     }
@@ -233,7 +248,7 @@ export async function navigate(pi: PiRpcClient, targetId: string | null, signal?
   // Resume selects the exact parent, even when it is a user/custom message.
   const response = await pi.command<{ cancelled?: boolean; leafId: string | null }>({
     type: "navigate_tree", targetId, intent: "resume",
-  }, 60_000, signal);
+  }, RPC_COMMAND_TIMEOUT_MS, signal);
   if (!response.success || !response.data) throw new SessionTreeError(response.error ?? "OmO returned no navigation result");
   if (response.data.cancelled) throw new SessionTreeError("Conversation navigation was cancelled");
   return response.data.leafId;

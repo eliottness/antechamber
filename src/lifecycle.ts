@@ -1,6 +1,8 @@
 import type { ManagedSession } from "./sessions.js";
 import { ENV_PREFIX, envSetting } from "./config.js";
 
+const MAX_REAPER_INTERVAL_MS = 15_000;
+
 /** Time and scheduling seams shared by the reaper and process shutdown tests. */
 export interface LifecycleClock {
   now(): number;
@@ -50,7 +52,7 @@ export class SessionLifecycle {
     this.idleTimeoutMs = options.idleTimeoutMs ?? positiveEnv("IDLE_TIMEOUT_MS", 900_000);
     this.maxLive = options.maxLive ?? positiveEnv("MAX_LIVE", 8);
     this.reaperIntervalMs = options.reaperIntervalMs ??
-      Math.min(15_000, Math.max(1_000, Math.floor(this.idleTimeoutMs / 4)));
+      Math.min(MAX_REAPER_INTERVAL_MS, Math.max(1_000, Math.floor(this.idleTimeoutMs / 4)));
     if (!Number.isSafeInteger(this.reaperIntervalMs) || this.reaperIntervalMs <= 0) {
       throw new Error("reaperIntervalMs must be a positive integer");
     }
@@ -102,8 +104,7 @@ export class SessionLifecycle {
       const candidate = [...this.sessions()].filter((s) => this.idle(s))
         .sort((a, b) => (this.used.get(a) ?? 0) - (this.used.get(b) ?? 0))[0];
       if (candidate === undefined) {
-        console.error(`[lifecycle] ${ENV_PREFIX}MAX_LIVE=${this.maxLive} exceeded: no disposable idle session`);
-        return;
+        throw new Error(`${ENV_PREFIX}MAX_LIVE=${this.maxLive} reached: no disposable idle session`);
       }
       await this.dormant(candidate);
     }
@@ -115,6 +116,7 @@ export class SessionLifecycle {
     if (s.piSessionId !== undefined && s.piPath !== undefined) {
       s.restored = { piSessionId: s.piSessionId, piPath: s.piPath };
     }
+    s.unwirePi?.();
     s.pi = undefined; // Old exit listeners must not mutate a revived session.
     const disposing = pi.dispose();
     this.disposing.add(disposing);

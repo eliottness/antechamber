@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { PiRpcClient, type PiRpcCommand, type PiRpcResponse } from "./pi-rpc.js";
+import { PiRpcClient, RPC_COMMAND_TIMEOUT_MS, type PiRpcCommand, type PiRpcResponse } from "./pi-rpc.js";
 import { stopSessionHosts } from "./session-hosts.js";
 import { setThinkingLevel, type ModelSelection, type ThinkingState } from "./thinking-levels.js";
 import { SessionLifecycle, type LifecycleOptions } from "./lifecycle.js";
@@ -24,7 +24,6 @@ import { ocIdFor, piSessionDir, piSessionsRootMtime, scanAllPiSessions, scanPiSe
 import type {
   OCAssistantMessage,
   OCEvent,
-  OCMessage,
   OCMessageWithParts,
   OCModelRef,
   OCPart,
@@ -38,6 +37,7 @@ import type {
 } from "./types.js";
 
 export const ADAPTER_VERSION = "0.1.0";
+const SESSION_SCAN_CACHE_TTL_MS = 5_000;
 
 function id(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
@@ -54,6 +54,8 @@ export interface ManagedSession extends ThinkingState {
   info: OCSession;
   /** undefined while dormant (restored from disk, no pi process spawned yet). */
   pi: PiRpcClient | undefined;
+  /** Remove only this session's subscriptions when its client is transferred. */
+  unwirePi?: () => void;
   /** undefined for dormant sessions until history is parsed from the JSONL. */
   messages: OCMessageWithParts[] | undefined;
   /** Adapter-authored notices/errors remain local; persisted shell cards can be bound. */
@@ -211,7 +213,8 @@ export class SessionManager {
   }
 
   private wirePi(s: ManagedSession, pi: PiRpcClient): void {
-    pi.onEvent((payload) => {
+    s.unwirePi?.();
+    const onEvent = (payload: Record<string, unknown>): void => {
       if (s.pi !== pi) return;
       this.lifecycle.touch(s);
       try {
@@ -219,14 +222,14 @@ export class SessionManager {
       } catch (error) {
         this.reportPersistenceError(s, error);
       }
-    });
-    pi.onExtensionUI((request) => {
+    };
+    const onExtensionUI = (request: Record<string, unknown>): void => {
       if (s.pi !== pi) return;
       this.lifecycle.touch(s);
       const extensionRequest = extensionUiRequestFrom(request);
       if (extensionRequest !== undefined) s.approvals?.handle(extensionRequest);
-    });
-    pi.onExit((code) => {
+    };
+    const onExit = (code: number | null): void => {
       if (s.pi !== pi) return;
       s.approvals?.finishTurn();
       this.subagents.stopParent(s.info.id);
@@ -239,7 +242,16 @@ export class SessionManager {
           error: { name: "UnknownError", data: { message: `pi process exited (code=${code})` } },
         },
       });
-    });
+    };
+    pi.onEvent(onEvent);
+    pi.onExtensionUI(onExtensionUI);
+    pi.onExit(onExit);
+    s.unwirePi = () => {
+      pi.off("event", onEvent);
+      pi.off("extension_ui_request", onExtensionUI);
+      pi.off("exit", onExit);
+      delete s.unwirePi;
+    };
   }
 
   /** pi writes `<ts>_<sessionId>.jsonl` at startup — poll briefly for it. */
@@ -384,7 +396,7 @@ export class SessionManager {
       if (disk.leafId !== tree.leafId || disk.entries.some((entry) => !known.has(entry.id))) {
         // Only idle user tree operations can replace a stale native runtime.
         const saved = s.tree.leafId;
-        const response = await pi.command<{ cancelled?: boolean }>({ type: "switch_session", sessionPath: s.piPath }, 60_000);
+        const response = await pi.command<{ cancelled?: boolean }>({ type: "switch_session", sessionPath: s.piPath }, RPC_COMMAND_TIMEOUT_MS);
         if (!response.success || response.data?.cancelled) throw new SessionTreeError(response.error ?? "Native tree refresh was cancelled");
         try {
           const leaf = saved === undefined ? undefined : await navigate(pi, saved);
@@ -549,13 +561,12 @@ export class SessionManager {
   async abort(sessionId: string): Promise<boolean> {
     const s = this.get(sessionId);
     if (!s) return false;
-    s.cancelShell?.();
-    if (s.pi === undefined) {
-      this.subagents.stopParent(sessionId);
-      return true; // dormant sessions are idle by definition
+    if (s.pi !== undefined) {
+      const response = await s.pi.command({ type: "abort" });
+      if (!response.success) throw new Error(response.error ?? "pi abort failed");
     }
+    s.cancelShell?.();
     s.approvals?.cancelAll();
-    await s.pi.command({ type: "abort" }).catch(() => undefined);
     this.subagents.stopParent(sessionId);
     return true;
   }
@@ -595,7 +606,7 @@ export class SessionManager {
     command: Omit<PiRpcCommand, "id">,
     signal?: AbortSignal,
     onDispatch?: () => void,
-  ): Promise<PiRpcResponse & { data?: T }> {
+  ): Promise<PiRpcResponse<T>> {
     const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
     signal?.throwIfAborted();
@@ -605,7 +616,7 @@ export class SessionManager {
       const pi = s.pi;
       if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
       this.lifecycle.touch(s);
-      const response = await pi.command<T>(command, 60_000, signal, onDispatch);
+      const response = await pi.command<T>(command, RPC_COMMAND_TIMEOUT_MS, signal, onDispatch);
       if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash")) await this.reloadMessagesLive(s, signal);
       return response;
     });
@@ -930,7 +941,7 @@ export class SessionManager {
       return; // no sessions recorded for this directory yet
     }
     const cached = this.scanCache.get(directory);
-    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < 5_000) return;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < SESSION_SCAN_CACHE_TTL_MS) return;
     this.scanCache.set(directory, { mtimeMs, at: Date.now() });
 
     const { paths, piIds } = this.knownSessionKeys();
@@ -945,7 +956,7 @@ export class SessionManager {
     const mtimeMs = piSessionsRootMtime();
     if (mtimeMs === undefined) return; // no sessions recorded yet
     const cached = this.scanAllCache;
-    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < 5_000) return;
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && Date.now() - cached.at < SESSION_SCAN_CACHE_TTL_MS) return;
     this.scanAllCache = { mtimeMs, at: Date.now() };
 
     const { paths, piIds } = this.knownSessionKeys();

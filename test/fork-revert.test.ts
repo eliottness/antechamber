@@ -35,6 +35,29 @@ async function turns(manager: SessionManager, dir: string) {
   return { s, id: session.id, tree: await getEntries(s.pi) };
 }
 
+test("repeated forks transfer listeners without retaining previous sessions", { timeout: 30_000 }, async (t) => {
+  const { manager, dir } = setup(t);
+  const { s } = await turns(manager, dir);
+  assert.ok(s.pi);
+  const pi = s.pi;
+  const events = ["event", "extension_ui_request", "exit"];
+  const counts = events.map((event) => pi.listenerCount(event));
+  assert.ok(counts[0] !== undefined);
+  const observer = () => {};
+  pi.onEvent(observer);
+  let current = s;
+  for (let index = 0; index < 4; index++) {
+    const forked = await manager.fork(current.info.id);
+    assert.equal(current.pi, undefined);
+    const child = manager.get(forked.id);
+    assert.ok(child?.pi);
+    assert.equal(child.pi, pi);
+    assert.deepEqual(events.map((event) => pi.listenerCount(event)), [counts[0] + 1, counts[1], counts[2]]);
+    assert.ok(pi.listeners("event").includes(observer), "external observers remain subscribed");
+    current = child;
+  }
+});
+
 async function cancelQueuedShell(t: TestContext, manager: SessionManager, session: ManagedSession, command: string) {
   const pi = session.pi;
   assert.ok(pi);

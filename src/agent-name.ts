@@ -11,12 +11,12 @@
  */
 
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { envSetting } from "./config.js";
+import { piAgentDir } from "./agent-dir.js";
 
-/** Strip `//` line comments that are not inside string literals (JSONC). */
-function stripLineComments(text: string): string {
+/** Strip JSONC comments without touching string literals or joining tokens. */
+function stripComments(text: string): string {
   let out = "";
   let inString = false;
   let escaped = false;
@@ -39,6 +39,17 @@ function stripLineComments(text: string): string {
       out += "\n";
       continue;
     }
+    if (c === "/" && text[i + 1] === "*") {
+      out += " ";
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        if (text[i] === "\n") out += "\n";
+        i++;
+      }
+      if (i === text.length) throw new SyntaxError("Unterminated JSONC block comment");
+      i++;
+      continue;
+    }
     out += c;
   }
   return out;
@@ -47,10 +58,11 @@ function stripLineComments(text: string): string {
 function detect(): string {
   const fromEnv = envSetting("AGENT");
   if (typeof fromEnv === "string" && fromEnv.trim() !== "") return fromEnv.trim();
+  const agentDir = piAgentDir();
 
   try {
-    const raw = readFileSync(join(homedir(), ".pi", "oh-my-pi.jsonc"), "utf8");
-    const cfg = JSON.parse(stripLineComments(raw)) as { orchestrator?: { agentName?: unknown } };
+    const raw = readFileSync(join(dirname(agentDir), "oh-my-pi.jsonc"), "utf8");
+    const cfg = JSON.parse(stripComments(raw)) as { orchestrator?: { agentName?: unknown } };
     const name = cfg.orchestrator?.agentName;
     if (typeof name === "string" && name.trim() !== "") return name.trim();
   } catch {
@@ -58,7 +70,7 @@ function detect(): string {
   }
 
   try {
-    const raw = readFileSync(join(homedir(), ".pi", "agent", "settings.json"), "utf8");
+    const raw = readFileSync(join(agentDir, "settings.json"), "utf8");
     const settings = JSON.parse(raw) as { packages?: unknown };
     if (Array.isArray(settings.packages) && settings.packages.some((p) => typeof p === "string" && p.includes("oh-my-pi"))) {
       return "oh-my-pi";

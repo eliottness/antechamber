@@ -109,15 +109,37 @@ function mapCommands(data: unknown): CommandDescriptor[] {
   });
 }
 
-export async function getCommands(directory: string): Promise<CommandDescriptor[]> {
-  const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
-  try {
-    const response = await pi.command<unknown>({ type: "get_commands" });
-    if (!response.success) throw new Error(response.error ?? "OmO get_commands failed");
-    return mapCommands(response.data);
-  } finally {
-    await pi.dispose();
+const COMMAND_CACHE_TTL_MS = 5_000;
+const commandCache = new Map<string, { expiresAt: number; promise: Promise<CommandDescriptor[]> }>();
+
+export function getCommands(directory: string): Promise<CommandDescriptor[]> {
+  const now = Date.now();
+  for (const [key, entry] of commandCache) {
+    if (entry.expiresAt <= now) commandCache.delete(key);
   }
+  const existing = commandCache.get(directory);
+  if (existing) return existing.promise;
+  const entry = {
+    expiresAt: Infinity,
+    promise: (async () => {
+      const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+      try {
+        const response = await pi.command<unknown>({ type: "get_commands" });
+        if (!response.success) throw new Error(response.error ?? "OmO get_commands failed");
+        return mapCommands(response.data);
+      } finally {
+        await pi.dispose();
+      }
+    })().then((commands) => {
+      entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
+      return commands;
+    }, (error: unknown) => {
+      commandCache.delete(directory);
+      throw error;
+    }),
+  };
+  commandCache.set(directory, entry);
+  return entry.promise;
 }
 
 export function parseSlashCommand(value: unknown): SlashCommandInput | undefined {

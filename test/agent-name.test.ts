@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -32,6 +32,38 @@ function exposedNames(env: NodeJS.ProcessEnv): string[] {
     env: { ...process.env, ...env },
     encoding: "utf8",
   })) as string[];
+}
+
+for (const variable of ["PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) {
+  test(`agent name reads overridden ${variable} and string-safe block comments`, (t) => {
+    const home = mkdtempSync(join(tmpdir(), "antechamber-agent-config-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const agentDir = join(home, "custom", "agent");
+    mkdirSync(agentDir, { recursive: true });
+    const name = 'https://example.test/*agent*/"quoted"';
+    writeFileSync(join(home, "custom", "oh-my-pi.jsonc"), `{
+      /* orchestrator settings
+         with "quotes" and // nested line markers */
+      "orchestrator": { "agentName": ${JSON.stringify(name)} /* trailing comment */ }
+      // final line comment
+    }`);
+    assert.deepEqual(exposedNames({
+      HOME: home, ANTECHAMBER_AGENT: "", OCPI_AGENT: "",
+      PI_CODING_AGENT_DIR: "", OMO_CODING_AGENT_DIR: "", [variable]: agentDir,
+    }), [name, "build"]);
+  });
+
+  test(`agent name detects packages under overridden ${variable}`, (t) => {
+    const home = mkdtempSync(join(tmpdir(), "antechamber-agent-packages-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const agentDir = join(home, "custom", "agent");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:oh-my-pi"] }));
+    assert.deepEqual(exposedNames({
+      HOME: home, ANTECHAMBER_AGENT: "", OCPI_AGENT: "",
+      PI_CODING_AGENT_DIR: "", OMO_CODING_AGENT_DIR: "", [variable]: agentDir,
+    }), ["oh-my-pi", "build"]);
+  });
 }
 
 test("resolved OmO agent is first and build remains a compatibility alias", () => {
@@ -127,7 +159,7 @@ test("build agent is hidden when OmO is resolved", () => {
       ANTECHAMBER_STATE_DIR: state,
       ANTECHAMBER_TEST_DIRECTORY: state,
     });
-    const v1Agents = result.v1Agents as Array<{ name: string; hidden: boolean }>;
+    const v1Agents = result.v1Agents as [{ name: string; hidden: boolean }, { name: string; hidden: boolean }];
     assert.equal(v1Agents.length, 2, "v1: should expose [OmO, build]");
     assert.equal(v1Agents[0].name, "OmO");
     assert.equal(v1Agents[0].hidden, false, "v1: OmO should be visible");
@@ -180,7 +212,7 @@ test("build agent is visible when no OmO name is resolved", () => {
       ANTECHAMBER_STATE_DIR: state,
       ANTECHAMBER_TEST_DIRECTORY: state,
     });
-    const v1Agents = result.v1Agents as Array<{ name: string; hidden: boolean }>;
+    const v1Agents = result.v1Agents as [{ name: string; hidden: boolean }];
     assert.equal(v1Agents.length, 1, "v1: should expose only [build]");
     assert.equal(v1Agents[0].name, "build");
     assert.equal(v1Agents[0].hidden, false, "v1: build should be visible when it's the default");

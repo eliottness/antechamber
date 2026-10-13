@@ -21,14 +21,18 @@ export interface PiRpcCommand {
   [key: string]: unknown;
 }
 
-export interface PiRpcResponse {
-  id?: string;
-  type: "response";
-  command: string;
-  success: boolean;
-  data?: unknown;
-  error?: string;
-}
+export const RPC_COMMAND_TIMEOUT_MS = 60_000;
+export const MAX_JSONL_FRAME_BYTES = 64 * 1024 * 1024;
+const PROCESS_KILL_GRACE_MS = 5_000;
+
+export type PiRpcResponse<T = unknown> = {
+  readonly id: string;
+  readonly type: "response";
+  readonly command: string;
+} & (
+  | { readonly success: true; readonly data?: T; readonly error?: never }
+  | { readonly success: false; readonly error?: string; readonly data?: never }
+);
 
 export interface PiRpcClientOptions {
   cwd: string;
@@ -47,6 +51,7 @@ interface PendingRequest {
 export class PiRpcClient extends EventEmitter {
   private proc: ChildProcess;
   private buffer = "";
+  private bufferBytes = 0;
   private decoder = new StringDecoder("utf8");
   private pending = new Map<string, PendingRequest>();
   private closed = false;
@@ -89,11 +94,15 @@ export class PiRpcClient extends EventEmitter {
     });
 
     this.proc.stdout!.on("data", (chunk: Buffer | string) => {
-      this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
+      const text = typeof chunk === "string" ? chunk : this.decoder.write(chunk);
+      this.buffer += text;
+      this.bufferBytes += Buffer.byteLength(text);
       this.drain();
     });
     this.proc.stdout!.on("end", () => {
-      this.buffer += this.decoder.end();
+      const text = this.decoder.end();
+      this.buffer += text;
+      this.bufferBytes += Buffer.byteLength(text);
       this.drain();
       this.failAll(new Error("pi process closed stdout"));
     });
@@ -105,7 +114,7 @@ export class PiRpcClient extends EventEmitter {
       this.closed = true;
       console.error(
         `[pi-rpc] process exited code=${code} signal=${signal}` +
-          (this.stderrTail ? `\n[pi-rpc] stderr tail:\n${this.stderrTail}` : ""),
+          (envSetting("DEBUG") && this.stderrTail ? `\n[pi-rpc] stderr tail:\n${this.stderrTail}` : ""),
       );
       this.failAll(new Error(`pi exited (code=${code} signal=${signal})`));
       this.emit("exit", code, signal);
@@ -115,33 +124,59 @@ export class PiRpcClient extends EventEmitter {
   private drain(): void {
     for (;;) {
       const idx = this.buffer.indexOf("\n");
-      if (idx === -1) return;
+      if (idx === -1) {
+        if (this.bufferBytes > MAX_JSONL_FRAME_BYTES) this.frameOverflow();
+        return;
+      }
       let line = this.buffer.slice(0, idx);
+      const frameBytes = Buffer.byteLength(line);
+      if (frameBytes > MAX_JSONL_FRAME_BYTES) {
+        this.frameOverflow();
+        return;
+      }
       this.buffer = this.buffer.slice(idx + 1);
+      this.bufferBytes -= frameBytes + 1;
       if (line.endsWith("\r")) line = line.slice(0, -1);
       if (line.length === 0) continue;
       this.handleLine(line);
     }
   }
 
+  private frameOverflow(): void {
+    const error = new Error(`pi JSONL frame exceeded ${MAX_JSONL_FRAME_BYTES} bytes`);
+    this.closed = true;
+    this.buffer = "";
+    this.bufferBytes = 0;
+    this.failAll(error);
+    this.proc.stdout?.destroy();
+    if (this.proc.pid === undefined) this.proc.kill("SIGKILL");
+    else process.kill(-this.proc.pid, "SIGKILL");
+  }
+
   private handleLine(line: string): void {
-    let msg: Record<string, unknown>;
+    let value: unknown;
     try {
-      msg = JSON.parse(line) as Record<string, unknown>;
+      value = JSON.parse(line);
     } catch {
       // Non-JSON noise on stdout; ignore but keep going.
       return;
     }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const msg = value as Record<string, unknown>;
 
     if (msg.type === "response") {
-      const res = msg as unknown as PiRpcResponse;
-      if (res.id !== undefined) {
-        const p = this.pending.get(res.id);
-        if (p) {
-          this.pending.delete(res.id);
-          p.resolve(res);
-        }
+      const pending = typeof msg.id === "string" ? this.pending.get(msg.id) : undefined;
+      if (typeof msg.id !== "string" || typeof msg.success !== "boolean" ||
+          typeof msg.command !== "string" || (msg.error !== undefined && typeof msg.error !== "string")) {
+        const error = new Error("pi returned a malformed RPC response");
+        console.error(`[pi-rpc] ${error.message}`);
+        pending?.reject(error);
+        return;
       }
+      const response: PiRpcResponse = msg.success
+        ? { type: "response", id: msg.id, command: msg.command, success: true, data: msg.data }
+        : { type: "response", id: msg.id, command: msg.command, success: false, ...(msg.error !== undefined ? { error: msg.error } : {}) };
+      pending?.resolve(response);
       return;
     }
 
@@ -177,7 +212,7 @@ export class PiRpcClient extends EventEmitter {
   }
 
   /** Send a command and wait for its correlated response. */
-  command<T = unknown>(cmd: Omit<PiRpcCommand, "id">, timeoutMs = 60_000, signal?: AbortSignal, onDispatch?: () => void): Promise<PiRpcResponse & { data?: T }> {
+  command<T = unknown>(cmd: Omit<PiRpcCommand, "id">, timeoutMs = RPC_COMMAND_TIMEOUT_MS, signal?: AbortSignal, onDispatch?: () => void): Promise<PiRpcResponse<T>> {
     if (this.closed) return Promise.reject(new Error("pi process is not running"));
     if (signal?.aborted) return Promise.reject(signal.reason);
     const id = randomUUID();
@@ -198,7 +233,8 @@ export class PiRpcClient extends EventEmitter {
       this.pending.set(id, {
         resolve: (r) => {
           cleanup();
-          resolve(r as PiRpcResponse & { data?: T });
+          // The envelope is checked at the transport boundary; callers own data schemas.
+          resolve(r.success ? { ...r, data: r.data as T } : r);
         },
         reject: (e) => {
           cleanup();
@@ -249,7 +285,7 @@ export class PiRpcClient extends EventEmitter {
         signalGroup("SIGKILL");
         if (exited) finish();
         else this.proc.once("exit", finish);
-      }, 5_000);
+      }, PROCESS_KILL_GRACE_MS);
       const alive = signalGroup("SIGTERM");
       this.proc.stdin?.end();
       if (!alive && exited) finish();
