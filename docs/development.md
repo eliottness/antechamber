@@ -7,9 +7,16 @@ One line per module in `src/`:
 | File | Responsibility |
 |---|---|
 | `cli.ts` | CLI entry point: arg parsing, `--version`, default vs. `serve` mode, startup/shutdown signal handling |
-| `server.ts` | HTTP + SSE server; v1 OpenCode route handling and request dispatch |
+| `server.ts` | `AdapterServer` composition root: service wiring, request dispatch, start/stop/url |
+| `http.ts` | Shared HTTP body reader, JSON/error responses, authentication, origin checks, and CORS |
+| `sse.ts` | SSE subscriber registry, v1/v2 framing, heartbeat, backpressure, and teardown |
+| `route-services.ts` | Shared route service contract, model parsing, async prompt admission, and compatibility version |
+| `routes-v1.ts` | OpenCode v1 HTTP routes, receiving session, catalog, body-reader, and event services |
+| `routes-v2.ts` | OpenCode v2 `/api/*` HTTP routes and route-specific response adapters |
 | `v2.ts` | OpenCode v2 API translation layer (session/message shapes, v2 event translator) |
-| `sessions.ts` | `SessionManager`: owns per-session state, history reconstruction, prompt/abort/fork/revert orchestration |
+| `sessions.ts` | `SessionManager`: registry, persistence, lifecycle, prompt/abort/fork/revert orchestration |
+| `session-history.ts` | Reconstructs OpenCode messages, parts, and pending inputs from pi JSONL history |
+| `pi-event-translation.ts` | Shared pi message/part helpers and live event translation with explicit manager services |
 | `session-store.ts` | Session registry persistence (directory mapping, archived state, message-ID mapping) |
 | `session-tree.ts` | Agent session-tree parsing (JSONL entries, fork/revert navigation) |
 | `session-hosts.ts` | Linux pidfd-based teardown of detached OmO task-host processes antechamber owns |
@@ -17,6 +24,7 @@ One line per module in `src/`:
 | `session-diff.ts` | `GET /session/:id/diff` unified-patch computation |
 | `pi-rpc.ts` | Low-level pi/OmO RPC subprocess management: spawn, JSONL framing, request/response correlation |
 | `approvals.ts` | Permission/question bridging through the agent's extension-UI protocol |
+| `question-forms.ts` | Converts pending native questions into v2 forms and parses form replies |
 | `subagents.ts` | Subagent/task card tracking and child-transcript resolution |
 | `todo-bridge.ts` | Translates the agent's todo tool calls into OpenCode todo state |
 | `thinking-levels.ts` | Maps OmO thinking levels onto OpenChamber's model/variant picker |
@@ -75,8 +83,8 @@ repository root or in `docs/`.
 
 1. Check `docs/api-surface.md` for the route/event you're implementing and
    whether OpenChamber actually calls it.
-2. Implement the v1 route in `server.ts` and, if OpenChamber's v2 API path
-   differs, the v2 translation in `v2.ts`.
+2. Implement the v1 route in `routes-v1.ts` and the v2 route in
+   `routes-v2.ts`; shared v2 message/session/event translation lives in `v2.ts`.
 3. Add a unit test under `test/` using the existing RPC/HTTP fixtures rather
    than a real agent process.
 4. If you're adding or renaming behavior tied to an environment variable,

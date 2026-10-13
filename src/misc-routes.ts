@@ -3,6 +3,8 @@ import { opendir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { envSetting } from "./config.js";
+import { errorBody } from "./http.js";
+export { errorBody } from "./http.js";
 
 let loggingDisabled = false;
 const MAX_DIRECTORY_ENTRIES = 1000;
@@ -28,10 +30,6 @@ export function debugLog(line: string): void {
 interface RouteResult {
   status: number;
   body: unknown;
-}
-
-export function errorBody(name: string, message: string): { name: string; data: { message: string } } {
-  return { name, data: { message } };
 }
 
 function unsupported(message: string): RouteResult {
