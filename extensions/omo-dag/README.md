@@ -45,19 +45,29 @@ installed.
 
 ## Install
 
-The extension is built by antechamber's normal build:
+In OpenChamber, open **Settings → Extensions → Add** and pick the source that
+fits where OpenChamber runs:
 
-```bash
-npm ci
-npm run build   # also writes extensions/omo-dag/panel/main.js and service/main.js
-```
+- **Folder**, when OpenChamber runs on the machine where antechamber is
+  installed. `antechamber setup` prints the path to paste:
+  - npm install: `$(npm root -g)/antechamber/extensions/omo-dag`. The
+    published package ships the built extension, and `npm update -g` updates
+    the folder in place.
+  - source checkout: `<checkout>/extensions/omo-dag`, after `npm run build`
+    (which also writes `panel/main.js` and `service/main.js`).
+- **URL**, from anywhere, including a remote OpenChamber you only reach in a
+  browser:
+  `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`.
+  Every GitHub release attaches this archive. Append a version instead of
+  `latest` (`.../releases/download/vX.Y.Z/antechamber-omo-graph.zip`) to pin
+  one.
+- **ZIP file**, for offline hosts: the same archive, downloaded, or built with
+  `npm run build && npm run pack:extension -- antechamber-omo-graph.zip`.
 
-The published npm package ships the built extension, so with a global
-install the folder is `$(npm root -g)/antechamber/extensions/omo-dag`.
+Don't use the repository's Git URL. OpenChamber clones the repository root,
+which is antechamber itself, and rejects it as `invalid-manifest`.
 
-In OpenChamber, go to **Settings → Extensions → Add → Folder**, pick that
-folder by its absolute path, and approve the request. The extension asks for
-two things:
+Approve the request. The extension asks for two things:
 
 - **sessions**, to follow the open session and open sub-agent sessions;
 - **a local service**, to read the OmO task store.

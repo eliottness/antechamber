@@ -41,7 +41,10 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Installable from OpenChamber by URL: .../releases/latest/download/antechamber-omo-graph.zip
+      - name: Package the OmO Graph extension
+        run: npm run pack:extension -- "$RUNNER_TEMP/antechamber-omo-graph.zip"
       - name: Create GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/antechamber-omo-graph.zip" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}

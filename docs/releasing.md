@@ -53,6 +53,12 @@ git tag vX.Y.Z
 git push origin main vX.Y.Z
 ```
 
+The release workflow also runs `npm run pack:extension` and attaches
+`antechamber-omo-graph.zip` (the built OmO Graph extension) to the GitHub
+release. Users install it by URL from
+`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`,
+so keep that asset name stable.
+
 Follow [Semantic Versioning](https://semver.org/). While the project is
 `0.x`, breaking changes (renamed settings, changed defaults) bump the minor
 version and are called out under **Changed** in the CHANGELOG.
