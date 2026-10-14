@@ -7,6 +7,20 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OmO Graph, an OpenChamber extension in `extensions/omo-dag`. It draws the
+  OmO sub-agents behind the open session as a live graph:
+  - cards are grouped in waves and show each sub-agent's state, duration,
+    agent and model;
+  - hovering a card highlights its input and output edges;
+  - clicking a card opens the sub-agent's session.
+
+  The extension is built by `npm run build`, is covered by `npm test`,
+  typecheck and lint, and ships in the npm package. It reads OmO's task store
+  and the session registry read-only, through an OpenChamber-managed local
+  service.
+
 ### Fixed
 
 - Slash commands sent through `POST /session/:id/command` (for example

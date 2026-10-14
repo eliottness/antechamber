@@ -44,6 +44,16 @@ One line per module in `src/`:
 | `config.ts` | Environment variable reading (`ANTECHAMBER_`/`OCPI_` prefix fallback), state directory resolution |
 | `types.ts` | Shared OpenCode v1 type definitions |
 
+`extensions/omo-dag/` holds the OmO Graph OpenChamber extension: a sandboxed
+panel (`src/panel.ts`, `panel/index.html`) and a read-only local service
+(`src/service.ts`) that builds the sub-agent graph from OmO's task store and
+the session registry. It has its own `tsconfig.json` (DOM and Node), because
+the panel runs in a browser iframe. It shares the root toolchain:
+`npm run build` bundles it with esbuild (`npm run build:extension` alone), and
+`npm run typecheck`, `npm run lint` and `npm test` cover it. The bundles
+(`panel/main.js`, `service/main.js`) are gitignored but listed in the
+package's `files`. See [extensions/omo-dag/README.md](../extensions/omo-dag/README.md).
+
 ## Testing
 
 ```bash
@@ -52,8 +62,11 @@ npm test
 npm run build
 ```
 
-`npm test` runs `test/*.test.ts` under Node's built-in test runner
-(`tsx --test`). These tests are hermetic: they don't require a real `pi` or
+`npm test` runs `test/*.test.ts` and `extensions/*/test/*.test.ts` under
+Node's built-in test runner (`tsx --test`). The extension's
+`connector-parity.test.ts` imports `ocIdFor` and `SessionRegistryEntry` from
+`src/session-store.ts`. Changing session ids or registry fields therefore
+means updating the extension in the same change. These tests are hermetic: they don't require a real `pi` or
 `omo` binary on PATH, and use fixtures under `test/fixtures/` (fake RPC
 processes, fake OmO endpoints, recorded tool-call payloads) to exercise the
 adapter logic in isolation.

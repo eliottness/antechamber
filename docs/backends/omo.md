@@ -63,6 +63,18 @@ children. antechamber resolves both:
 antechamber tails the transcript while the task runs and archives it under
 `$ANTECHAMBER_STATE_DIR/children/<task_id>.jsonl` once the task completes.
 
+## Seeing the sub-agent graph
+
+OmO records every task it launches under
+`<agent dir>/projects/*/senpi-task/tasks/`, and antechamber exposes each one as
+an OpenChamber sub-agent session. The bundled
+[OmO Graph extension](../../extensions/omo-dag/README.md) reads both and draws
+the run behind the open session as a live graph. Its local service starts with
+OpenChamber's minimal environment and so does not see the agent-directory
+variables (`OMO_CODING_AGENT_DIR`, `SENPI_CODING_AGENT_DIR`,
+`PI_CODING_AGENT_DIR`) or `ANTECHAMBER_STATE_DIR`. If you set any of them,
+enter the same paths in the panel's Data paths popover.
+
 ## Git diffs and `diff.external`
 
 antechamber's own `GET /session/:id/diff` endpoint always produces a plain

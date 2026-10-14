@@ -32,6 +32,10 @@ jobs:
           const [pack] = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const paths = pack.files.map(({ path }) => path);
           assert.ok(paths.includes("dist/cli.js"), "package must contain dist/cli.js");
+          for (const file of ["package.json", "icon.svg", "panel/index.html", "panel/main.js", "service/main.js"])
+            assert.ok(paths.includes(`extensions/omo-dag/${file}`), `package must contain the built OmO Graph extension (${file})`);
+          assert.ok(!paths.some((path) => /^extensions\/[^/]+\/(src|test|scripts)\//.test(path)),
+            "package must not contain extension sources or tests");
           assert.ok(!paths.some((path) => /^(test|contrib)\//.test(path)),
             "package must not contain test/ or contrib/");
           NODE

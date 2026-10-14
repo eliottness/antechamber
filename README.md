@@ -37,6 +37,9 @@ an **external OpenCode server** and sessions run on OmO.
   ownership tracking for detached task-host processes it spawned.
 - Idle reaping and a live-process cap (`ANTECHAMBER_MAX_LIVE`) so long-running
   deployments don't accumulate agent processes.
+- An optional OpenChamber extension, **OmO Graph**, that draws the OmO
+  sub-agents behind the open session as a live, clickable graph (see
+  [OpenChamber extension](#openchamber-extension-omo-graph)).
 
 ## Supported backends
 
@@ -175,6 +178,23 @@ node dist/cli.js setup --profile ~/.config/antechamber-openchamber \
 The source launcher requires the built `dist/cli.js`. Pull updates, run
 `npm ci && npm run build`, and restart OpenChamber.
 
+## OpenChamber extension: OmO Graph
+
+`extensions/omo-dag` is an OpenChamber extension that ships with antechamber
+and is built by `npm run build`. With the default OmO backend, it adds a rail panel
+showing the open session's orchestrator and every sub-agent OmO launched,
+grouped in waves:
+
+- each card shows the sub-agent's live state, duration, agent and model;
+- hovering a card highlights its input and output edges;
+- clicking a card opens that sub-agent's session.
+
+It reads OmO's task store and antechamber's session registry read-only,
+through a small local service that OpenChamber starts. To install it, add the
+built folder in **Settings → Extensions → Add → Folder** (for an npm install,
+`$(npm root -g)/antechamber/extensions/omo-dag`) and approve it. Details:
+[extensions/omo-dag/README.md](extensions/omo-dag/README.md).
+
 ## Configuration
 
 All settings are environment variables prefixed `ANTECHAMBER_`. The
@@ -254,6 +274,8 @@ CHANGELOG. See [docs/releasing.md](docs/releasing.md).
 - [docs/development.md](docs/development.md) - source layout, testing, smoke scripts
 - [docs/backends/omo.md](docs/backends/omo.md) - OmO backend details (agent name, task hosts, transcripts)
 - [docs/releasing.md](docs/releasing.md) - versioning, tag-driven npm and GitHub releases
+
+- [extensions/omo-dag/README.md](extensions/omo-dag/README.md) - the OmO Graph OpenChamber extension ([design](extensions/omo-dag/docs/DESIGN.md))
 
 ## Credits
 
