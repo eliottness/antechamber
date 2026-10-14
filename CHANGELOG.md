@@ -7,31 +7,6 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- OmO Graph, an OpenChamber extension in `extensions/omo-dag`. It draws the
-  OmO sub-agents behind the open session as a live graph:
-  - cards are grouped in waves and show each sub-agent's state, duration,
-    agent and model;
-  - hovering a card highlights its input and output edges;
-  - clicking a card opens the sub-agent's session.
-
-  The extension is built by `npm run build`, is covered by `npm test`,
-  typecheck and lint, and ships in the npm package. It reads OmO's task store
-  and the session registry read-only, through an OpenChamber-managed local
-  service.
-- `antechamber setup` ends by printing the bundled OmO Graph extension folder
-  to add in OpenChamber (Settings → Extensions → Add → Folder), and every
-  GitHub release attaches `antechamber-omo-graph.zip`, installable from
-  OpenChamber by URL
-  (`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`).
-
-### Fixed
-
-- Slash commands sent through `POST /session/:id/command` (for example
-  `/skill:<name> ...`) now reuse OpenChamber's client `messageID`, so the user
-  message no longer appears twice in the chat.
-
 ## [0.1.0] - 2026-10-14
 
 First standalone release under the `antechamber` name.
@@ -72,6 +47,22 @@ rename affects:
 
 ### Added
 
+- OmO Graph, an OpenChamber extension in `extensions/omo-dag`. It draws the
+  OmO sub-agents behind the open session as a live graph:
+  - cards are grouped in waves and show each sub-agent's state, duration,
+    agent and model;
+  - hovering a card highlights its input and output edges;
+  - clicking a card opens the sub-agent's session.
+
+  The extension is built by `npm run build`, is covered by `npm test`,
+  typecheck and lint, and ships in the npm package. It reads OmO's task store
+  and the session registry read-only, through an OpenChamber-managed local
+  service.
+- `antechamber setup` ends by printing the bundled OmO Graph extension folder
+  to add in OpenChamber (Settings → Extensions → Add → Folder), and every
+  GitHub release attaches `antechamber-omo-graph.zip`, installable from
+  OpenChamber by URL
+  (`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`).
 - npm-first installation with `antechamber setup`: settings discovery,
   isolated profiles, executable selection, timestamped backups, idempotency,
   dry-run plans, and optional systemd user drop-ins with explicit restart.
@@ -108,6 +99,9 @@ rename affects:
 
 ### Fixed
 
+- Slash commands sent through `POST /session/:id/command` (for example
+  `/skill:<name> ...`) now reuse OpenChamber's client `messageID`, so the user
+  message no longer appears twice in the chat.
 - With a server password configured, requests carrying a non-loopback
   `Origin` (forwarded by OpenChamber's proxy for LAN browsers and the desktop
   app) are no longer rejected with 403; the password is the boundary.
