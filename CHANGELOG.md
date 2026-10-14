@@ -29,7 +29,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
   the adapter passes the command's arguments as the native `sessionTitlePrompt`.
 - Sub-agent sessions spawned without a `task` tool call (for example `agent()`
   inside an `eval` cell) now open from their OmO task record instead of
-  returning `session not found`, so their OmO Graph cards are clickable.
+  returning `session not found`, and appear in the session list as soon as
+  they exist or complete, so their OmO Graph cards are clickable.
 
 ## [0.1.0] - 2026-10-14
 

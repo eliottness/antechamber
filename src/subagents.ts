@@ -177,8 +177,8 @@ function taskStores(): Set<string> {
   ]);
 }
 
-/** Reverse lookup of a child session id, for tasks whose spawn never surfaced as a `task` tool call. */
-export function findTaskBySession(sessionId: string): { path: string; data: Record<string, unknown> } | undefined {
+function taskFiles(): { id: string; path: string }[] {
+  const files: { id: string; path: string }[] = [];
   for (const store of taskStores()) {
     let names: string[];
     try {
@@ -190,11 +190,23 @@ export function findTaskBySession(sessionId: string): { path: string; data: Reco
     }
     for (const name of names) {
       const id = name.endsWith(".json") ? name.slice(0, -5) : "";
-      if (!taskId(id) || ocIdFor(id) !== sessionId) continue;
-      const path = join(store, "tasks", name);
-      const data = jsonObject(path);
-      if (data?.task_id === id && typeof data.parent_session_id === "string") return { path, data };
+      if (taskId(id)) files.push({ id, path: join(store, "tasks", name) });
     }
+  }
+  return files;
+}
+
+function childRecord(id: string, path: string): Record<string, unknown> | undefined {
+  const data = jsonObject(path);
+  return data?.task_id === id && typeof data.parent_session_id === "string" ? data : undefined;
+}
+
+/** Reverse lookup of a child session id, for tasks whose spawn never surfaced as a `task` tool call. */
+export function findTaskBySession(sessionId: string): { path: string; data: Record<string, unknown> } | undefined {
+  for (const { id, path } of taskFiles()) {
+    if (ocIdFor(id) !== sessionId) continue;
+    const data = childRecord(id, path);
+    if (data) return { path, data };
   }
   return undefined;
 }
@@ -273,6 +285,8 @@ export class SubagentBridge {
   private readonly children = new Map<string, Child>();
   private readonly calls = new Map<string, OCToolPart[]>();
   private readonly removed = new Set<string>();
+  /** Parent pi session of each task record already read; a record's parent never changes. */
+  private readonly taskParents = new Map<string, string>();
 
   constructor(
     private readonly store: SessionStore,
@@ -316,7 +330,10 @@ export class SubagentBridge {
     const message = record(event.message) ? event.message : event;
     if (message.customType !== "omo-senpi:wake") return;
     for (const data of taskCompletions(message.details)) {
-      const child = this.children.get(ocIdFor(String(data.task_id)));
+      const id = ocIdFor(String(data.task_id));
+      // A wake for a task with no card (spawned from `eval`) is the first live sign of it.
+      if (!this.children.has(id) && !this.removed.has(id) && !this.store.get(id)) this.adopt(id);
+      const child = this.children.get(id);
       if (child?.session.info.parentID !== parent.info.id) continue;
       child.task.details = { ...child.task.details, ...data };
       if (terminal(data.status)) child.task.terminalAt = Date.now();
@@ -414,8 +431,10 @@ export class SubagentBridge {
    * Tasks spawned outside a `task` tool call (e.g. `agent()` inside an `eval`
    * cell) never produce a card, so their session is built from the task record.
    */
-  private adopt(id: string): ManagedSession | undefined {
-    const found = findTaskBySession(id);
+  private adopt(
+    id: string,
+    found: { path: string; data: Record<string, unknown> } | undefined = findTaskBySession(id),
+  ): ManagedSession | undefined {
     if (!found) return undefined;
     const parentPi = String(found.data.parent_session_id);
     const parentID = ocIdFor(parentPi);
@@ -466,6 +485,20 @@ export class SubagentBridge {
 
   restoreAll(): void {
     for (const id of this.store.childIds()) this.restore(id);
+    for (const { id, path } of taskFiles()) {
+      const sessionId = ocIdFor(id);
+      if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
+      let parentPi = this.taskParents.get(id);
+      if (parentPi === undefined) {
+        const parent = childRecord(id, path)?.parent_session_id;
+        if (typeof parent !== "string") continue;
+        this.taskParents.set(id, (parentPi = parent));
+      }
+      const parentID = ocIdFor(parentPi);
+      if (!this.sessions.has(parentID) && !this.store.get(parentID)) continue;
+      const data = childRecord(id, path);
+      if (data) this.adopt(sessionId, { path, data });
+    }
   }
 
   owns(id: string): boolean {

@@ -595,6 +595,24 @@ test("task spawned without a task tool call resolves from its record under the p
   assert.equal(new SessionStore(state).get(childID)?.task?.id, "st_eval");
 });
 
+test("task spawned without a task tool call is listed and announced before any direct lookup", (t) => {
+  const { manager, parent, store, directory, events } = setup(t);
+  liveRecord(store, "st_listed", "completed", "listed child");
+  const listedID = ocIdFor("st_listed");
+  assert.equal(manager.list(directory).find((session) => session.id === listedID)?.parentID, parent.info.id);
+  liveRecord(store, "st_woken", "completed", "woken child");
+  const wokenID = ocIdFor("st_woken");
+  manager["onPiEvent"](parent, {
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "omo-senpi:wake",
+      details: [{ customType: "senpi-task.completion", details: [{ task_id: "st_woken", status: "completed" }] }],
+    },
+  });
+  assert.ok(events.some((event) => event.type === "session.created" && event.properties.info.id === wokenID));
+});
+
 test("dormant parent rebuilds batch children and applies trailing wake results", (t) => {
   const { manager, parent, parentPath } = setup(t);
   const batch = fixture.samples[1];
