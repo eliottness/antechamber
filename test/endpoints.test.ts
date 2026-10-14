@@ -540,6 +540,12 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
     signal: AbortSignal.timeout(10_000),
   });
   await pending;
+  // R-069: the idle check and the busy transition happen in one tick, so a second shell is rejected.
+  const second = await fetch(`${url}/session/${sessionId}/shell`, {
+    method: "POST",
+    body: JSON.stringify({ command: "echo SECOND" }),
+  });
+  assert.equal(second.status, 409);
   const started = performance.now();
   const aborts = await Promise.all([1, 2].map(() => fetch(`${url}/session/${sessionId}/abort`, { method: "POST" })));
   for (const response of aborts) {
@@ -551,6 +557,7 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
   assert.equal(abortBashDispatched, true);
   assert.ok(performance.now() - started < 10_000);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
+  assert.doesNotMatch(JSON.stringify(server["sessions"].messages(sessionId)), /echo SECOND/);
   const resumed = await fetch(`${url}/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "echo RESUMED" }),
