@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 antechamber is an OpenCode-compatible HTTP/SSE server, so OpenChamber can drive the pi coding agent (default backend: OmO) over JSONL stdio RPC (`<agent> --mode rpc`), with one agent process per session.
-Built with TypeScript 7, Node >=22 and ESM/NodeNext. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome and `@opencode-ai/sdk` (types only).
+Built with TypeScript 7, Node >=22 and ESM/NodeNext. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` for the bundled extension.
 
 ```
 OpenChamber --HTTP/SSE (OpenCode v1 + v2 /api subset)--> antechamber --JSONL stdio--> omo|pi --mode rpc
@@ -19,9 +19,10 @@ antechamber/
 ├── test/      # hermetic node:test suite + fake-agent fixtures -> test/AGENTS.md
 ├── contrib/   # live-agent smokes/probes, cost tokens, not in CI -> contrib/AGENTS.md
 ├── bin/       # opencode-antechamber: OpenChamber launcher shim (serve, --version only); opencode-pi = deprecated alias
+├── extensions/omo-dag/  # OmO Graph OpenChamber extension: sandboxed panel + read-only service -> its README.md
 └── docs/      # architecture, api-surface (route contract), configuration (env), backends/omo.md, releasing
 ```
-Published package = `dist/` + `bin/` shims; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
+Published package = `dist/` + `bin/` shims + the built OmO Graph extension; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
@@ -55,7 +56,7 @@ Centrality measured by counting relative imports across src/test/contrib.
   Do not "clean up" code toward those rules.
 - tsconfig is strict with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`, so build optional props conditionally (`...(x ? {k: x} : {})`).
 - Relative imports carry `.js` suffixes (NodeNext). Filenames are kebab-case.
-- The build compiles only `src/`. `npm run typecheck` uses `tsconfig.check.json` and covers `src`, `test` and `contrib`.
+- `tsc` compiles only `src/`; `npm run build` then bundles `extensions/omo-dag` with esbuild (own tsconfig, DOM + Node). `npm run typecheck` uses `tsconfig.check.json` and covers `src`, `test` and `contrib`.
 - Env vars use the `ANTECHAMBER_` prefix; `OCPI_` is a deprecated fallback. The agent dir is resolved from `OMO_CODING_AGENT_DIR`, then `SENPI_`, then `PI_` (no prefix).
   Auth uses OpenCode's `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME`.
 - Commits follow Conventional Commits, scoped by area (`fix(session): ...`, `feat(tools): ...`). Add user-visible changes to `[Unreleased]` in `CHANGELOG.md`.
@@ -67,7 +68,7 @@ Centrality measured by counting relative imports across src/test/contrib.
 - Fabricating success for unsupported OpenCode capabilities (share, MCP, OAuth...). Return 400.
 - Killing processes by command-line pattern, or touching OmO's shared LSP daemon or other clients' task hosts.
 - Personal paths, hostnames or credentials in code, fixtures or docs (this is a PR checklist item).
-- Adding runtime dependencies. There are none today, and the published package is `dist/` only.
+- Adding runtime dependencies. There are none today. The published package is `dist/`, the `bin/` shims and the built extension (`files` in package.json).
 
 ## UNIQUE STYLES
 - Protocol behavior claims in `docs/architecture.md` cite installed OmO bundle files and dated probes. Keep that evidence style when documenting new RPC semantics.
@@ -85,7 +86,7 @@ npx tsx --test --import ./test/setup.ts test/fork-revert.test.ts   # one file; k
                                          # (npm test -- --test-name-pattern does NOT filter)
 ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke   # live, costs tokens
 ```
-CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and no `test/` or `contrib/`.
+CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extension, and no `test/`, `contrib/` or extension sources/tests.
 
 ## NOTES
 - `bin/opencode-antechamber` runs `dist/cli.js`, so a fresh checkout needs `npm run build` before OpenChamber can launch it.

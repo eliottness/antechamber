@@ -187,3 +187,16 @@ test("PATH launcher must belong to this installation otherwise setup uses the pa
     ),
   );
 });
+
+test("setup points at the bundled OmO Graph extension once it is built", (t) => {
+  const { home, ctx, options } = fixture(t);
+  const extension = join(home, "extensions", "omo-dag");
+  const hint = (lines: string[]) => lines.filter((line) => line.includes("OmO Graph extension"));
+  assert.deepEqual(hint(setup({ ...options, dryRun: true }, ctx)), []);
+
+  fs.mkdirSync(join(extension, "panel"), { recursive: true });
+  fs.mkdirSync(join(extension, "service"));
+  for (const file of ["package.json", "panel/main.js", "service/main.js"]) fs.writeFileSync(join(extension, file), "");
+  const [line] = hint(setup({ ...options, dryRun: true }, ctx));
+  assert.ok(line?.endsWith(`Folder: ${extension}`));
+});

@@ -20,6 +20,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
   typecheck and lint, and ships in the npm package. It reads OmO's task store
   and the session registry read-only, through an OpenChamber-managed local
   service.
+- `antechamber setup` ends by printing the bundled OmO Graph extension folder
+  to add in OpenChamber (Settings → Extensions → Add → Folder), and every
+  GitHub release attaches `antechamber-omo-graph.zip`, installable from
+  OpenChamber by URL
+  (`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`).
 
 ### Fixed
 

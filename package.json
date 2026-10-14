@@ -45,6 +45,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node --input-type=module -e \"import { chmodSync } from 'node:fs'; chmodSync('dist/cli.js', 0o755)\" && npm run build:extension",
     "build:extension": "tsx extensions/omo-dag/scripts/build.ts",
+    "pack:extension": "tsx extensions/omo-dag/scripts/pack.ts",
     "prepack": "npm run build",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p extensions/omo-dag/tsconfig.json",

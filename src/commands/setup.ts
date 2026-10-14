@@ -25,6 +25,15 @@ function systemdValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%");
 }
 
+/** The bundled OmO Graph extension folder, when this installation has its built files. */
+export function omoGraphExtensionDir(ctx: CommandContext): string | undefined {
+  const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "omo-dag");
+  const built = ["package.json", "panel/main.js", "service/main.js"].every((file) =>
+    ctx.fs.existsSync(join(dir, file)),
+  );
+  return built ? dir : undefined;
+}
+
 /** Plan all inputs before applying changes; dependencies are injected for hermetic tests. */
 export function setup(options: SetupOptions, ctx: CommandContext = createContext()): string[] {
   const lines: string[] = [];
@@ -137,6 +146,12 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
   }
   if (options.profile !== undefined && options.settings === undefined) {
     report(`OPENCHAMBER_DATA_DIR=${shellQuote(resolve(ctx.cwd, options.profile))} openchamber serve`);
+  }
+  const extension = omoGraphExtensionDir(ctx);
+  if (extension !== undefined) {
+    report(
+      `Optional OmO Graph extension: in OpenChamber, Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${extension}`,
+    );
   }
   return lines;
 }

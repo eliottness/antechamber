@@ -84,6 +84,12 @@ The first npm publication (0.1.0) is part of the
 and backs up an existing settings file before changing it. Restart OpenChamber
 after setup. Preview changes with `antechamber setup --dry-run`.
 
+Optionally, add the bundled [OmO Graph extension](#openchamber-extension-omo-graph):
+`setup` ends by printing its folder
+(`$(npm root -g)/antechamber/extensions/omo-dag`). In OpenChamber, open
+**Settings → Extensions → Add → Folder**, paste that path, and approve the two
+permissions it asks for. The folder is updated in place by `npm update -g`.
+
 For an isolated OpenChamber instance, leaving your main settings untouched:
 
 ```bash
@@ -178,6 +184,9 @@ node dist/cli.js setup --profile ~/.config/antechamber-openchamber \
 The source launcher requires the built `dist/cli.js`. Pull updates, run
 `npm ci && npm run build`, and restart OpenChamber.
 
+`npm run build` also builds the OmO Graph extension; `setup` prints its folder
+(`$PWD/extensions/omo-dag`) to add in **Settings → Extensions → Add → Folder**.
+
 ## OpenChamber extension: OmO Graph
 
 `extensions/omo-dag` is an OpenChamber extension that ships with antechamber
@@ -190,9 +199,21 @@ grouped in waves:
 - clicking a card opens that sub-agent's session.
 
 It reads OmO's task store and antechamber's session registry read-only,
-through a small local service that OpenChamber starts. To install it, add the
-built folder in **Settings → Extensions → Add → Folder** (for an npm install,
-`$(npm root -g)/antechamber/extensions/omo-dag`) and approve it. Details:
+through a small local service that OpenChamber starts.
+
+Install it from OpenChamber's **Settings → Extensions → Add**, using whichever
+source fits where OpenChamber runs:
+
+| OpenChamber runs | Add | Value |
+|---|---|---|
+| on the machine where antechamber is installed | **Folder** | the path `antechamber setup` prints: `$(npm root -g)/antechamber/extensions/omo-dag` for npm installs, `<checkout>/extensions/omo-dag` after `npm run build` from source |
+| anywhere (remote host, browser-only access) | **URL** | `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip` (attached to every GitHub release) |
+| anywhere, offline | **ZIP file** | that same `antechamber-omo-graph.zip`, downloaded, or built with `npm run build && npm run pack:extension -- antechamber-omo-graph.zip` |
+
+Then approve its two permissions (follow sessions, run the local service) and
+open it from the rail icon. Don't install it from the repository's Git URL:
+OpenChamber clones the repository root, which is antechamber itself, not the
+extension, and refuses it as an invalid manifest. Details:
 [extensions/omo-dag/README.md](extensions/omo-dag/README.md).
 
 ## Configuration
