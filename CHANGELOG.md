@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-14
+
 ### Added
 
 - feat(api): add v2 credential, integration, file-search, VCS, and synthetic-context routes
