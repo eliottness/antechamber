@@ -95,6 +95,14 @@ test("resolved OmO agent is first and build remains a compatibility alias", () =
   }
 });
 
+test("a default OmO install is detected from ~/.omo/omo.jsonc", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "antechamber-agent-omo-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, ".omo", "agent"), { recursive: true });
+  writeFileSync(join(home, ".omo", "omo.jsonc"), "{}");
+  assert.deepEqual(exposedNames({ HOME: home, ANTECHAMBER_AGENT: "" }), ["OmO", "build"]);
+});
+
 test("no resolved agent exposes only build", () => {
   const home = mkdtempSync(join(tmpdir(), "antechamber-agent-name-"));
   try {

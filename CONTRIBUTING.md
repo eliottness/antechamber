@@ -68,12 +68,13 @@ Smoke scripts drive a real agent process and need a backend on PATH or named
 explicitly:
 
 ```bash
-# against pi
-ANTECHAMBER_PI_BINARY=pi npm run smoke
+# against OmO (the default backend; omo-smoke needs the binary named explicitly)
+npm run smoke
+ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke
+ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke -- --only prompt,abort
 
-# against OmO
-ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke
-ANTECHAMBER_PI_BINARY=/path/to/omo npm run omo-smoke -- --only prompt,abort
+# against plain pi (opt-in, best effort)
+ANTECHAMBER_PI_BINARY=pi npm run smoke
 ```
 
 They make real model calls and will cost tokens on whatever provider your

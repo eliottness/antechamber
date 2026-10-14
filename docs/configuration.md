@@ -10,16 +10,16 @@ either, but prefer the `ANTECHAMBER_` name for anything new. A blank value
 
 | Variable | Legacy name | Default | Description |
 |---|---|---|---|
-| `ANTECHAMBER_PI_BINARY` | `OCPI_PI_BINARY` | `pi` (resolved on `PATH`) | Agent executable antechamber spawns per session. Set to `omo` (or an absolute path) to use OmO instead of plain pi. |
+| `ANTECHAMBER_PI_BINARY` | `OCPI_PI_BINARY` | `omo` (resolved on `PATH`) | Agent executable antechamber spawns per session. OmO is the supported default; set `pi` (or a path to it) to use plain pi on a best-effort basis. |
 | `ANTECHAMBER_PI_ARGS` | `OCPI_PI_ARGS` | (none) | Extra arguments passed to the agent binary, split on whitespace. |
 | `ANTECHAMBER_STATE_DIR` | `OCPI_STATE_DIR` | `~/.config/antechamber` | Directory for the session registry and archived child transcripts. Falls back to `~/.config/openchamber-pi-connector` automatically when only that legacy directory exists, so existing session mappings survive an upgrade. |
-| `ANTECHAMBER_AGENT` | `OCPI_AGENT` | detected | Agent name antechamber advertises to OpenChamber. If unset, detected from `oh-my-pi.jsonc` next to the agent directory (`orchestrator.agentName`; `//` and `/* */` comments allowed), then `oh-my-pi` if that package is listed in `<agent dir>/settings.json`, then `build`. The agent directory is `PI_CODING_AGENT_DIR` / `OMO_CODING_AGENT_DIR` / `~/.pi/agent`. |
+| `ANTECHAMBER_AGENT` | `OCPI_AGENT` | detected | Agent name antechamber advertises to OpenChamber. If unset, detected from `oh-my-pi.jsonc` next to the agent directory (`orchestrator.agentName`; `//` and `/* */` comments allowed), then `OmO` if `omo.jsonc` sits next to the agent directory (a standard OmO install), then `oh-my-pi` if that package is listed in `<agent dir>/settings.json`, then `build`. |
 | `ANTECHAMBER_IDLE_TIMEOUT_MS` | `OCPI_IDLE_TIMEOUT_MS` | `900000` (15 minutes) | Milliseconds of inactivity before an idle agent session is reaped. Must be a positive integer. |
 | `ANTECHAMBER_MAX_LIVE` | `OCPI_MAX_LIVE` | `8` | Maximum number of concurrently live agent processes. Must be a positive integer. |
 | `ANTECHAMBER_DEBUG` | `OCPI_DEBUG` | unset (disabled) | Any non-empty value enables request/event debug logging. |
 | `ANTECHAMBER_DEBUG_LOG` | `OCPI_DEBUG_LOG` | `<os tmpdir>/antechamber-debug-<uid>.log` (created mode `0600`) | Path for the debug log when `ANTECHAMBER_DEBUG` is set. A write failure disables logging for the rest of the process and prints one warning; it never crashes the server. |
 | `ANTECHAMBER_OPENCODE_COMPAT_VERSION` | `OCPI_OPENCODE_COMPAT_VERSION` | unset | Overrides the `version` field `GET /global/health` reports. Unset means `null`, so OpenChamber's update checker reports no available update instead of reporting every adapter version as outdated. |
-| `PI_CODING_AGENT_DIR` | `OMO_CODING_AGENT_DIR` (both are read directly, no `ANTECHAMBER_`/`OCPI_` prefix) | `~/.pi/agent` | Root directory of the pi/OmO-compatible agent installation, used for read-only config discovery (agent name, available models). |
+| `OMO_CODING_AGENT_DIR` | `SENPI_CODING_AGENT_DIR`, `PI_CODING_AGENT_DIR` (read directly, in that order, matching OmO; no `ANTECHAMBER_`/`OCPI_` prefix) | `~/.omo/agent` (`~/.pi/agent` when the backend binary is `pi`) | Agent state directory: sessions, child transcripts, and config discovery (agent name, models). |
 
 Non-prefixed CLI flags (`--port`, `--host`/`--hostname`, `--directory`) are
 set on the command line, not through environment variables; see the README's

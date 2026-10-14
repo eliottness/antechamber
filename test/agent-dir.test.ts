@@ -23,15 +23,15 @@ function withAgentEnv(env: { PI_CODING_AGENT_DIR?: string; OMO_CODING_AGENT_DIR?
   }
 }
 
-test("piAgentDir prioritizes PI_CODING_AGENT_DIR over OMO_CODING_AGENT_DIR", () => {
+test("piAgentDir prioritizes OMO_CODING_AGENT_DIR over PI_CODING_AGENT_DIR, like OmO", () => {
   withAgentEnv({ PI_CODING_AGENT_DIR: "/tmp/pi-agent", OMO_CODING_AGENT_DIR: "/tmp/omo-agent" }, () =>
-    assert.equal(piAgentDir(), "/tmp/pi-agent"),
+    assert.equal(piAgentDir(), "/tmp/omo-agent"),
   );
 });
 
-test("piAgentDir uses OMO_CODING_AGENT_DIR when PI_CODING_AGENT_DIR is empty", () => {
-  withAgentEnv({ PI_CODING_AGENT_DIR: "", OMO_CODING_AGENT_DIR: "/tmp/omo-agent" }, () =>
-    assert.equal(piAgentDir(), "/tmp/omo-agent"),
+test("piAgentDir uses PI_CODING_AGENT_DIR when OMO_CODING_AGENT_DIR is empty", () => {
+  withAgentEnv({ PI_CODING_AGENT_DIR: "/tmp/pi-agent", OMO_CODING_AGENT_DIR: "" }, () =>
+    assert.equal(piAgentDir(), "/tmp/pi-agent"),
   );
 });
 
@@ -41,6 +41,15 @@ test("piAgentDir expands a leading home-directory marker", () => {
   });
 });
 
-test("piAgentDir falls back to pi's default agent directory", () => {
-  withAgentEnv({}, () => assert.equal(piAgentDir(), join(homedir(), ".pi", "agent")));
+test("piAgentDir defaults to OmO's agent directory", () => {
+  withAgentEnv({}, () => assert.equal(piAgentDir(), join(homedir(), ".omo", "agent")));
+});
+
+test("piAgentDir defaults to pi's agent directory when the backend is plain pi", () => {
+  process.env.ANTECHAMBER_PI_BINARY = "/usr/local/bin/pi";
+  try {
+    withAgentEnv({}, () => assert.equal(piAgentDir(), join(homedir(), ".pi", "agent")));
+  } finally {
+    delete process.env.ANTECHAMBER_PI_BINARY;
+  }
 });

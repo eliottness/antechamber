@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 /** Environment variable prefix for all antechamber settings. */
 export const ENV_PREFIX = "ANTECHAMBER_";
@@ -30,4 +30,14 @@ export function defaultStateDir(): string {
   const legacy = join(config, "openchamber-pi-connector");
   if (!existsSync(current) && existsSync(legacy)) return legacy;
   return current;
+}
+
+/** Agent executable spawned per session: OmO by default, plain pi when configured. */
+export function agentBinary(): string {
+  return envSetting("PI_BINARY") ?? "omo";
+}
+
+/** True when the configured backend is upstream pi rather than OmO. */
+export function isPlainPi(): boolean {
+  return basename(agentBinary()).replace(/\.(exe|cmd)$/i, "") === "pi";
 }

@@ -1,24 +1,24 @@
 # antechamber
 
-A local OpenCode-compatible HTTP/SSE server that lets [OpenChamber](https://github.com/openchamber/openchamber) drive the [pi coding agent](https://github.com/badlogic/pi-mono) or [OmO](https://github.com/omo-ai) instead of OpenCode.
+A local OpenCode-compatible HTTP/SSE server that lets [OpenChamber](https://github.com/openchamber/openchamber) drive [OmO](https://github.com/code-yeongyu/oh-my-openagent) instead of OpenCode. Plain [pi](https://github.com/badlogic/pi-mono) also works as an opt-in backend.
 
 [![CI](https://github.com/eliottness/antechamber/actions/workflows/ci.yml/badge.svg)](https://github.com/eliottness/antechamber/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/eliottness/antechamber?style=flat&labelColor=100F0F&color=205EA6)](./LICENSE)
 
 ## What it is
 
-OpenChamber only speaks the OpenCode HTTP/SSE API. pi and OmO are headless
-agents with their own RPC protocol (JSONL over stdio). antechamber sits
+OpenChamber only speaks the OpenCode HTTP/SSE API. OmO (and pi, which it
+builds on) are headless agents with their own RPC protocol (JSONL over stdio). antechamber sits
 between them: it implements the subset of the OpenCode API that OpenChamber
-actually uses, and translates every call into a pi/OmO RPC session.
+actually uses, and translates every call into an OmO RPC session.
 
 ```
-OpenChamber (UI)  --OpenCode API (HTTP/SSE)-->  antechamber  --JSONL/stdio-->  pi or omo --mode rpc
+OpenChamber (UI)  --OpenCode API (HTTP/SSE)-->  antechamber  --JSONL/stdio-->  omo --mode rpc
                                                                                 (one process per session)
 ```
 
 No fork of OpenChamber or pi is required. Point OpenChamber at antechamber as
-an **external OpenCode server** and sessions run on the agent you choose.
+an **external OpenCode server** and sessions run on OmO.
 
 ## Features
 
@@ -42,11 +42,11 @@ an **external OpenCode server** and sessions run on the agent you choose.
 
 | Backend | Status |
 |---|---|
-| [pi](https://github.com/badlogic/pi-mono) (`@earendil-works/pi-coding-agent`) | primary target, RPC subprocess mode |
-| [OmO](https://github.com/omo-ai) (a pi-compatible coding-agent distribution, aka senpi / oh-my-pi) | supported; needs the Linux pidfd teardown path for full shutdown guarantees, see [Platform notes](#platform-notes) |
+| [OmO](https://github.com/code-yeongyu/oh-my-openagent) (`omo`, package `omo-ai`) | **default and supported**: titles, steering, subagent cards, structured questions, and private task-host teardown are built and tested against it |
+| [pi](https://github.com/badlogic/pi-mono) (`@earendil-works/pi-coding-agent`) | opt-in, best effort: set `ANTECHAMBER_PI_BINARY=pi`; OmO-specific features are unavailable |
 
-Select the backend with `ANTECHAMBER_PI_BINARY` (see
-[docs/configuration.md](docs/configuration.md)).
+antechamber spawns `omo` from `PATH` unless `ANTECHAMBER_PI_BINARY` names
+another executable (see [docs/configuration.md](docs/configuration.md)).
 
 ## Compatibility
 
@@ -64,7 +64,7 @@ implements.
 
 ## Quick start
 
-Needs Node.js 22+ and either the `pi` CLI or `omo` on PATH.
+Needs Node.js 22+ and OmO's `omo` command on PATH (`bun add -g omo-ai`).
 
 ```bash
 git clone https://github.com/eliottness/antechamber.git
@@ -85,9 +85,8 @@ OPENCHAMBER_DATA_DIR=~/.config/antechamber-openchamber openchamber serve --port 
 # open http://127.0.0.1:57124
 ```
 
-That starts a second OpenChamber instance whose sessions run on pi (or OmO, if
-`ANTECHAMBER_PI_BINARY` is set to `omo`), leaving your main OpenChamber setup
-on plain OpenCode.
+That starts a second OpenChamber instance whose sessions run on OmO, leaving
+your main OpenChamber setup on plain OpenCode.
 
 OpenChamber spawns whatever `settings.opencodeBinary` points at as
 `serve --hostname H --port P`, waits for the stdout line
@@ -114,7 +113,7 @@ deployments. Full reference, defaults, and units: [docs/configuration.md](docs/c
 
 | Variable | Purpose |
 |---|---|
-| `ANTECHAMBER_PI_BINARY` | agent executable to spawn (default `pi`; set to `omo` for OmO) |
+| `ANTECHAMBER_PI_BINARY` | agent executable to spawn (default `omo`; set to `pi` for plain pi) |
 | `ANTECHAMBER_PI_ARGS` | extra whitespace-split args passed to that binary |
 | `ANTECHAMBER_STATE_DIR` | session registry directory |
 | `ANTECHAMBER_AGENT` | agent name override advertised to OpenChamber |
@@ -169,7 +168,7 @@ npm run build
 ```
 
 The smoke scripts (`npm run smoke`, `npm run omo-smoke`, `npm run probe`,
-`npm run model-smoke`, `npm run v2-smoke`) drive a real `pi` or `omo`
+`npm run model-smoke`, `npm run v2-smoke`) drive a real `omo` (or `pi`)
 process end to end and cost model tokens; they are not part of `npm test`
 and are not run in CI. See [docs/development.md](docs/development.md).
 
@@ -179,7 +178,7 @@ and are not run in CI. See [docs/development.md](docs/development.md).
 - [docs/api-surface.md](docs/api-surface.md) - OpenCode endpoints implemented, stubbed, or unsupported
 - [docs/configuration.md](docs/configuration.md) - full environment variable reference
 - [docs/development.md](docs/development.md) - source layout, testing, smoke scripts
-- [docs/backends/omo.md](docs/backends/omo.md) - running antechamber against OmO specifically
+- [docs/backends/omo.md](docs/backends/omo.md) - OmO backend details (agent name, task hosts, transcripts)
 
 ## Credits
 
@@ -190,7 +189,8 @@ extended from there (OpenCode v2 API support, OmO support, session fork/revert,
 subagent and task cards, approvals, todos, thinking levels, shell runs, diffs,
 session persistence, lifecycle caps, and more).
 
-Also relies on [OpenChamber](https://github.com/openchamber/openchamber) and
+Also relies on [OpenChamber](https://github.com/openchamber/openchamber),
+[OmO](https://github.com/code-yeongyu/oh-my-openagent) by code-yeongyu, and
 [pi](https://github.com/badlogic/pi-mono) by badlogic / earendil.
 
 ## License

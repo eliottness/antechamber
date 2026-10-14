@@ -1,16 +1,15 @@
 /**
  * Agent-name detection: the adapter reports one OpenCode "agent" to the UI.
- * When the pi instance runs the oh-my-pi extension, the real agent name comes
- * from ~/.pi/oh-my-pi.jsonc (orchestrator.agentName); otherwise we fall back
- * to the historical "build" name. Resolution order:
+ * Resolution order (<agent dir> is piAgentDir(), ~/.omo/agent by default):
  *   1. ANTECHAMBER_AGENT env override
- *   2. ~/.pi/oh-my-pi.jsonc → orchestrator.agentName
- *   3. ~/.pi/agent/settings.json packages containing oh-my-pi → "oh-my-pi"
- *   4. "build"
+ *   2. <agent dir>/../oh-my-pi.jsonc → orchestrator.agentName
+ *   3. <agent dir>/../omo.jsonc exists (an OmO install) → "OmO"
+ *   4. <agent dir>/settings.json packages containing oh-my-pi → "oh-my-pi"
+ *   5. "build" (plain pi)
  * The result is memoized: config changes require an adapter restart.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { envSetting } from "./config.js";
 import { piAgentDir } from "./agent-dir.js";
@@ -68,6 +67,8 @@ function detect(): string {
   } catch {
     // missing or unparseable config → fall through
   }
+
+  if (existsSync(join(dirname(agentDir), "omo.jsonc"))) return "OmO";
 
   try {
     const raw = readFileSync(join(agentDir, "settings.json"), "utf8");

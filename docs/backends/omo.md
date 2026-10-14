@@ -7,23 +7,29 @@ page covers the parts that are specific to OmO.
 
 ## Basic setup
 
+OmO is antechamber's default backend: with `omo` on `PATH` (`bun add -g omo-ai`)
+no backend configuration is needed.
+
 ```bash
-ANTECHAMBER_PI_BINARY=/path/to/omo antechamber serve --hostname 127.0.0.1 --port 4096
+antechamber serve --hostname 127.0.0.1 --port 4096
 ```
 
-Or point an OpenChamber `settings.opencodeBinary` at `bin/opencode-antechamber`
-and set `ANTECHAMBER_PI_BINARY=omo` (or an absolute path to the `omo`
-executable) in the environment that launches OpenChamber.
+If `omo` is not on the `PATH` of the process that launches OpenChamber (a
+systemd user service, for example), set `ANTECHAMBER_PI_BINARY` to its absolute
+path.
 
 `ANTECHAMBER_AGENT` controls what agent name antechamber reports to
 OpenChamber. If unset, it's detected in this order:
 
-1. OmO's own `~/.pi/oh-my-pi.jsonc` (`orchestrator.agentName`)
-2. `oh-my-pi` if `~/.pi/agent/settings.json` lists the oh-my-pi package
-3. `build` as a last resort
+1. `orchestrator.agentName` in `oh-my-pi.jsonc` next to the agent directory
+2. `OmO` when `omo.jsonc` sits next to the agent directory (`~/.omo/omo.jsonc`
+   for a standard install)
+3. `oh-my-pi` if `<agent dir>/settings.json` lists the oh-my-pi package
+4. `build` as a last resort
 
-`PI_CODING_AGENT_DIR` (or `OMO_CODING_AGENT_DIR`) selects the agent directory
-OmO reads for config and discovery; it defaults to `~/.pi/agent`.
+The agent directory follows OmO's own resolution: `OMO_CODING_AGENT_DIR`, then
+`SENPI_CODING_AGENT_DIR`, then `PI_CODING_AGENT_DIR`, defaulting to
+`~/.omo/agent`.
 
 ## Session tree: fork, revert, unrevert
 

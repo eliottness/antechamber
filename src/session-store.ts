@@ -2,7 +2,7 @@
  * Durable session registry + pi session-file discovery.
  *
  * pi already persists every session as JSONL under
- * `~/.pi/agent/sessions/--<cwd with / \ : replaced by ->--/<ts>_<id>.jsonl`,
+ * `<agent dir>/sessions/--<cwd with / \ : replaced by ->--/<ts>_<id>.jsonl`,
  * so the adapter never needs its own transcript store — only:
  *
  *   1. a scan of that directory to rebuild the sidebar after a restart, and

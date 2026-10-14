@@ -7,6 +7,16 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- OmO is now the default backend: antechamber spawns `omo` unless
+  `ANTECHAMBER_PI_BINARY` says otherwise, and the agent directory follows
+  OmO's resolution (`OMO_CODING_AGENT_DIR` > `SENPI_CODING_AGENT_DIR` >
+  `PI_CODING_AGENT_DIR`, default `~/.omo/agent`; `~/.pi/agent` when the backend
+  is `pi`). A standard OmO install is advertised as the `OmO` agent without
+  setting `ANTECHAMBER_AGENT`. Plain pi remains available as an opt-in,
+  best-effort backend (`ANTECHAMBER_PI_BINARY=pi`).
+
 ### Fixed
 
 - Turn statistics now use the native assistant stop reason independently of

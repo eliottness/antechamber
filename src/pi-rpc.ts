@@ -13,7 +13,7 @@ import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { systemClock, type LifecycleClock } from "./lifecycle.js";
-import { envSetting } from "./config.js";
+import { agentBinary, envSetting } from "./config.js";
 
 export interface PiRpcCommand {
   id?: string;
@@ -36,7 +36,7 @@ export type PiRpcResponse<T = unknown> = {
 
 export interface PiRpcClientOptions {
   cwd: string;
-  /** Path/name of the pi binary. Defaults to ANTECHAMBER_PI_BINARY env or "pi" from PATH. */
+  /** Path/name of the pi binary. Defaults to ANTECHAMBER_PI_BINARY env or "omo" from PATH. */
   piBinary?: string;
   /** Extra CLI flags, e.g. ["--no-session"] or ["--provider", "x"]. */
   args?: string[];
@@ -94,7 +94,7 @@ export class PiRpcClient extends EventEmitter {
           .filter(Boolean),
       ),
     ].join(",");
-    this.proc = spawn(options.piBinary ?? envSetting("PI_BINARY") ?? "pi", args, {
+    this.proc = spawn(options.piBinary ?? agentBinary(), args, {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: {
