@@ -1203,11 +1203,8 @@ test("revert navigates before the user without changing a working file and unrev
   assert.ok(s.pi);
   assert.equal((await getEntries(s.pi)).leafId, parent);
   assert.deepEqual(readFileSync(file), original);
-  assert.equal(manager.messages(id)?.filter((m) => m.info.id.startsWith("msg_revert_")).length, 1);
-  assert.equal(manager.messages(id)?.find((m) => m.info.id.startsWith("msg_revert_"))?.info.role, "assistant");
-  const notice = manager.messages(id)?.find((m) => m.info.id.startsWith("msg_revert_"))?.info;
-  assert.ok(notice?.role === "assistant");
-  assert.equal(notice.parentID, "msg_live_2");
+  // OpenChamber shows its own reverted dock from session.revert; no adapter card is injected.
+  assert.equal(manager.messages(id)?.length, 6);
   await manager.revert(id, "msg_live_3");
   await manager.revert(id, "msg_live_2");
   await manager.unrevert(id);

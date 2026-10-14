@@ -123,9 +123,17 @@ for (const input of ["normal", "steps", "no-usage", "error", "aborted", "length"
       assert.equal(v2.cost, message.info.cost);
       assert.deepEqual(v2.tokens, message.info.tokens);
     });
+    const spent = live.reduce((sum, message) => sum + (message.info.role === "assistant" ? message.info.cost : 0), 0);
+    // An absent cost means nothing was spent.
+    assert.equal(h.manager.get(session.id)?.info.cost ?? 0, spent);
+    const announced = h.events.flatMap((e) =>
+      e.type === "session.updated" && e.properties.info.id === session.id ? [e.properties.info.cost ?? 0] : [],
+    );
+    assert.equal(announced.at(-1) ?? 0, spent);
     await h.restart();
     const restored = h.manager.messages(session.id)?.filter((m) => m.info.role === "assistant") ?? [];
     assert.equal(restored.length, live.length);
+    assert.equal(h.manager.get(session.id)?.info.cost ?? 0, spent);
     restored.forEach((message, index) => {
       const previous = live[index];
       assert.ok(previous);

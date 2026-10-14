@@ -106,7 +106,7 @@ for (const rawFormat of ["object", "json", "repr"]) {
       historyParts.map((part) => part.type),
     );
     assert.deepEqual(
-      liveParts.filter((part) => part.type !== "tool").map((part) => part.text),
+      liveParts.flatMap((part) => (part.type === "text" || part.type === "reasoning" ? [part.text] : [])),
       ["Before search.", "Compare sources.", "After search."],
     );
     const [web, search, openai] = tools(historyParts);

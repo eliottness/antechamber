@@ -63,9 +63,9 @@ Revival reapplies the saved leaf rather than assuming the newest JSONL
 message is the active branch. The reverted transcript is retained for redo.
 
 Revert only changes conversation context. It never invokes a filesystem
-restore, snapshot, or diff operation. An adapter-only informational text
-message before the cutoff says "Conversation reverted. Files were not
-changed." and is not sent to the model. Unknown messageIDs are rejected with
+restore, snapshot, or diff operation. The adapter publishes the cutoff as
+`session.revert` and adds no transcript card: OpenChamber renders its own
+reverted-message dock from that field. Unknown messageIDs are rejected with
 HTTP 400 before navigation.
 
 History refreshes and compact/bash RPCs share the conversation-operation queue

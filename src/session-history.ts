@@ -15,7 +15,7 @@ import { TodoBridge } from "./todo-bridge.js";
 import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree.js";
 import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
-import { piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
+import { compactionMessages, piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
 
 // ----------------------------------------------------------------------
 // Restored-session history: pi JSONL file → OpenCode messages + parts
@@ -31,6 +31,9 @@ interface PiFileEntry {
   message?: PiFileMessage;
   customType?: string;
   details?: unknown;
+  /** `compaction` entries */
+  summary?: string;
+  firstKeptEntryId?: string;
   data?: {
     durableSessionId?: string;
     clientMessageId?: string;
@@ -185,6 +188,11 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
   for (const e of chain) {
     if (e.type === "model_change" && typeof e.provider === "string" && typeof e.modelId === "string") {
       currentModel = { providerID: e.provider, modelID: e.modelId };
+      continue;
+    }
+    if (e.type === "compaction" && typeof e.summary === "string" && typeof e.firstKeptEntryId === "string") {
+      // Not a run boundary: an automatic compaction can sit between steps of one turn.
+      out.push(...compactionMessages(s, e.firstKeptEntryId, e.summary, entryTime(e), currentModel));
       continue;
     }
     if (e.type !== "message") continue;

@@ -158,6 +158,16 @@ export function parseSlashCommand(value: unknown): SlashCommandInput | undefined
   return { command: value.command, arguments: value.arguments, ...(messageID ? { messageID } : {}) };
 }
 
+/**
+ * OmO never auto-titles a first prompt that starts with "/", so a session opened
+ * with `/skill:plan Build the importer` kept its first-message title. Title from
+ * the command's arguments instead; a bare command has nothing to title from.
+ */
+export function slashTitlePrompt(text: string): { sessionTitlePrompt?: string } {
+  const match = /^\s*\/\S+\s+([\s\S]*\S)/.exec(text);
+  return match?.[1] !== undefined && !match[1].startsWith("/") ? { sessionTitlePrompt: match[1] } : {};
+}
+
 export function slashCommandPrompt(input: SlashCommandInput): string {
   return input.arguments === "" ? `/${input.command}` : `/${input.command} ${input.arguments}`;
 }

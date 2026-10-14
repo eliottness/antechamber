@@ -171,7 +171,7 @@ export function toV2Session(
     id: info.id,
     projectID: info.projectID,
     agent: opts.agent ?? getAgentName(),
-    cost: 0,
+    cost: info.cost ?? 0,
     tokens: zeroTokens(),
     time: {
       created: info.time.created,
@@ -205,10 +205,7 @@ export interface V2Message {
 
 /** v2 user message (list + prompt response): the UI reads `.text`. */
 export function toV2UserMessage(info: OCMessageWithParts): V2Message {
-  const text = info.parts
-    .filter((p): p is Extract<OCPart, { type: "text" }> => p.type === "text")
-    .map((p) => p.text)
-    .join("");
+  const text = info.parts.map((p) => (p.type === "text" ? p.text : p.type === "compaction" ? "/compact" : "")).join("");
   return {
     id: info.info.id,
     time: { created: info.info.time.created },
@@ -237,7 +234,7 @@ export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
           ...(part.time?.end !== undefined ? { completed: part.time.end } : {}),
         },
       });
-    } else {
+    } else if (part.type === "tool") {
       content.push(toolContent(part));
     }
   }
@@ -558,6 +555,16 @@ export class V2EventTranslator {
   }
 
   private onPartUpdated(directory: string, part: OCPart, delta?: string): V2Envelope[] {
+    if (part.type === "compaction")
+      // Like shell turns, the server creates this user turn; there is no optimistic prompt.
+      return [
+        this.frame(directory, "session.prompted", {
+          sessionID: part.sessionID,
+          messageID: part.messageID,
+          prompt: { text: "/compact" },
+          delivery: "queue",
+        }),
+      ];
     return part.type === "tool" ? this.onToolPart(directory, part) : this.onTextPart(directory, part, delta);
   }
 

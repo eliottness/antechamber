@@ -17,6 +17,8 @@ export interface OCSession {
   title: string;
   version: string;
   revert?: { messageID: string };
+  /** USD spent by this session's own assistant messages; OpenChamber adds child sessions via parentID. */
+  cost?: number;
   time: {
     created: number;
     updated: number;
@@ -54,6 +56,8 @@ export interface OCAssistantMessage {
   };
   finish?: string;
   error?: { name: string; data: { message: string } };
+  /** Marks a compaction summary (OpenCode `AssistantMessage.summary`). */
+  summary?: boolean;
 }
 
 export type OCMessage = OCUserMessage | OCAssistantMessage;
@@ -126,7 +130,16 @@ export interface OCToolPart {
   state: OCToolState;
 }
 
-export type OCPart = OCTextPart | OCReasoningPart | OCToolPart;
+/** OpenChamber renders a user message holding this part as `/compact`. */
+export interface OCCompactionPart {
+  id: string;
+  sessionID: string;
+  messageID: string;
+  type: "compaction";
+  auto: boolean;
+}
+
+export type OCPart = OCTextPart | OCReasoningPart | OCToolPart | OCCompactionPart;
 
 export interface OCMessageWithParts {
   info: OCMessage;

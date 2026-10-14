@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { piAgentDir } from "./agent-dir.js";
+import { syncSessionCost } from "./pi-event-translation.js";
 import { ocIdFor, SessionPersistenceError, type SessionStore } from "./session-store.js";
 import { mapTool, resultText, toolMappers, type ToolResult } from "./tool-map.js";
 import type { ManagedSession } from "./sessions.js";
@@ -498,6 +499,9 @@ export class SubagentBridge {
       child.session.messages = this.fallback(child);
     }
     child.loaded = true;
+    // Each child reports only its own spend; OpenChamber sums the subtree by parentID.
+    if (syncSessionCost(child.session))
+      this.emit(child.session.info.directory, { type: "session.updated", properties: { info: child.session.info } });
     child.session.status = { type: running ? "busy" : "idle" };
     if (!running) this.closeWatchers(child);
     for (const part of child.parts.values()) {

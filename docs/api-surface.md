@@ -14,7 +14,7 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 
 | SDK method | Purpose in OpenChamber | pi counterpart |
 |---|---|---|
-| `session.list` | session list per directory | scan pi `--session-dir` JSONL files |
+| `session.list` | session list per directory | scan pi `--session-dir` JSONL files. `Session.cost` is the session's own spend: the sum of its assistant messages' OmO `usage.cost.total`, set once history is loaded and refreshed on each assistant `message_end` (announced with `session.updated`). Subagent sessions carry their own cost and `parentID`; OpenChamber's work-status rollup sums the subtree, so a parent never includes child spend. |
 | `session.create` | new session | spawn `pi --mode rpc` (fresh session) |
 | `session.get` | session detail | RPC `get_state` |
 | `session.update` | rename/archive/metadata | adapter-side title + `time.archived` (persisted in the registry; `archived=true/false` list filtering honored on `/session` and `/experimental/session`) |
@@ -24,11 +24,11 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `session.abort` | stop generation | RPC `abort` |
 | `session.fork` | fork from a message | RPC `fork` / `get_fork_messages`; conversation-only fork backed by the agent's session tree (see docs/architecture.md) |
 | `session.revert` / `session.unrevert` | undo/redo conversation context | backed by the agent's native session-tree navigation; conversation-only, never touches files on disk |
-| `session.summarize` | compact context | RPC `compact` |
+| `session.summarize` | compact context | RPC `compact`, which answers only after the summary is written (timeout 31 min, above OmO's 30 min cap). `compaction_start` sets `time.compacting` and marks an idle session busy; `compaction_end` adds a user message with a `compaction` part (shown as `/compact`) and an assistant `summary: true` message with the summary text. History rebuilds the same pair from `compaction` entries, keyed by `firstKeptEntryId`. |
 | `session.status` | busy/idle map | derive from RPC events |
 | `session.todo` | todo list rendering | bridged from the agent's todo tool (`src/todo-bridge.ts`) |
 | `session.shell` | run shell in session ctx | RPC `bash`, with cancellation via `abort_bash` |
-| `session.command` | slash commands | RPC `prompt` with `/cmd` or `get_commands` |
+| `session.command` | slash commands | RPC `prompt` with `/cmd` or `get_commands`. OmO skips native title generation for a first prompt starting with `/`, so any `/cmd args` prompt also sends `sessionTitlePrompt: args`. |
 | `session.share` / `session.unshare` | share links | unsupported, returns `400 UnsupportedError`, no pi/OmO equivalent |
 
 ### Permissions & questions

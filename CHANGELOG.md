@@ -7,6 +7,27 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Sessions now report `cost` (USD) from OmO's per-message usage, live and from
+  history, on v1 session payloads and v2 session reads. Subagent sessions carry
+  their own cost, so OpenChamber's work-status panel shows the session total
+  with its session/subagents breakdown.
+
+### Fixed
+
+- `/compact` now shows progress and its result. The session turns busy while
+  OmO compacts, and the summary appears as a `/compact` turn with a summary
+  reply, live and after reload. The compact RPC now waits up to OmO's own
+  30-minute compaction budget instead of giving up after 60 seconds, which left
+  the compaction running unseen until a later abort reported it cancelled.
+- Reverting no longer adds a "Conversation reverted. Files were not changed."
+  card to the transcript; OpenChamber's own reverted-message dock (driven by
+  `session.revert`) already shows the state.
+- Sessions opened with a slash command (for example `/skill:plan Build the
+  importer`) now get a generated title. OmO skips titling slash-led prompts, so
+  the adapter passes the command's arguments as the native `sessionTitlePrompt`.
+
 ## [0.1.0] - 2026-10-14
 
 First standalone release under the `antechamber` name.

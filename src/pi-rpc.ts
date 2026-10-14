@@ -22,6 +22,12 @@ export interface PiRpcCommand {
 }
 
 export const RPC_COMMAND_TIMEOUT_MS = 60_000;
+/**
+ * `compact` answers only when the summary is written. OmO bounds one compaction by
+ * its SUMMARIZATION_MAX_DURATION_CAP_MS (30 min); the generic 60 s budget gave up
+ * long before a large session finished, leaving the run orphaned.
+ */
+export const COMPACT_RPC_TIMEOUT_MS = 31 * 60_000;
 export const MAX_JSONL_FRAME_BYTES = 64 * 1024 * 1024;
 const PROCESS_KILL_GRACE_MS = 5_000;
 

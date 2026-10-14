@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type {
   OCAssistantMessage,
   OCMessageWithParts,
+  OCModelRef,
   OCEvent,
   OCSessionStatus,
   OCPart,
@@ -103,6 +104,73 @@ export function applyUsage(msg: OCAssistantMessage, usage: PiUsage | undefined):
     cache: { read: usage.cacheRead ?? 0, write: usage.cacheWrite ?? 0 },
   };
   if (usage.cost?.total !== undefined) msg.cost = usage.cost.total;
+}
+
+/**
+ * Recompute the session's own spend from its loaded assistant messages. Subagent
+ * spend stays on the child sessions: OpenChamber sums the parentID subtree, so
+ * folding it in here would count it twice. Returns whether the value changed.
+ */
+export function syncSessionCost(s: ManagedSession): boolean {
+  if (s.messages === undefined) return false;
+  let cost = 0;
+  for (const message of s.messages) if (message.info.role === "assistant") cost += message.info.cost;
+  if ((s.info.cost ?? 0) === cost) return false; // absent means zero; avoid no-op updates
+  s.info.cost = cost;
+  return true;
+}
+
+/**
+ * An OmO compaction as OpenCode shows one: a user turn holding a `compaction`
+ * part (OpenChamber renders it as `/compact`) answered by a `summary` message.
+ * IDs derive from the compaction's first kept entry, which the live
+ * `compaction_end` result and the persisted entry share, so a history reload
+ * reconciles with the live messages instead of duplicating them.
+ */
+export function compactionMessages(
+  s: ManagedSession,
+  key: string,
+  summary: string,
+  created: number,
+  model: OCModelRef | undefined,
+): [OCMessageWithParts, OCMessageWithParts] {
+  const sessionID = s.info.id;
+  const userID = `msg_compaction_${key}`;
+  const summaryID = `${userID}_summary`;
+  const served = model ?? { providerID: "unknown", modelID: "unknown" };
+  return [
+    {
+      info: { id: userID, sessionID, role: "user", time: { created }, agent: getAgentName(), model: served },
+      parts: [{ id: `prt_compaction_${key}`, sessionID, messageID: userID, type: "compaction", auto: false }],
+    },
+    {
+      info: {
+        id: summaryID,
+        sessionID,
+        role: "assistant",
+        time: { created, completed: created },
+        parentID: userID,
+        modelID: served.modelID,
+        providerID: served.providerID,
+        mode: getAgentName(),
+        path: { cwd: s.info.directory, root: s.info.directory },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        finish: "stop",
+        summary: true,
+      },
+      parts: [
+        {
+          id: `prt_compaction_${key}_summary`,
+          sessionID,
+          messageID: summaryID,
+          type: "text",
+          text: summary,
+          time: { start: created, end: created },
+        },
+      ],
+    },
+  ];
 }
 
 interface PiEventServices {
@@ -364,6 +432,7 @@ export class PiEventTranslator {
           s.streaming.message.time.completed = Date.now();
           this.services.emit(dir, { type: "message.updated", properties: { info: s.streaming.message } });
           this.finishStreaming(s);
+          if (syncSessionCost(s)) this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
         }
         break;
       }
@@ -387,8 +456,41 @@ export class PiEventTranslator {
         });
         break;
 
+      case "compaction_start": {
+        s.info.time.compacting = Date.now();
+        this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
+        // A manual /compact runs no agent turn, so nothing else marks the session busy.
+        if (s.status.type === "idle") {
+          s.compactingFromIdle = true;
+          this.setStatus(s, { type: "busy" });
+        }
+        break;
+      }
+
+      case "compaction_end": {
+        delete s.info.time.compacting;
+        const result = ev.result as { summary?: unknown; firstKeptEntryId?: unknown } | undefined;
+        if (ev.aborted !== true && typeof result?.summary === "string" && typeof result.firstKeptEntryId === "string") {
+          const messages = this.services.ensureMessages(s);
+          for (const message of compactionMessages(s, result.firstKeptEntryId, result.summary, Date.now(), s.model)) {
+            if (messages.some((item) => item.info.id === message.info.id)) continue;
+            // Keep a hidden redo branch after the new turn, as appendMessage does.
+            const boundary = messages.findIndex((item) => item.info.id === s.tree.revert?.messageID);
+            messages.splice(boundary < 0 ? messages.length : boundary, 0, message);
+            this.services.emit(dir, { type: "message.updated", properties: { info: message.info } });
+            for (const part of message.parts) this.emitPart(s, part);
+          }
+        }
+        this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
+        if (s.compactingFromIdle) {
+          delete s.compactingFromIdle;
+          this.setStatus(s, { type: "idle" });
+        }
+        break;
+      }
+
       default:
-        break; // turn_start, queue_update, compaction_* — future milestones
+        break; // turn_start, queue_update — future milestones
     }
   }
 

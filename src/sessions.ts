@@ -3,11 +3,17 @@
  * Composes the live event bridge and restored-session history reconstruction.
  */
 
-import { id, PiEventTranslator } from "./pi-event-translation.js";
+import { id, PiEventTranslator, syncSessionCost } from "./pi-event-translation.js";
 import { parsePiSessionFile, parsePiSessionText } from "./session-history.js";
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { PiRpcClient, RPC_COMMAND_TIMEOUT_MS, type PiRpcCommand, type PiRpcResponse } from "./pi-rpc.js";
+import {
+  COMPACT_RPC_TIMEOUT_MS,
+  PiRpcClient,
+  RPC_COMMAND_TIMEOUT_MS,
+  type PiRpcCommand,
+  type PiRpcResponse,
+} from "./pi-rpc.js";
 import { stopSessionHosts } from "./session-hosts.js";
 import { setThinkingLevel, type ModelSelection, type ThinkingState } from "./thinking-levels.js";
 import { SessionLifecycle, type LifecycleOptions } from "./lifecycle.js";
@@ -22,14 +28,13 @@ import {
   navigate,
   readSessionTree,
   revertConversation,
-  revertNotice,
   SessionTreeError,
   unrevertConversation,
   type SessionTreeState,
 } from "./session-tree.js";
 import { SubagentBridge } from "./subagents.js";
 import { sessionDiff } from "./session-diff.js";
-import { announceSessionNotice } from "./session-commands.js";
+import { announceSessionNotice, slashTitlePrompt } from "./session-commands.js";
 import {
   ocIdFor,
   piSessionDir,
@@ -82,6 +87,8 @@ export interface ManagedSession extends ThinkingState {
   /** undefined while dormant; resolved via get_state on create/revive. */
   model: OCModelRef | undefined;
   streaming: StreamingState | undefined;
+  /** A manual compaction started while idle; its end returns the session to idle. */
+  compactingFromIdle?: boolean;
   /** Cancels the adapter-owned user bash waiter and its OmO execution. */
   cancelShell?: (interrupted?: boolean) => void;
   /**
@@ -428,10 +435,7 @@ export class SessionManager {
         properties: { sessionID: s.info.id, todos: s.todoBridge.todos },
       });
     }
-    const notice = revertNotice(s);
-    if (!notice) return messages;
-    const boundary = messages.findIndex((message) => message.info.id === s.tree.revert?.messageID);
-    return [...messages.slice(0, boundary), notice, ...messages.slice(boundary)];
+    return messages;
   }
 
   /** Append to canonical history, before the hidden redo branch while reverted. */
@@ -543,16 +547,10 @@ export class SessionManager {
   async revert(sessionId: string, messageID: string): Promise<OCSession> {
     return this.treeSession(sessionId, async (s, pi) => {
       const tree = await this.syncTree(s, true);
-      const previousNotice = revertNotice(s);
+      // OpenChamber renders its own reverted-message dock from session.revert.
       if (!(await revertConversation(s, pi, tree, messageID))) return s.info;
-      this.removeRevertNotice(s, previousNotice);
       this.persistMeta(s);
       this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
-      const notice = revertNotice(s);
-      if (notice) {
-        this.emit(s.info.directory, { type: "message.updated", properties: { info: notice.info } });
-        for (const part of notice.parts) this.events.emitPart(s, part);
-      }
       return s.info;
     });
   }
@@ -560,21 +558,11 @@ export class SessionManager {
   async unrevert(sessionId: string): Promise<OCSession> {
     return this.treeSession(sessionId, async (s, pi) => {
       await this.syncTree(s, true);
-      const previousNotice = revertNotice(s);
       if (!(await unrevertConversation(s, pi))) return s.info;
-      this.removeRevertNotice(s, previousNotice);
       this.persistMeta(s);
       this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
       return s.info;
     });
-  }
-
-  private removeRevertNotice(s: ManagedSession, notice: OCMessageWithParts | undefined): void {
-    if (notice)
-      this.emit(s.info.directory, {
-        type: "message.removed",
-        properties: { sessionID: s.info.id, messageID: notice.info.id },
-      });
   }
 
   async reloadMessages(sessionId: string, signal?: AbortSignal): Promise<OCMessageWithParts[] | undefined> {
@@ -743,7 +731,8 @@ export class SessionManager {
       const pi = s.pi;
       if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
       this.lifecycle.touch(s);
-      const response = await pi.command<T>(command, RPC_COMMAND_TIMEOUT_MS, signal, onDispatch);
+      const timeout = command.type === "compact" ? COMPACT_RPC_TIMEOUT_MS : RPC_COMMAND_TIMEOUT_MS;
+      const response = await pi.command<T>(command, timeout, signal, onDispatch);
       if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash"))
         await this.reloadMessagesLive(s, signal);
       return response;
@@ -873,7 +862,6 @@ export class SessionManager {
           });
         }
       }
-      this.removeRevertNotice(s, revertNotice(s));
       delete s.tree.revert;
       delete s.info.revert;
       bindMessageEntries(s, await getEntries(pi));
@@ -957,6 +945,7 @@ export class SessionManager {
         message: text,
         streamingBehavior: delivery === "queue" ? "followUp" : "steer",
         clientMessageId: userMsg.id,
+        ...slashTitlePrompt(text),
       })
       .catch((error: unknown) => {
         rejectInput();
@@ -1091,6 +1080,7 @@ export class SessionManager {
       s.messages = parsePiSessionFile(s, getAgentName());
       this.subagents.discover(s, s.messages);
       if (admissions) this.persistMeta(s);
+      if (syncSessionCost(s)) this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     }
     return s.messages;
   }

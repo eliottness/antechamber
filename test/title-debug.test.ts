@@ -60,6 +60,22 @@ test("native titles replace fallback after idle without rename feedback and pres
   assert.equal(h.manager.get(session.id)?.info.title, "Dormant override");
 });
 
+test("slash prompts title from their arguments because OmO skips slash-led title prompts", async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "/skill:plan  Build the\nimporter ");
+  await h.manager.prompt(session.id, "/compact");
+  await h.manager.prompt(session.id, "/skill:plan /etc/hosts");
+  await h.manager.prompt(session.id, "normal");
+  const inspection = await h.manager
+    .get(session.id)
+    ?.pi?.command<{ commands: Array<{ type: string; sessionTitlePrompt?: string }> }>({ type: "inspect" });
+  assert.deepEqual(
+    inspection?.data?.commands.filter((c) => c.type === "prompt").map((c) => c.sessionTitlePrompt),
+    ["Build the\nimporter", undefined, undefined, undefined],
+  );
+});
+
 test("legacy provisional metadata yields to native names while legacy overrides win", async (t) => {
   const h = bugHarness(t);
   const session = await h.manager.create(h.root);

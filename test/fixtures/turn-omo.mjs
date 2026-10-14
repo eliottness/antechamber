@@ -134,6 +134,14 @@ createInterface({ input: process.stdin })
       user(injected);
       assistant("stop", injected);
     }
+    if (cmd.type === "compact") {
+      // OmO: compaction_start, persisted entry, compaction_end with the result, then the reply.
+      const firstKeptEntryId = entries.find((e) => e.type === "message")?.id ?? "none";
+      send({ type: "compaction_start", reason: "manual" });
+      record("compaction", { summary: "Summary of earlier work", firstKeptEntryId, tokensBefore: 1234 }, 3000);
+      data = { summary: "Summary of earlier work", firstKeptEntryId, tokensBefore: 1234 };
+      send({ type: "compaction_end", reason: "manual", result: data, aborted: false, willRetry: false });
+    }
     if (cmd.type === "prompt") {
       if (active && !cmd.streamingBehavior) return;
       if (cmd.message === "reject") success = false;
