@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Slash commands sent through `POST /session/:id/command` (for example
+  `/skill:<name> ...`) now reuse OpenChamber's client `messageID`, so the user
+  message no longer appears twice in the chat.
+
 ## [0.1.0] - 2026-10-14
 
 First standalone release under the `antechamber` name.

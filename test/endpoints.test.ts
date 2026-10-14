@@ -205,6 +205,30 @@ test("slash command routes prompt OmO and reject an empty command", { timeout: 3
   assert.match(JSON.stringify(await v2.json()), /\/another-missing-command two/);
 });
 
+test("slash command reuses the client messageID for its user message", { timeout: 30_000 }, async (t) => {
+  const { url } = await startServer(t);
+  const sessionId = await createSession(url);
+  const messageID = "msg_client_optimistic_command";
+
+  const response = await fetch(`${url}/session/${sessionId}/command`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command: "skill:fixture", arguments: "plan it", messageID }),
+  });
+  assert.equal(response.status, 200);
+  await response.json();
+
+  const history: unknown = await (await fetch(`${url}/session/${sessionId}/message`)).json();
+  assert.ok(Array.isArray(history));
+  const users = history.filter(
+    (message: unknown) => isRecord(message) && isRecord(message.info) && message.info.role === "user",
+  );
+  assert.deepEqual(
+    users.map((message: { info: { id: string } }) => message.info.id),
+    [messageID],
+  );
+});
+
 test("shell route emits a bash card with output and exit code", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);

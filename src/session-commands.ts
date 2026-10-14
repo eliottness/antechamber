@@ -12,7 +12,7 @@ import type {
 } from "./types.js";
 
 export type CommandDescriptor = { name: string; description: string; template: "" };
-export type SlashCommandInput = { command: string; arguments: string };
+export type SlashCommandInput = { command: string; arguments: string; messageID?: string };
 export type ShellResult = { output: string; exitCode: number | null; cancelled: boolean; truncated: boolean };
 export type ShellMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCToolPart] };
 export type ShellUserMessage = OCMessageWithParts & { info: OCUserMessage; parts: [OCTextPart] };
@@ -153,7 +153,9 @@ export function getCommands(directory: string): Promise<CommandDescriptor[]> {
 export function parseSlashCommand(value: unknown): SlashCommandInput | undefined {
   if (!isRecord(value) || typeof value.command !== "string" || value.command.trim() === "") return undefined;
   if (typeof value.arguments !== "string") return undefined;
-  return { command: value.command, arguments: value.arguments };
+  // OpenChamber inserts the command's user message optimistically under this id.
+  const messageID = typeof value.messageID === "string" && value.messageID !== "" ? value.messageID : undefined;
+  return { command: value.command, arguments: value.arguments, ...(messageID ? { messageID } : {}) };
 }
 
 export function slashCommandPrompt(input: SlashCommandInput): string {
@@ -165,7 +167,7 @@ export async function runSlashCommand(
   sessionId: string,
   input: SlashCommandInput,
 ): Promise<OCMessageWithParts | undefined> {
-  await sessions.prompt(sessionId, slashCommandPrompt(input));
+  await sessions.prompt(sessionId, slashCommandPrompt(input), undefined, false, input.messageID);
   await sessions.reloadMessages(sessionId);
   const messages = sessions.messages(sessionId) ?? [];
   return [...messages].reverse().find((message) => message.info.role === "assistant") ?? messages[messages.length - 1];
