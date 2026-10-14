@@ -12,6 +12,7 @@ import { OPENCODE_API_VERSION } from "./version.js";
 import { toV2Permission } from "./approvals.js";
 import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-forms.js";
 import { getAgentName } from "./agent-name.js";
+import { vcsRead, VcsError } from "./vcs.js";
 import { announceSessionError, compactSession, getCommands, unsupportedShare } from "./session-commands.js";
 import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Session } from "./v2.js";
 import type { OCSession } from "./types.js";
@@ -371,20 +372,13 @@ export async function handleV2(
     json(res, 200, withLocation({ provider: "git", branch: current === undefined ? {} : { current } }));
     return;
   }
-  if (path === "/api/vcs/base" && method === "GET") {
-    json(res, 200, withLocation(null));
-    return;
-  }
-  if (path === "/api/vcs/status" && method === "GET") {
-    json(res, 200, withLocation([]));
-    return;
-  }
-  if (path === "/api/vcs/branch" && method === "GET") {
-    json(res, 200, withLocation([]));
-    return;
-  }
-  if (path === "/api/vcs/diff" && method === "GET") {
-    json(res, 200, withLocation(""));
+  if (method === "GET" && ["/api/vcs/base", "/api/vcs/status", "/api/vcs/branch", "/api/vcs/diff"].includes(path)) {
+    try {
+      json(res, 200, withLocation(await vcsRead(directory, path.slice("/api/vcs/".length), url)));
+    } catch (error) {
+      if (!(error instanceof VcsError)) throw error;
+      json(res, 400, errorBody(error.name, error.message));
+    }
     return;
   }
 
