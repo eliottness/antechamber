@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, type Stats, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { normalizeRegistry, normalizeTask, type Registry, type TaskRecord } from "./graph.ts";
@@ -31,6 +31,15 @@ function list(dir: string): string[] {
     return readdirSync(dir);
   } catch (error) {
     if (isMissing(error)) return [];
+    throw error;
+  }
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch (error) {
+    if (isMissing(error)) return false;
     throw error;
   }
 }
@@ -95,7 +104,9 @@ export class TaskStore {
     for (const dir of this.storeDirs()) {
       for (const file of list(join(dir, "tasks"))) {
         if (!file.endsWith(".json")) continue;
-        const task = this.tasks.read(join(dir, "tasks", file), normalizeTask);
+        const path = join(dir, "tasks", file);
+        if (!isRegularFile(path)) continue;
+        const task = this.tasks.read(path, normalizeTask);
         if (task) out.set(task.task_id, task);
       }
     }

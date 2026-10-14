@@ -96,6 +96,15 @@ describe("GraphPoller", () => {
     assert.equal(h.requests[1]?.sessionId, "ses_two");
   });
 
+  test("an active fetch rejection shows the error view and schedules an error retry", async () => {
+    const h = harness();
+    h.poller.setSession("ses_one");
+    h.requests[0]?.reject(new Error("boom"));
+    await h.settle();
+    assert.deepEqual(h.shown(), ["error"]);
+    assert.equal(h.scheduled()?.ms, POLL_ERROR_MS);
+  });
+
   test("success, error, then the same success renders the graph again", async () => {
     const h = harness();
     const body = graphBody("ses_one");

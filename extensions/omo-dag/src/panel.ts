@@ -6,6 +6,8 @@ import { compact, shortModel, statusLine } from "./format.ts";
 import { GraphPoller, type PollView } from "./poller.ts";
 
 const SVG = "http://www.w3.org/2000/svg";
+document.documentElement.style.setProperty("--node-card-width", `${CARD_W}px`);
+document.documentElement.style.setProperty("--node-card-height", `${CARD_H}px`);
 
 type Paths = { agentDir?: string; stateDir?: string };
 
@@ -350,6 +352,7 @@ function render(next: TaskGraph) {
     `${done}/${tasks.length} done`,
     ...(running ? [`${running} running`] : []),
     ...(next.models ? [`${next.models} model${next.models === 1 ? "" : "s"}`] : []),
+    ...(next.truncated ? [`${next.truncated.omittedNodes} omitted`] : []),
   ].join(" · ");
   void host.setBadge(running > 0 ? running : null).catch(() => undefined);
 

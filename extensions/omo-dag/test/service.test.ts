@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "../src/service.ts";
 import type { TaskGraph } from "../src/graph.ts";
+import { TaskStore } from "../src/store.ts";
 
 const TOKEN = "test-token";
 let dir: string;
@@ -64,6 +65,66 @@ after(() => {
 const get = (path: string, token = TOKEN) => fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${token}` } });
 
 describe("service", () => {
+  test("retains a warm task during a torn write and refreshes it once JSON is valid", (t) => {
+    const root = mkdtempSync(join(tmpdir(), "omo-dag-cache-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const agent = join(root, "agent");
+    const tasks = join(agent, "projects", "cache", "senpi-task", "tasks");
+    const task = join(tasks, "st_warm0001.json");
+    mkdirSync(tasks, { recursive: true });
+    writeFileSync(task, JSON.stringify({ task_id: "st_warm0001", status: "running" }));
+    const store = new TaskStore({ agentDirs: [agent], stateDirs: [] });
+
+    assert.equal(store.loadTasks()[0]?.status, "running");
+    writeFileSync(task, "{ partial");
+    assert.equal(store.loadTasks()[0]?.status, "running");
+    writeFileSync(task, JSON.stringify({ task_id: "st_warm0001", status: "completed" }));
+    assert.equal(store.loadTasks()[0]?.status, "completed");
+  });
+
+  test("bounds oversized graph responses and reports omitted nodes", async (t) => {
+    const tasks = Array.from({ length: 1000 }, (_, index) => ({
+      task_id: `st_large${String(index).padStart(6, "0")}`,
+      status: "completed",
+      parent_session_id: "root-pi",
+      root_session_id: "root-pi",
+      created_at: "2026-10-14T12:00:00Z",
+      task_summary: `Task ${index}: ${"summary ".repeat(32)}`,
+      final_response: "output ".repeat(160),
+    }));
+    const capped = createServer(TOKEN, () => {
+      return {
+        loadTasks: () => tasks,
+        loadRegistry: () => ({ ses_root: { piSessionId: "root-pi", title: "Large run" } }),
+      } as never;
+    });
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          capped.close((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    await new Promise<void>((resolve, reject) => {
+      capped.once("error", reject);
+      capped.listen(0, "127.0.0.1", () => {
+        capped.off("error", reject);
+        resolve();
+      });
+    });
+    const address = capped.address();
+    if (address === null || typeof address === "string") throw new Error("service did not bind a TCP port");
+    const response = await fetch(`http://127.0.0.1:${address.port}/graph?session=ses_root`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const body = await response.text();
+    const graph = JSON.parse(body) as TaskGraph;
+
+    assert.equal(response.status, 200);
+    assert.ok(body.length <= 240_000);
+    assert.ok(graph.truncated);
+    assert.equal(graph.truncated.omittedNodes, tasks.length - (graph.nodes.length - 1));
+  });
+
   test("rejects requests without the host token", async () => {
     assert.equal((await get("/health", "wrong")).status, 401);
   });
