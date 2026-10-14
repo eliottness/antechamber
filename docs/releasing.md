@@ -9,6 +9,37 @@ Releases are cut from `main` by pushing a version tag. The
 3. publishes the package to npm with provenance,
 4. creates a GitHub release whose notes are that CHANGELOG section.
 
+## First release (0.1.0): the remaining step
+
+`package.json` is at `0.1.0` and `CHANGELOG.md` already has the
+`## [0.1.0]` section, so nothing else needs editing. 0.1.0 has not been
+published yet because the first npm publish needs maintainer credentials.
+Do **one** of the following:
+
+- **Token, fully automated:** add an npm automation token as the `NPM_TOKEN`
+  repository secret, then push the tag:
+
+  ```bash
+  git tag v0.1.0 && git push origin v0.1.0
+  ```
+
+  The release workflow publishes to npm and creates the GitHub release.
+
+- **Manual npm publish, then tag:**
+
+  ```bash
+  npm login
+  npm publish --access public   # builds through prepack
+  git tag v0.1.0 && git push origin v0.1.0
+  ```
+
+  The workflow's publish step will then fail because 0.1.0 already exists;
+  create the GitHub release by hand instead:
+  `gh release create v0.1.0 --notes-file <0.1.0 section of CHANGELOG.md>`.
+
+Afterwards, enable trusted publishing (below) so later releases need no
+secret.
+
 ## Cutting a release
 
 ```bash

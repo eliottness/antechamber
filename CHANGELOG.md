@@ -7,6 +7,34 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-14
+
+First standalone release under the `antechamber` name.
+
+### Renamed
+
+This project was previously published as `openchamber-pi-connector`. The
+rename affects:
+
+- Package and CLI binary: `openchamber-pi-connector` / `opencode-pi` to
+  `antechamber` (`dist/cli.js`, bin name `antechamber`).
+- Launcher script: `bin/opencode-antechamber` is the new OpenChamber launcher;
+  `bin/opencode-pi` is kept as a deprecated shim that forwards to it, so
+  existing `settings.opencodeBinary` values keep working.
+- Environment variables: all settings now read the `ANTECHAMBER_` prefix
+  first (for example `ANTECHAMBER_PI_BINARY`, `ANTECHAMBER_STATE_DIR`,
+  `ANTECHAMBER_AGENT`, `ANTECHAMBER_IDLE_TIMEOUT_MS`, `ANTECHAMBER_MAX_LIVE`,
+  `ANTECHAMBER_DEBUG`). The previous `OCPI_` prefix is still accepted as a
+  deprecated fallback; migrate at your own pace.
+- State directory: defaults to `~/.config/antechamber`. If that directory
+  doesn't exist yet but the legacy `~/.config/openchamber-pi-connector`
+  does, the legacy directory is used automatically so existing session
+  registries keep working across the upgrade. Move the directory manually
+  once you're ready to drop the fallback.
+- No action needed for most users: both the binary and environment variable
+  fallbacks mean an existing OpenChamber `settings.json` pointing at
+  `opencode-pi` keeps working unchanged.
+
 ### Changed
 
 - OmO is now the default backend: antechamber spawns `omo` unless
@@ -16,6 +44,42 @@ and this project uses [Semantic Versioning](https://semver.org/).
   is `pi`). A standard OmO install is advertised as the `OmO` agent without
   setting `ANTECHAMBER_AGENT`. Plain pi remains available as an opt-in,
   best-effort backend (`ANTECHAMBER_PI_BINARY=pi`).
+
+### Added
+
+- npm-first installation with `antechamber setup`: settings discovery,
+  isolated profiles, executable selection, timestamped backups, idempotency,
+  dry-run plans, and optional systemd user drop-ins with explicit restart.
+- Read-only `antechamber doctor` diagnostics with text/JSON output, backend
+  checks, agent/state directory checks, OpenChamber wiring and pidfd capability.
+- Explicit `serve`, `setup`, `doctor`, `version`, and `help` commands. Package
+  versions now come from `package.json`; the OpenChamber `--version` probe
+  keeps advertising `opencode v2.0.18`.
+- Public npm publication configuration with provenance and an executable
+  built CLI, plus installation, upgrade and rollback documentation.
+- Tag-driven release workflow: a `vX.Y.Z` tag runs the checks, publishes to
+  npm with provenance (trusted publishing or `NPM_TOKEN`) and creates the
+  GitHub release from this file. See [docs/releasing.md](docs/releasing.md).
+- Security hardening: optional HTTP Basic auth (`OPENCODE_SERVER_PASSWORD`),
+  `Origin` checks for unauthenticated servers, a non-loopback-bind guard, and
+  request/SSE/search limits. See [docs/configuration.md](docs/configuration.md#security).
+- OpenCode v2 API support (`@opencode-ai/sdk/v2`), alongside the original v1
+  surface, covering the endpoints OpenChamber >= 2.0.4 depends on.
+- [OmO](https://github.com/omo-ai) backend support (a pi-compatible
+  coding-agent distribution, aka senpi / oh-my-pi), including OmO-specific
+  session-tree fork/revert/unrevert, subagent and task cards, todo bridging,
+  and thinking-level mapping.
+- Session fork, revert, and unrevert backed by the agent's native session
+  tree rather than a filesystem snapshot.
+- Subagent and task cards rendered as native OpenChamber tool parts.
+- Approval and question bridging through the agent's extension-UI protocol.
+- Thinking-level selection surfaced through OpenChamber's model picker.
+- Shell run cards (user-invoked `!command` execution) with cancellation.
+- Session diff endpoint returning a unified patch independent of
+  OpenChamber's own git integration.
+- Session persistence and revival across connector restarts.
+- Idle session reaping and a configurable cap on concurrent live agent
+  processes (lifecycle caps).
 
 ### Fixed
 
@@ -50,73 +114,6 @@ and this project uses [Semantic Versioning](https://semver.org/).
   scanning without revival is deliberately omitted: those questions enter
   lists only after revival. Native repeated-crash recovery limitations
   remain; no native recovery code is changed.
-
-### Added
-
-- npm-first installation with `antechamber setup`: settings discovery,
-  isolated profiles, executable selection, timestamped backups, idempotency,
-  dry-run plans, and optional systemd user drop-ins with explicit restart.
-- Read-only `antechamber doctor` diagnostics with text/JSON output, backend
-  checks, agent/state directory checks, OpenChamber wiring and pidfd capability.
-- Explicit `serve`, `setup`, `doctor`, `version`, and `help` commands. Package
-  versions now come from `package.json`; the OpenChamber `--version` probe
-  keeps advertising `opencode v2.0.18`.
-- Public npm publication configuration with provenance and an executable
-  built CLI, plus installation, upgrade and rollback documentation.
-- Tag-driven release workflow: a `vX.Y.Z` tag runs the checks, publishes to
-  npm with provenance (trusted publishing or `NPM_TOKEN`) and creates the
-  GitHub release from this file. See [docs/releasing.md](docs/releasing.md).
-- Security hardening: optional HTTP Basic auth (`OPENCODE_SERVER_PASSWORD`),
-  `Origin` checks for unauthenticated servers, a non-loopback-bind guard, and
-  request/SSE/search limits. See [docs/configuration.md](docs/configuration.md#security).
-
-## [0.1.0] - 2026-10-13
-
-First standalone release under the `antechamber` name.
-
-### Renamed
-
-This project was previously published as `openchamber-pi-connector`. The
-rename affects:
-
-- Package and CLI binary: `openchamber-pi-connector` / `opencode-pi` to
-  `antechamber` (`dist/cli.js`, bin name `antechamber`).
-- Launcher script: `bin/opencode-antechamber` is the new OpenChamber launcher;
-  `bin/opencode-pi` is kept as a deprecated shim that forwards to it, so
-  existing `settings.opencodeBinary` values keep working.
-- Environment variables: all settings now read the `ANTECHAMBER_` prefix
-  first (for example `ANTECHAMBER_PI_BINARY`, `ANTECHAMBER_STATE_DIR`,
-  `ANTECHAMBER_AGENT`, `ANTECHAMBER_IDLE_TIMEOUT_MS`, `ANTECHAMBER_MAX_LIVE`,
-  `ANTECHAMBER_DEBUG`). The previous `OCPI_` prefix is still accepted as a
-  deprecated fallback; migrate at your own pace.
-- State directory: defaults to `~/.config/antechamber`. If that directory
-  doesn't exist yet but the legacy `~/.config/openchamber-pi-connector`
-  does, the legacy directory is used automatically so existing session
-  registries keep working across the upgrade. Move the directory manually
-  once you're ready to drop the fallback.
-- No action needed for most users: both the binary and environment variable
-  fallbacks mean an existing OpenChamber `settings.json` pointing at
-  `opencode-pi` keeps working unchanged.
-
-### Added
-
-- OpenCode v2 API support (`@opencode-ai/sdk/v2`), alongside the original v1
-  surface, covering the endpoints OpenChamber >= 2.0.4 depends on.
-- [OmO](https://github.com/omo-ai) backend support (a pi-compatible
-  coding-agent distribution, aka senpi / oh-my-pi), including OmO-specific
-  session-tree fork/revert/unrevert, subagent and task cards, todo bridging,
-  and thinking-level mapping.
-- Session fork, revert, and unrevert backed by the agent's native session
-  tree rather than a filesystem snapshot.
-- Subagent and task cards rendered as native OpenChamber tool parts.
-- Approval and question bridging through the agent's extension-UI protocol.
-- Thinking-level selection surfaced through OpenChamber's model picker.
-- Shell run cards (user-invoked `!command` execution) with cancellation.
-- Session diff endpoint returning a unified patch independent of
-  OpenChamber's own git integration.
-- Session persistence and revival across connector restarts.
-- Idle session reaping and a configurable cap on concurrent live agent
-  processes (lifecycle caps).
 
 ### History
 
