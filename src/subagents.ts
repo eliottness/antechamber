@@ -331,8 +331,9 @@ export class SubagentBridge {
     if (message.customType !== "omo-senpi:wake") return;
     for (const data of taskCompletions(message.details)) {
       const id = ocIdFor(String(data.task_id));
-      // A wake for a task with no card (spawned from `eval`) is the first live sign of it.
-      if (!this.children.has(id) && !this.removed.has(id) && !this.store.get(id)) this.adopt(id);
+      // A registry-only child (after a restart) or a task with no card (spawned from
+      // `eval`) is not loaded yet; restore() covers both.
+      if (!this.children.has(id)) this.restore(id);
       const child = this.children.get(id);
       if (child?.session.info.parentID !== parent.info.id) continue;
       child.task.details = { ...child.task.details, ...data };
@@ -437,12 +438,7 @@ export class SubagentBridge {
   ): ManagedSession | undefined {
     if (!found) return undefined;
     const parentPi = String(found.data.parent_session_id);
-    const parentID = ocIdFor(parentPi);
-    const entry = this.store.get(parentID);
-    const parent =
-      [...this.sessions.values()].find(
-        (s) => s.info.id === parentID || s.piSessionId === parentPi || s.restored?.piSessionId === parentPi,
-      ) ?? (entry ? this.detachedParent(parentID, entry.directory, entry) : undefined);
+    const parent = this.parentFor(parentPi);
     if (!parent) return undefined;
     this.wire(parent);
     const spec = record(found.data.spawn_spec) ? found.data.spawn_spec : {};
@@ -459,6 +455,31 @@ export class SubagentBridge {
     });
     this.refresh(child, false);
     return child.session;
+  }
+
+  /**
+   * Root sessions are keyed by the md5 of their pi session id, but a nested child
+   * is keyed by its task id, so its pi session id is matched through the registry.
+   */
+  private parentFor(parentPi: string, childByPi = this.childIdsByPi()): ManagedSession | undefined {
+    const rootID = ocIdFor(parentPi);
+    const loaded = [...this.sessions.values()].find(
+      (s) => s.info.id === rootID || s.piSessionId === parentPi || s.restored?.piSessionId === parentPi,
+    );
+    if (loaded) return loaded;
+    const id = this.store.get(rootID) ? rootID : childByPi.get(parentPi);
+    if (id === undefined) return undefined;
+    const entry = this.store.get(id);
+    return this.sessions.get(id) ?? (entry ? this.detachedParent(id, entry.directory, entry) : undefined);
+  }
+
+  private childIdsByPi(): Map<string, string> {
+    const byPi = new Map<string, string>();
+    for (const id of this.store.childIds()) {
+      const piSessionId = this.store.get(id)?.piSessionId;
+      if (piSessionId) byPi.set(piSessionId, id);
+    }
+    return byPi;
   }
 
   private detachedParent(id: string, directory: string, times: { created: number; updated: number }): ManagedSession {
@@ -485,6 +506,7 @@ export class SubagentBridge {
 
   restoreAll(): void {
     for (const id of this.store.childIds()) this.restore(id);
+    const childByPi = this.childIdsByPi();
     for (const { id, path } of taskFiles()) {
       const sessionId = ocIdFor(id);
       if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
@@ -494,8 +516,7 @@ export class SubagentBridge {
         if (typeof parent !== "string") continue;
         this.taskParents.set(id, (parentPi = parent));
       }
-      const parentID = ocIdFor(parentPi);
-      if (!this.sessions.has(parentID) && !this.store.get(parentID)) continue;
+      if (!this.parentFor(parentPi, childByPi)) continue;
       const data = childRecord(id, path);
       if (data) this.adopt(sessionId, { path, data });
     }
