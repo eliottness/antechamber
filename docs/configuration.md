@@ -23,7 +23,47 @@ either, but prefer the `ANTECHAMBER_` name for anything new. A blank value
 
 Non-prefixed CLI flags (`--port`, `--host`/`--hostname`, `--directory`) are
 set on the command line, not through environment variables; see the README's
-Quick start section and `antechamber --help` behavior in `src/cli.ts`.
+Quick start section and `antechamber --help`.
+
+## OpenChamber setup
+
+`antechamber setup` sets `opencodeBinary` to this installation's absolute
+`antechamber` executable on PATH, or its executable `dist/cli.js` if PATH
+points at a different installation. `--binary <path>` selects an explicit
+executable. The npm bin works directly; the `bin/opencode-antechamber`
+launcher is only needed in source checkouts.
+
+Settings-file precedence:
+
+1. `--settings <file>`.
+2. `--profile <dir>` uses `<dir>/settings.json`, creates it when missing, and
+   prints an `OPENCHAMBER_DATA_DIR=<dir> openchamber serve` command.
+3. `OPENCHAMBER_DATA_DIR` uses that directory's `settings.json`.
+4. `~/.config/openchamber/settings.json`.
+
+Existing keys are preserved. Before modifying an existing file, setup copies
+it to `<file>.bak-antechamber-<YYYYMMDDHHMMSS>` (UTC). Already configured files
+are left untouched. Invalid JSON or non-object settings are rejected.
+`--dry-run` prints the proposed change and backups without writing anything.
+
+`--systemd [unit]` defaults to `openchamber.service`. It writes
+`~/.config/systemd/user/<unit>.d/antechamber.conf` with the current PATH,
+`ANTECHAMBER_PI_BINARY` set to the absolute `omo` executable found on PATH
+(or `--pi-binary <path>`), `KillMode=control-group`, and `TimeoutStopSec=20`.
+Existing drop-ins are backed up before changes. Other drop-ins setting
+`ANTECHAMBER_*` or `OCPI_*` produce warnings; later files override earlier
+ones. The printed daemon-reload/restart command runs only with `--restart`.
+For a service using a custom data directory, target the same settings file
+with `--settings` or `--profile`; `--profile` does not change the service's
+`OPENCHAMBER_DATA_DIR` environment.
+
+`antechamber doctor` checks the current environment without creating or
+modifying directories or settings. It accepts the same `--settings` and
+`--profile` selection and `--json` for a report with `checks` (name, status,
+message) and `exitCode`. Missing backend/agent directories, unsupported Node,
+or unwritable state directories are FAIL; optional OpenChamber configuration
+and private-host teardown capability issues are WARN. Authentication presence
+is informational and never exposes the password.
 
 ## Security
 
@@ -32,7 +72,7 @@ Quick start section and `antechamber --help` behavior in `src/cli.ts`.
 | `OPENCODE_SERVER_PASSWORD` | unset (no auth) | Enables HTTP Basic auth on every route, including `/global/health` and the SSE streams, matching [OpenCode's server contract](https://opencode.ai/docs/server/#authentication). Takes precedence over `ANTECHAMBER_SERVER_PASSWORD`. |
 | `ANTECHAMBER_SERVER_PASSWORD` (legacy `OCPI_SERVER_PASSWORD`) | unset | Fallback password when `OPENCODE_SERVER_PASSWORD` is not set. |
 | `OPENCODE_SERVER_USERNAME` | `opencode` | Basic auth username. |
-| `ANTECHAMBER_ALLOWED_ORIGINS` (legacy `OCPI_ALLOWED_ORIGINS`) | none | Comma-separated extra browser origins (`https://host:port`). Loopback origins are always allowed; requests carrying any other `Origin` get `403`. CORS headers echo allowed origins only. |
+| `ANTECHAMBER_ALLOWED_ORIGINS` (legacy `OCPI_ALLOWED_ORIGINS`) | none | Comma-separated extra browser origins (`https://host:port`). Loopback origins are always allowed. Without a server password, requests carrying any other `Origin` get `403`; with one, they are served (the password is the boundary, and OpenChamber's proxy forwards its clients' origins) but receive no CORS headers. CORS headers echo allowed origins only. |
 | `ANTECHAMBER_MAX_BODY_BYTES` (legacy `OCPI_MAX_BODY_BYTES`) | `10485760` (10 MiB) | Maximum request body; larger bodies get `413`. Malformed JSON or a non-object body gets `400`. |
 | `ANTECHAMBER_ALLOW_INSECURE` (legacy `OCPI_ALLOW_INSECURE`) | unset | Set to exactly `1` to allow binding a non-loopback host without a password. |
 | `--insecure-no-auth` (CLI flag) | absent | Same as `ANTECHAMBER_ALLOW_INSECURE=1`. |
@@ -55,7 +95,8 @@ If you have an existing deployment:
    works as a shim for `bin/opencode-antechamber`.
 2. When you're ready, rename your environment variables from `OCPI_*` to
    `ANTECHAMBER_*` (same suffix, same value) and update
-   `settings.opencodeBinary` to point at `bin/opencode-antechamber`.
+   `settings.opencodeBinary` by running `antechamber setup` (or point at
+   `bin/opencode-antechamber` in a source checkout).
 3. Your existing state directory (`~/.config/openchamber-pi-connector` by
    default) is picked up automatically as long as `~/.config/antechamber`
    doesn't exist yet. Once you're ready to drop the legacy path entirely,

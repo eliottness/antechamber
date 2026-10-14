@@ -36,7 +36,7 @@
     "antechamber": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node --input-type=module -e \"import { chmodSync } from 'node:fs'; chmodSync('dist/cli.js', 0o755)\"",
     "prepack": "npm run build",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.check.json",
@@ -53,6 +53,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

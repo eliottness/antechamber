@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { errorBody, json } from "./http.js";
 import { debugLog } from "./misc-routes.js";
+import { OPENCODE_API_VERSION } from "./version.js";
 import { toV2Permission } from "./approvals.js";
 import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-forms.js";
 import { getAgentName, getExposedAgentNames } from "./agent-name.js";
@@ -91,7 +92,7 @@ export async function handleV2(
   // --- bootstrap ---
   if (path === "/api/info" && method === "GET") {
     json(res, 200, {
-      version: OPENCODE_COMPAT_VERSION ?? "2.0.18",
+      version: OPENCODE_COMPAT_VERSION ?? OPENCODE_API_VERSION,
       pid: process.pid,
       urls: [services.url],
       paths: { tmp: tmpdir() },

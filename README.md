@@ -67,34 +67,50 @@ implements.
 Needs Node.js 22+ and OmO's `omo` command on PATH (`bun add -g omo-ai`).
 
 ```bash
-git clone https://github.com/eliottness/antechamber.git
-cd antechamber
-npm ci
-npm run build
+npm i -g antechamber
+# or: bun add -g antechamber
+antechamber doctor
+antechamber setup
 ```
 
-Point OpenChamber at the built launcher through an isolated data directory so
-your main OpenChamber setup stays untouched:
+The first npm publication (0.1.0) is part of the
+[release process](docs/releasing.md). If it is not on the registry yet, use
+[From source](#from-source) below.
+
+`setup` updates OpenChamber's `opencodeBinary`, preserves all other settings,
+and backs up an existing settings file before changing it. Restart OpenChamber
+after setup. Preview changes with `antechamber setup --dry-run`.
+
+For an isolated OpenChamber instance, leaving your main settings untouched:
 
 ```bash
-mkdir -p ~/.config/antechamber-openchamber
-printf '{\n  "opencodeBinary": "%s/bin/opencode-antechamber"\n}\n' "$PWD" \
-  > ~/.config/antechamber-openchamber/settings.json
-
+antechamber setup --profile ~/.config/antechamber-openchamber
+# setup prints the command for this profile:
 OPENCHAMBER_DATA_DIR=~/.config/antechamber-openchamber openchamber serve --port 57124
-# open http://127.0.0.1:57124
 ```
 
-That starts a second OpenChamber instance whose sessions run on OmO, leaving
-your main OpenChamber setup on plain OpenCode.
+For a systemd-managed OpenChamber, also capture the shell's PATH and the
+absolute OmO executable in a user service drop-in:
+
+```bash
+antechamber setup --systemd
+# default unit: openchamber.service; another unit: --systemd my-openchamber.service
+systemctl --user daemon-reload && systemctl --user restart openchamber.service
+# or explicitly let setup run those commands:
+antechamber setup --systemd --restart
+```
+
+`--pi-binary /absolute/path/to/omo` overrides backend discovery for the drop-in.
+Other drop-ins setting `ANTECHAMBER_*` or `OCPI_*` produce a warning: later
+files can override the generated configuration. `setup` never runs systemctl
+unless `--restart` is passed.
 
 OpenChamber spawns whatever `settings.opencodeBinary` points at as
 `serve --hostname H --port P`, waits for the stdout line
 `opencode server listening on <url>`, then health-checks `/global/health`.
-`bin/opencode-antechamber` implements that contract on top of `dist/cli.js`;
-it requires `npm run build` to have run first. `bin/opencode-pi` is a
-deprecated shim kept for settings files written before the project was
-renamed from `openchamber-pi-connector`.
+The installed `antechamber` bin implements this contract itself, including the
+`--version` compatibility probe. `bin/opencode-antechamber` is only needed for
+source checkouts; `bin/opencode-pi` remains a deprecated compatibility shim.
 
 You can also run antechamber directly, outside of OpenChamber's managed
 lifecycle:
@@ -104,6 +120,60 @@ antechamber --port 4096 --host 127.0.0.1 --directory /path/to/project
 # or, OpenCode-compatible:
 antechamber serve --hostname 127.0.0.1 --port 4096
 ```
+
+## Commands
+
+| Command | Purpose / options |
+|---|---|
+| `antechamber serve` | OpenCode-compatible server; `--hostname`/`--host`, `--port`, `--directory`. Bare `antechamber` also starts the server. |
+| `antechamber setup` | Configure OpenChamber; `--settings <file>`, `--profile <dir>`, `--binary <path>`, `--dry-run`, `--systemd [unit]`, `--pi-binary <path>`, `--restart`. |
+| `antechamber doctor` | Read-only Node, backend, agent/state directories, teardown, OpenChamber and auth checks; `--json`, `--settings <file>`, `--profile <dir>`. Exits 1 on any FAIL; warnings do not fail. |
+| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.0.18` for OpenChamber. |
+| `antechamber help` | Usage and options; also `--help`/`-h`. |
+
+## Upgrade, uninstall and rollback
+
+```bash
+npm update -g antechamber
+# or: bun add -g antechamber
+```
+
+Restart OpenChamber, or `systemctl --user restart openchamber.service` for a
+managed service. Run `antechamber doctor` again. If the executable moved,
+rerun `antechamber setup`.
+
+To roll back wiring, copy the backup printed by setup over the settings file:
+
+```bash
+cp /path/settings.json.bak-antechamber-YYYYMMDDHHMMSS /path/settings.json
+```
+
+If you used `--systemd`, restore the printed `antechamber.conf` backup, or
+remove only that generated drop-in if there was no previous file. Then run
+`systemctl --user daemon-reload` and restart OpenChamber/the service. Restore
+the old `opencodeBinary` before uninstalling:
+
+```bash
+npm uninstall -g antechamber
+# or: bun remove -g antechamber
+```
+
+## From source
+
+```bash
+git clone https://github.com/eliottness/antechamber.git
+cd antechamber
+npm ci
+npm run build
+node dist/cli.js doctor
+node dist/cli.js setup --binary "$PWD/bin/opencode-antechamber"
+# isolated alternative:
+node dist/cli.js setup --profile ~/.config/antechamber-openchamber \
+  --binary "$PWD/bin/opencode-antechamber"
+```
+
+The source launcher requires the built `dist/cli.js`. Pull updates, run
+`npm ci && npm run build`, and restart OpenChamber.
 
 ## Configuration
 
@@ -133,8 +203,8 @@ Hardening controls (full reference in [docs/configuration.md](docs/configuration
 - Optional HTTP Basic auth, matching OpenCode's own contract:
   `OPENCODE_SERVER_PASSWORD` (plus `OPENCODE_SERVER_USERNAME`, default
   `opencode`).
-- Requests carrying a non-loopback browser `Origin` are rejected unless listed
-  in `ANTECHAMBER_ALLOWED_ORIGINS`.
+- Without a password, requests carrying a non-loopback browser `Origin` are
+  rejected unless listed in `ANTECHAMBER_ALLOWED_ORIGINS`.
 - Binding to a non-loopback host requires a password, `ANTECHAMBER_ALLOW_INSECURE=1`,
   or the `--insecure-no-auth` flag.
 - Request bodies are capped by `ANTECHAMBER_MAX_BODY_BYTES` (default 10 MiB);
@@ -172,6 +242,10 @@ The smoke scripts (`npm run smoke`, `npm run omo-smoke`, `npm run probe`,
 process end to end and cost model tokens; they are not part of `npm test`
 and are not run in CI. See [docs/development.md](docs/development.md).
 
+Releases are cut by pushing a `vX.Y.Z` tag; CI then runs the checks,
+publishes to npm with provenance and creates the GitHub release from the
+CHANGELOG. See [docs/releasing.md](docs/releasing.md).
+
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md) - design and session-model mapping
@@ -179,6 +253,7 @@ and are not run in CI. See [docs/development.md](docs/development.md).
 - [docs/configuration.md](docs/configuration.md) - full environment variable reference
 - [docs/development.md](docs/development.md) - source layout, testing, smoke scripts
 - [docs/backends/omo.md](docs/backends/omo.md) - OmO backend details (agent name, task hosts, transcripts)
+- [docs/releasing.md](docs/releasing.md) - versioning, tag-driven npm and GitHub releases
 
 ## Credits
 

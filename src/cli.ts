@@ -1,74 +1,77 @@
 #!/usr/bin/env node
-/**
- * antechamber CLI.
- *
- * Default mode:
- *   antechamber [--port 4096] [--host 127.0.0.1] [--directory /path]
- *
- * OpenCode-compatible serve mode — OpenChamber spawns
- * `$OPENCODE_BINARY serve --hostname H --port P` and waits for the stdout
- * line "opencode server listening on <url>", then health-checks
- * GET /global/health:
- *   antechamber serve --hostname 127.0.0.1 --port 4096 [--directory /path]
- */
+/** CLI parsing and dispatch. Server code is loaded only for serve/default mode. */
+import { parseArgs } from "node:util";
+import { ADAPTER_VERSION, OPENCODE_API_VERSION } from "./version.js";
 
-import { AdapterServer, isLoopbackHost, serverPassword } from "./server.js";
-import { envSetting } from "./config.js";
-
-function arg(name: string, fallback: string): string {
-  const argv = process.argv;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === `--${name}` && argv[i + 1] !== undefined) return argv[i + 1]!;
-    if (a.startsWith(`--${name}=`)) return a.slice(name.length + 3);
+try {
+  const argv = process.argv.slice(2);
+  // Keep this probe byte-identical: OpenChamber expects an OpenCode 2.x version.
+  if (argv.includes("--version") || argv.includes("-v")) {
+    console.log(`opencode v${OPENCODE_API_VERSION}`);
+  } else {
+    const { values, positionals } = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      options: {
+        help: { type: "boolean", short: "h" },
+        port: { type: "string" },
+        host: { type: "string" },
+        hostname: { type: "string" },
+        directory: { type: "string" },
+        "insecure-no-auth": { type: "boolean" },
+        settings: { type: "string" },
+        profile: { type: "string" },
+        binary: { type: "string" },
+        "dry-run": { type: "boolean" },
+        systemd: { type: "boolean" },
+        "pi-binary": { type: "string" },
+        restart: { type: "boolean" },
+        json: { type: "boolean" },
+      },
+    });
+    const command = values.help ? "help" : (positionals[0] ?? "serve");
+    if (command === "help") {
+      const { help } = await import("./commands/help.js");
+      console.log(help);
+    } else if (command === "version") {
+      console.log(`antechamber ${ADAPTER_VERSION} (OpenCode API v${OPENCODE_API_VERSION})`);
+    } else if (command === "setup") {
+      if (positionals.length > (values.systemd ? 2 : 1)) throw new Error("Unexpected setup argument");
+      const { setup } = await import("./commands/setup.js");
+      setup({
+        ...(values.settings !== undefined ? { settings: values.settings } : {}),
+        ...(values.profile !== undefined ? { profile: values.profile } : {}),
+        ...(values.binary !== undefined ? { binary: values.binary } : {}),
+        ...(values["pi-binary"] !== undefined ? { piBinary: values["pi-binary"] } : {}),
+        ...(values.systemd ? { systemd: positionals[1] ?? "openchamber.service" } : {}),
+        dryRun: values["dry-run"] ?? false,
+        restart: values.restart ?? false,
+      });
+    } else if (command === "doctor") {
+      const { doctor, formatDoctor } = await import("./commands/doctor.js");
+      const report = doctor({
+        ...(values.settings !== undefined ? { settings: values.settings } : {}),
+        ...(values.profile !== undefined ? { profile: values.profile } : {}),
+      });
+      console.log(formatDoctor(report, values.json ?? false));
+      process.exitCode = report.exitCode;
+    } else if (command === "serve") {
+      if (positionals.length > 1) throw new Error("Unexpected serve argument");
+      const { serve } = await import("./commands/serve.js");
+      const port = Number(values.port ?? "4096");
+      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid --port: expected 0-65535");
+      await serve({
+        port,
+        host: values.host ?? values.hostname ?? "127.0.0.1",
+        directory: values.directory ?? process.cwd(),
+        insecureNoAuth: values["insecure-no-auth"] ?? false,
+        compatible: positionals[0] === "serve",
+      });
+    } else {
+      throw new Error(`Unknown command: ${command}. Run antechamber help.`);
+    }
   }
-  return fallback;
+} catch (error) {
+  console.error(`antechamber: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
 }
-
-// OpenChamber >= 2.0.4 probes `<binary> --version` and requires opencode
-// >= 2.0.15 (major 2); advertise the v2 API contract this adapter implements.
-if (process.argv.includes("--version") || process.argv.includes("-v")) {
-  console.log("opencode v2.0.18");
-  process.exit(0);
-}
-
-const serveMode = process.argv[2] === "serve";
-
-const port = Number(arg("port", "4096"));
-const host = arg("host", arg("hostname", "127.0.0.1"));
-const directory = arg("directory", process.cwd());
-
-if (
-  !isLoopbackHost(host) &&
-  serverPassword() === undefined &&
-  !process.argv.includes("--insecure-no-auth") &&
-  envSetting("ALLOW_INSECURE") !== "1"
-) {
-  console.error(
-    `antechamber: refusing to bind ${host} without authentication. Set OPENCODE_SERVER_PASSWORD or ANTECHAMBER_SERVER_PASSWORD, or explicitly use --insecure-no-auth (ANTECHAMBER_ALLOW_INSECURE=1).`,
-  );
-  process.exit(1);
-}
-
-const server = new AdapterServer({ port, host, defaultDirectory: directory });
-
-await server.start();
-
-if (serveMode) {
-  console.log(`opencode server listening on ${server.url}`);
-} else {
-  console.log(`antechamber listening on ${server.url}`);
-  console.log(`default directory: ${directory}`);
-}
-
-const shutdown = (): void => {
-  void server.stop().then(
-    () => process.exit(0),
-    (error: unknown) => {
-      console.error("antechamber: shutdown failed:", error);
-      process.exit(1);
-    },
-  );
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);

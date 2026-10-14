@@ -10,6 +10,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { envSetting } from "./config.js";
 import { piAgentDir } from "./agent-dir.js";
@@ -54,13 +55,20 @@ function stripComments(text: string): string {
   return out;
 }
 
-function detect(): string {
-  const fromEnv = envSetting("AGENT");
+export function detectAgentName(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+  fs: { readonly existsSync: typeof existsSync; readonly readFileSync: typeof readFileSync } = {
+    existsSync,
+    readFileSync,
+  },
+): string {
+  const fromEnv = envSetting("AGENT", env);
   if (typeof fromEnv === "string" && fromEnv.trim() !== "") return fromEnv.trim();
-  const agentDir = piAgentDir();
+  const agentDir = piAgentDir(env, home);
 
   try {
-    const raw = readFileSync(join(dirname(agentDir), "oh-my-pi.jsonc"), "utf8");
+    const raw = fs.readFileSync(join(dirname(agentDir), "oh-my-pi.jsonc"), "utf8");
     const cfg = JSON.parse(stripComments(raw)) as { orchestrator?: { agentName?: unknown } };
     const name = cfg.orchestrator?.agentName;
     if (typeof name === "string" && name.trim() !== "") return name.trim();
@@ -68,10 +76,10 @@ function detect(): string {
     // missing or unparseable config → fall through
   }
 
-  if (existsSync(join(dirname(agentDir), "omo.jsonc"))) return "OmO";
+  if (fs.existsSync(join(dirname(agentDir), "omo.jsonc"))) return "OmO";
 
   try {
-    const raw = readFileSync(join(agentDir, "settings.json"), "utf8");
+    const raw = fs.readFileSync(join(agentDir, "settings.json"), "utf8");
     const settings = JSON.parse(raw) as { packages?: unknown };
     if (
       Array.isArray(settings.packages) &&
@@ -89,7 +97,7 @@ function detect(): string {
 let cached: string | undefined;
 
 export function getAgentName(): string {
-  if (cached === undefined) cached = detect();
+  if (cached === undefined) cached = detectAgentName();
   return cached;
 }
 

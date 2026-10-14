@@ -81,6 +81,12 @@ They make real model calls and will cost tokens on whatever provider your
 agent is configured with. See `contrib/smoke/README.md` for the full check
 list, the `--only` selector, and how to add a new check module.
 
+## Releases
+
+Maintainers cut releases by pushing a `vX.Y.Z` tag; see
+[docs/releasing.md](docs/releasing.md). Add user-visible changes to the
+`[Unreleased]` section of `CHANGELOG.md` in the same PR.
+
 ## Pull request checklist
 
 - [ ] `npm run typecheck` passes

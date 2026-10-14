@@ -19,6 +19,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- With a server password configured, requests carrying a non-loopback
+  `Origin` (forwarded by OpenChamber's proxy for LAN browsers and the desktop
+  app) are no longer rejected with 403; the password is the boundary.
 - Turn statistics now use the native assistant stop reason independently of
   usage, normalize tool-call finishes, and preserve tokens, cost, errors, and
   response-model attribution in v1 and v2 history. Restored messages retain
@@ -50,11 +53,22 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Security hardening in progress: optional HTTP Basic auth
-  (`OPENCODE_SERVER_PASSWORD`), non-loopback `Origin` rejection, a
-  non-loopback-bind guard, and a request body size limit. See
-  [docs/configuration.md](docs/configuration.md) for exact variable names
-  once landed.
+- npm-first installation with `antechamber setup`: settings discovery,
+  isolated profiles, executable selection, timestamped backups, idempotency,
+  dry-run plans, and optional systemd user drop-ins with explicit restart.
+- Read-only `antechamber doctor` diagnostics with text/JSON output, backend
+  checks, agent/state directory checks, OpenChamber wiring and pidfd capability.
+- Explicit `serve`, `setup`, `doctor`, `version`, and `help` commands. Package
+  versions now come from `package.json`; the OpenChamber `--version` probe
+  keeps advertising `opencode v2.0.18`.
+- Public npm publication configuration with provenance and an executable
+  built CLI, plus installation, upgrade and rollback documentation.
+- Tag-driven release workflow: a `vX.Y.Z` tag runs the checks, publishes to
+  npm with provenance (trusted publishing or `NPM_TOKEN`) and creates the
+  GitHub release from this file. See [docs/releasing.md](docs/releasing.md).
+- Security hardening: optional HTTP Basic auth (`OPENCODE_SERVER_PASSWORD`),
+  `Origin` checks for unauthenticated servers, a non-loopback-bind guard, and
+  request/SSE/search limits. See [docs/configuration.md](docs/configuration.md#security).
 
 ## [0.1.0] - 2026-10-13
 

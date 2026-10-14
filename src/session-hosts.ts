@@ -1,38 +1,9 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { closeSync, constants, openSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
-import { basename, delimiter, resolve } from "node:path";
-
-function findPidfdPython(): string | undefined {
-  const candidates = new Set([
-    ...(process.env.PATH ?? "").split(delimiter).map((directory) => resolve(directory, "python3")),
-    "/bin/python3",
-    "/usr/bin/python3",
-  ]);
-  for (const binary of candidates) {
-    const result = spawnSync(
-      binary,
-      [
-        "-I",
-        "-c",
-        String.raw`
-import os, selectors, signal
-fd = os.pidfd_open(os.getpid())
-try:
-    signal.pidfd_send_signal(fd, 0)
-    with selectors.DefaultSelector() as selector:
-        selector.register(fd, selectors.EVENT_READ)
-finally:
-    os.close(fd)
-`,
-      ],
-      { stdio: "ignore", timeout: 1_000, killSignal: "SIGKILL" },
-    );
-    if (!result.error && result.status === 0) return binary;
-  }
-  return undefined;
-}
+import { basename } from "node:path";
+import { findPidfdPython } from "./pidfd.js";
 
 /** Capability and warning state are captured once, before any shutdown work. */
 export function createSessionHostStopper(

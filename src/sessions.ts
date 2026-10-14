@@ -54,7 +54,8 @@ import type {
   OCUserMessage,
 } from "./types.js";
 
-export const ADAPTER_VERSION = "0.1.0";
+import { ADAPTER_VERSION } from "./version.js";
+export { ADAPTER_VERSION } from "./version.js";
 const SESSION_SCAN_CACHE_TTL_MS = 5_000;
 
 interface StreamingState {

@@ -19,6 +19,7 @@ import { ocIdFor, SessionPersistenceError, type SessionStore } from "./session-s
 import { mapTool, resultText, toolMappers, type ToolResult } from "./tool-map.js";
 import type { ManagedSession } from "./sessions.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "./types.js";
+import { ADAPTER_VERSION } from "./version.js";
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -382,7 +383,7 @@ export class SubagentBridge {
         projectID: entry.directory,
         directory: entry.directory,
         title: "",
-        version: "0.1.0",
+        version: ADAPTER_VERSION,
         time: { created: entry.created, updated: entry.updated },
       },
       pi: undefined,

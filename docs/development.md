@@ -6,7 +6,14 @@ One line per module in `src/`:
 
 | File | Responsibility |
 |---|---|
-| `cli.ts` | CLI entry point: arg parsing, `--version`, default vs. `serve` mode, startup/shutdown signal handling |
+| `cli.ts` | CLI entry point: argument parsing and lazy dispatch to serve, setup, doctor, version and help |
+| `version.ts` | Runtime package.json version and the separate OpenCode 2.x compatibility constant |
+| `commands/serve.ts` | Default/OpenCode-compatible server startup, bind guard and shutdown signals |
+| `commands/setup.ts` | OpenChamber settings and optional systemd drop-in plans, backups and configuration |
+| `commands/doctor.ts` | Read-only installation diagnostics and text/JSON reporting |
+| `commands/context.ts` | Injectable filesystem/environment/exec dependencies, executable and settings resolution |
+| `commands/help.ts` | Command and option reference printed by help |
+| `pidfd.ts` | Shared bounded Python/Linux pidfd capability probe for doctor and session-host teardown |
 | `server.ts` | `AdapterServer` composition root: service wiring, request dispatch, start/stop/url |
 | `http.ts` | Shared HTTP body reader, JSON/error responses, authentication, origin checks, and CORS |
 | `sse.ts` | SSE subscriber registry, v1/v2 framing, heartbeat, backpressure, and teardown |
