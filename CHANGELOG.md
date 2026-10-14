@@ -23,6 +23,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - fix(api): return OpenCode 2.x bootstrap shapes for `/api/config`, `/api/shell`, `/api/websearch/provider` and `GET /api/mcp` so OpenChamber 2.3.2 can initialize workspaces
 - fix(api): answer v2 synthetic context admission with the admitted record and return the bare interrupt flag, so OpenChamber 2.3.2 can send prompts and stop turns
 - fix(extension): bound graph responses and display omitted-node counts
+- fix(rpc): after the agent exits during shutdown, kill only re-identified members of its process group
 
 ### Changed
 

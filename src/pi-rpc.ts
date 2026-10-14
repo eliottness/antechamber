@@ -12,6 +12,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { systemClock, type LifecycleClock } from "./lifecycle.js";
 import { agentBinary, envSetting } from "./config.js";
 
@@ -37,6 +38,46 @@ export class UpstreamProtocolError extends Error {
 }
 const PROCESS_KILL_GRACE_MS = 5_000;
 
+/** A process's group and kernel start time: with the PID, the identity that survives PID reuse checks. */
+interface ProcessIdentity {
+  readonly pid: number;
+  readonly group: number;
+  readonly start: string;
+}
+
+/** Reads process identities so disposal can tell owned survivors from a reused PID. */
+export interface ProcessTable {
+  identity(pid: number): ProcessIdentity | undefined;
+  groupMembers(group: number): ProcessIdentity[];
+}
+
+// Linux /proc. Any read failure (gone, no permission, no /proc) means the identity cannot be
+// verified, and an unverifiable process is never signalled: fail closed.
+const procTable: ProcessTable = {
+  identity(pid) {
+    let stat: string;
+    try {
+      stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      return undefined;
+    }
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return { pid, group: Number(fields[2]), start: fields[19] ?? "" };
+  },
+  groupMembers(group) {
+    let names: string[];
+    try {
+      names = readdirSync("/proc");
+    } catch {
+      return [];
+    }
+    return names
+      .filter((name) => /^\d+$/.test(name))
+      .flatMap((name) => procTable.identity(Number(name)) ?? [])
+      .filter((member) => member.group === group);
+  },
+};
+
 export type PiRpcResponse<T = unknown> = {
   readonly id: string;
   readonly type: "response";
@@ -53,6 +94,7 @@ interface PiRpcClientOptions {
   /** Extra CLI flags, e.g. ["--no-session"] or ["--provider", "x"]. */
   args?: string[];
   clock?: LifecycleClock;
+  processTable?: ProcessTable;
 }
 
 interface PendingRequest {
@@ -181,7 +223,12 @@ export class PiRpcClient extends EventEmitter {
     this.failAll(error);
     this.proc.stdout?.destroy();
     if (this.proc.pid === undefined) this.proc.kill("SIGKILL");
-    else process.kill(-this.proc.pid, "SIGKILL");
+    else if (!this.reaped()) process.kill(-this.proc.pid, "SIGKILL");
+  }
+
+  /** Node has reaped the leader, so its PID (and group ID) may already belong to another process. */
+  private reaped(): boolean {
+    return this.proc.exitCode !== null || this.proc.signalCode !== null;
   }
 
   private closeForTransportFailure(error: Error): void {
@@ -322,38 +369,50 @@ export class PiRpcClient extends EventEmitter {
     this.closed = true;
     this.failAll(new Error("pi process disposed"));
     const pid = this.proc.pid;
-    if (pid === undefined || this.proc.exitCode !== null || this.proc.signalCode !== null) return;
+    if (pid === undefined || this.reaped()) return;
     const clock = this.options.clock ?? systemClock;
-    const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
+    const table = this.options.processTable ?? procTable;
+    const signal = (target: number, sig: NodeJS.Signals): void => {
       try {
-        process.kill(-pid, signal);
-        return true;
+        process.kill(target, sig);
       } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+        if (error instanceof Error && "code" in error && error.code === "ESRCH") return;
         throw error;
       }
     };
+    // Until Node reaps the leader its PID, and therefore the group ID, cannot be reused, so group
+    // signals are safe only before "exit". Record the members now; after the leader exits, a
+    // grandchild is killed only when its PID still has the same group and start time.
+    const owned = table.groupMembers(pid).filter((member) => member.pid !== pid);
+    const survivors = (): number[] =>
+      owned
+        .filter((member) => {
+          const now = table.identity(member.pid);
+          return now !== undefined && now.group === member.group && now.start === member.start;
+        })
+        .map((member) => member.pid);
     this.disposing = new Promise<void>((resolve) => {
-      let exited = this.proc.exitCode !== null || this.proc.signalCode !== null;
       const finish = (): void => {
         clock.clearTimeout(timer);
         this.proc.off("exit", onExit);
         resolve();
       };
       const onExit = (): void => {
-        exited = true;
-        // A grandchild may outlive pi. Keep the escalation armed for its group.
-        if (!signalGroup(0)) finish();
+        if (survivors().length === 0) finish();
       };
       this.proc.once("exit", onExit);
       const timer = clock.setTimeout(() => {
-        signalGroup("SIGKILL");
-        if (exited) finish();
-        else this.proc.once("exit", finish);
+        if (!this.reaped()) {
+          signal(-pid, "SIGKILL");
+          this.proc.off("exit", onExit);
+          this.proc.once("exit", finish);
+          return;
+        }
+        for (const member of survivors()) signal(member, "SIGKILL");
+        finish();
       }, PROCESS_KILL_GRACE_MS);
-      const alive = signalGroup("SIGTERM");
+      signal(-pid, "SIGTERM");
       this.proc.stdin?.end();
-      if (!alive && exited) finish();
     });
     return this.disposing;
   }

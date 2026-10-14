@@ -3,8 +3,8 @@ import childProcess, { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
-import test from "node:test";
-import { PiRpcClient } from "../src/pi-rpc.js";
+import test, { type TestContext } from "node:test";
+import { PiRpcClient, type ProcessTable } from "../src/pi-rpc.js";
 
 test("R-019: a correlated response cannot satisfy a different command", async (t) => {
   const stdin = new PassThrough();
@@ -164,6 +164,108 @@ test("R-005: disposing an exited child never signals its former numeric process 
   await disposing;
 
   assert.deepEqual(signals, [], "an exited leader cannot authorize a raw negative-PID signal");
+});
+
+function disposableChild(t: TestContext, processTable: ProcessTable) {
+  const proc = Object.assign(new ChildProcess(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    pid: 424242,
+    exitCode: null as number | null,
+    signalCode: null,
+  });
+  let graceTimer: (() => void) | undefined;
+  const signals: Array<[number, NodeJS.Signals | 0]> = [];
+  t.mock.method(childProcess, "spawn", () => proc);
+  t.mock.method(process, "kill", (pid: number, signal: NodeJS.Signals | 0) => {
+    signals.push([pid, signal]);
+    return true;
+  });
+  syncBuiltinESMExports();
+  const pi = new PiRpcClient({
+    cwd: process.cwd(),
+    processTable,
+    clock: {
+      now: Date.now,
+      setInterval,
+      clearInterval,
+      setTimeout: (callback, delay) => {
+        graceTimer = callback;
+        const timer = setTimeout(() => {}, delay);
+        timer.unref();
+        return timer;
+      },
+      clearTimeout,
+    },
+  });
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const exit = (): void => {
+    proc.exitCode = 0;
+    proc.emit("exit", 0, null);
+  };
+  return { pi, signals, exit, grace: () => graceTimer?.() };
+}
+
+test("R-005: a leader exiting during disposal leaves only re-identified group members to SIGKILL", async (t) => {
+  const snapshot = [
+    { pid: 424242, group: 424242, start: "100" },
+    { pid: 424243, group: 424242, start: "101" },
+    { pid: 424244, group: 424242, start: "102" },
+  ];
+  const { pi, signals, exit, grace } = disposableChild(t, {
+    groupMembers: (group) => (group === 424242 ? snapshot : []),
+    // 424243 is still the owned grandchild; 424244 exited and its PID now belongs to another group.
+    identity: (pid) =>
+      pid === 424243
+        ? { pid, group: 424242, start: "101" }
+        : pid === 424244
+          ? { pid, group: 424244, start: "999" }
+          : undefined,
+  });
+
+  const disposing = pi.dispose();
+  exit();
+  grace();
+  await disposing;
+
+  assert.deepEqual(signals, [
+    [-424242, "SIGTERM"],
+    [424243, "SIGKILL"],
+  ]);
+});
+
+test("R-005: a leader still unreaped at the grace deadline is killed with its group", async (t) => {
+  const { pi, signals, exit, grace } = disposableChild(t, {
+    groupMembers: () => [],
+    identity: () => undefined,
+  });
+
+  const disposing = pi.dispose();
+  grace();
+  exit();
+  await disposing;
+
+  assert.deepEqual(signals, [
+    [-424242, "SIGTERM"],
+    [-424242, "SIGKILL"],
+  ]);
+});
+
+test("R-005: a leader exiting with no verifiable survivors ends disposal without further signals", async (t) => {
+  const { pi, signals, exit } = disposableChild(t, {
+    groupMembers: () => [{ pid: 424243, group: 424242, start: "101" }],
+    identity: () => undefined,
+  });
+
+  const disposing = pi.dispose();
+  exit();
+  await disposing;
+
+  assert.deepEqual(signals, [[-424242, "SIGTERM"]]);
 });
 
 test("R-018: stdout EOF rejects later RPC commands before writing stdin", async (t) => {
