@@ -9,6 +9,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- fix(extension): save OmO Graph data paths without form submission, which OpenChamber's iframe sandbox blocks
 - fix(session): accept OmO messages stored as plain-string content when titling, binding and restoring sessions instead of crashing
 - fix(api): answer OpenChamber's location eviction (`DELETE /api/debug/location`) with OpenCode's empty 204
 
