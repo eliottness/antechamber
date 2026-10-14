@@ -437,7 +437,7 @@ test("V232-008: replies to permissions with decision", async (t) => {
     "permission request",
   );
   const prompt = await postJson(url, `/api/session/${sessionID}/prompt`, {
-    parts: [{ type: "text", text: "permission" }],
+    text: "permission",
   });
   assert.equal(prompt.status, 200);
   const permission = record((await asked).data, "permission event data");
@@ -549,21 +549,13 @@ test("V232-021: scopes pending permissions by location", async (t) => {
     (event) => event.type === "permission.asked" && event.data?.sessionID === firstSession,
     "first permission",
   );
-  assert.equal(
-    (await postJson(url, `/api/session/${firstSession}/prompt`, { parts: [{ type: "text", text: "permission" }] }))
-      .status,
-    200,
-  );
+  assert.equal((await postJson(url, `/api/session/${firstSession}/prompt`, { text: "permission" })).status, 200);
   await firstAsked;
   const secondAsked = secondStream.wait(
     (event) => event.type === "permission.asked" && event.data?.sessionID === secondSession,
     "second permission",
   );
-  assert.equal(
-    (await postJson(url, `/api/session/${secondSession}/prompt`, { parts: [{ type: "text", text: "permission" }] }))
-      .status,
-    200,
-  );
+  assert.equal((await postJson(url, `/api/session/${secondSession}/prompt`, { text: "permission" })).status, 200);
   await secondAsked;
   const response = await fetch(`${url}/api/permission/request`, {
     headers: { "x-opencode-directory": firstDirectory },

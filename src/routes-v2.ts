@@ -674,7 +674,7 @@ export async function handleV2(
       case "POST /prompt": {
         const body = (await services.body(req)) as {
           id?: string;
-          text?: string;
+          text?: unknown;
           parts?: unknown;
           files?: unknown;
           agents?: unknown;
@@ -684,13 +684,23 @@ export async function handleV2(
           variant?: string;
           delivery?: string;
         };
+        if (typeof body.text !== "string") {
+          json(res, 400, { _tag: "InvalidRequestError", message: "text must be a string" });
+          return;
+        }
         const explicit = parsePromptParts(body.parts);
-        const firstText = explicit.find((part) => part.type === "text");
-        const text = typeof body.text === "string" ? body.text : firstText?.type === "text" ? firstText.text : "";
+        const text = body.text;
         const parts =
           explicit.length > 0
             ? [...explicit, ...v2PromptParts("", body.files, body.agents)]
             : v2PromptParts(text, body.files, body.agents);
+        if (text.trim() === "" && !parts.some((part) => part.type === "file" || part.type === "agent")) {
+          json(res, 400, {
+            _tag: "InvalidRequestError",
+            message: "prompt requires non-whitespace text, files, or agents",
+          });
+          return;
+        }
         const metadata = sessionMetadata(body.metadata);
         if (body.skills !== undefined) {
           if (!Array.isArray(body.skills)) throw new RequestBodyError(400, "skills must be an array");
@@ -746,10 +756,14 @@ export async function handleV2(
       case "POST /context": {
         const body = (await services.body(req)) as {
           id?: string;
-          text?: string;
+          text?: unknown;
           metadata?: unknown;
           delivery?: string;
         };
+        if (typeof body.text !== "string" || body.text.trim() === "") {
+          json(res, 400, { _tag: "InvalidRequestError", message: "text must be a non-whitespace string" });
+          return;
+        }
         if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue") {
           json(res, 400, errorBody("BadRequestError", 'delivery must be "steer" or "queue"'));
           return;
@@ -757,7 +771,7 @@ export async function handleV2(
         const metadata = sessionMetadata(body.metadata);
         const messageID =
           typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
-        const text = typeof body.text === "string" ? body.text : "";
+        const text = body.text;
         promptAsync(services, managed, text, undefined, true, messageID, body.delivery ?? "steer", undefined, metadata);
         // OpenChamber 2.3.2 treats anything but 200 + the admitted record as a failed send (captured OpenCode shape).
         json(res, 200, {

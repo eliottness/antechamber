@@ -892,6 +892,164 @@ test("share and unshare return the unsupported payload on both API surfaces", { 
   }
 });
 
+const emptyInputRoutes = [
+  { path: "/session", route: "prompt_async", v1: true, noReply: false },
+  { path: "/session", route: "prompt_async", v1: true, noReply: true },
+  { path: "/session", route: "message", v1: true, noReply: false },
+  { path: "/session", route: "message", v1: true, noReply: true },
+  { path: "/api/session", route: "prompt", v1: false, noReply: false },
+  { path: "/api/session", route: "synthetic", v1: false, noReply: false },
+  { path: "/api/session", route: "context", v1: false, noReply: false },
+] as const;
+
+for (const { path, route, v1, noReply } of emptyInputRoutes) {
+  for (const dormant of [false, true]) {
+    test(`B2: ${path}/${route} noReply=${noReply} rejects empty input while ${dormant ? "dormant" : "live"}`, {
+      timeout: 15_000,
+    }, async (t) => {
+      const { url, server } = await startServer(t);
+      const sessionID = await createSession(url);
+      const manager = server["sessions"];
+      const managed = manager.get(sessionID);
+      assert.ok(managed?.pi);
+      const pi = managed.pi;
+      const command = pi.command.bind(pi);
+      const commands: string[] = [];
+      t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+        commands.push(String(args[0].type));
+        return command(...args);
+      });
+      if (dormant) await manager["lifecycle"].dormant(managed);
+      const emit = manager["emit"];
+      const events: unknown[] = [];
+      manager["emit"] = (...args) => {
+        events.push(args);
+        emit(...args);
+      };
+      const before = structuredClone({ info: managed.info, tree: managed.tree, messages: managed.messages });
+      const operation = manager["operations"].get(sessionID);
+      const inputs = v1
+        ? [
+            {},
+            { parts: null },
+            { parts: {} },
+            { parts: "text" },
+            { parts: [] },
+            { parts: [{ type: "text", text: "" }] },
+            { parts: [{ type: "text", text: " \n\t" }] },
+          ]
+        : [
+            {},
+            { text: null },
+            { text: 123 },
+            { text: {} },
+            { text: "" },
+            { text: " \n\t" },
+            { text: " ", files: [], agents: [] },
+          ];
+      for (const input of inputs) {
+        const response = await fetch(`${url}${path}/${sessionID}/${route}`, {
+          method: "POST",
+          body: JSON.stringify({ ...input, ...(noReply ? { noReply: true } : {}) }),
+        });
+        assert.equal(response.status, 400, JSON.stringify(input));
+        const body: unknown = await response.json();
+        assert.ok(isRecord(body));
+        if (v1) {
+          assert.equal(body.name, "InvalidRequestError");
+          assert.ok(isRecord(body.data) && typeof body.data.message === "string");
+        } else {
+          assert.equal(body._tag, "InvalidRequestError");
+          assert.equal(typeof body.message, "string");
+        }
+        assert.equal(manager["operations"].get(sessionID), operation, "no queue admission");
+        assert.equal(managed.pi, dormant ? undefined : pi, "no session revival");
+        assert.deepEqual({ info: managed.info, tree: managed.tree, messages: managed.messages }, before);
+        assert.deepEqual(commands, [], "no RPC commands, including prompt and send_custom_message");
+        assert.deepEqual(events, [], "no message or inbox events");
+      }
+    });
+  }
+}
+
+test("B2: v2 prompt requires text even with explicit parts or attachments", { timeout: 10_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionID = await createSession(url);
+  const manager = server["sessions"];
+  const pi = manager.get(sessionID)?.pi;
+  assert.ok(pi);
+  const command = pi.command.bind(pi);
+  const commands: string[] = [];
+  t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+    commands.push(String(args[0].type));
+    return command(...args);
+  });
+  for (const body of [
+    { parts: [{ type: "text", text: "not a replacement for text" }] },
+    { files: [{ uri: "file:///workspace/brief.txt" }] },
+    { text: null, agents: [{ name: "reviewer" }] },
+    { text: "", parts: [{ type: "text", text: "not a replacement for text" }] },
+  ]) {
+    const response = await fetch(`${url}/api/session/${sessionID}/prompt`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 400);
+    const error: unknown = await response.json();
+    assert.ok(isRecord(error) && error._tag === "InvalidRequestError");
+  }
+  assert.deepEqual(commands, []);
+  assert.deepEqual(manager.messages(sessionID), []);
+});
+
+for (const v1 of [true, false]) {
+  test(`B2: ${v1 ? "v1" : "v2"} attachment-only prompts still reach the agent`, {
+    timeout: 15_000,
+  }, async (t) => {
+    const { url, server } = await startServer(t);
+    const sessionID = await createSession(url);
+    const manager = server["sessions"];
+    const pi = manager.get(sessionID)?.pi;
+    assert.ok(pi);
+    const command = pi.command.bind(pi);
+    const dispatched: Record<string, unknown>[] = [];
+    t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+      if (args[0].type === "prompt") dispatched.push(args[0]);
+      return command(...args);
+    });
+    const inputs = v1
+      ? [
+          { parts: [{ type: "file", mime: "image/png", url: "data:image/png;base64,aW1hZ2U=" }] },
+          { parts: [{ type: "file", mime: "text/plain", url: "data:text/plain,attachment" }] },
+          { parts: [{ type: "file", mime: "text/plain", url: "file:///workspace/brief.txt" }] },
+          { parts: [{ type: "agent", name: "reviewer" }] },
+          {
+            parts: [
+              { type: "text", text: " " },
+              { type: "text", text: "content" },
+            ],
+          },
+        ]
+      : [
+          { text: "", files: [{ uri: "data:image/png;base64,aW1hZ2U=" }] },
+          { text: " ", files: [{ uri: "data:text/plain,attachment" }] },
+          { text: "", files: [{ uri: "file:///workspace/brief.txt" }] },
+          { text: "\n", agents: [{ name: "reviewer" }] },
+        ];
+    for (const body of inputs) {
+      const response = await fetch(
+        `${url}${v1 ? `/session/${sessionID}/message` : `/api/session/${sessionID}/prompt`}`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      assert.equal(response.status, 200);
+      await manager["operations"].get(sessionID);
+    }
+    assert.equal(dispatched.length, inputs.length);
+    assert.deepEqual(dispatched[0]?.images, [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }]);
+    assert.ok(dispatched.slice(1).every((input) => String(input.message).trim() !== ""));
+  });
+}
+
 test("rich v1 prompts preserve native attachments and one user identity through reload", {
   timeout: 10_000,
 }, async (t) => {
