@@ -159,3 +159,16 @@ The sources are:
 `test/connector-parity.test.ts` imports antechamber's own `ocIdFor` and
 `SessionRegistryEntry`, so a change to session ids or registry fields on the
 server side fails the test suite rather than breaking the graph silently.
+
+For the browser-only path-saving regression, run:
+
+```bash
+node --import tsx contrib/omo/panel-sandbox-smoke.ts
+```
+
+Open the printed URL in Chromium and wait for PASS.
+The smoke runs the actual panel in an `allow-scripts` iframe without `allow-forms`,
+checks that Save stores trimmed paths and refreshes the graph,
+then reloads the panel to check that the paths are restored.
+It uses a synthetic host and in-memory data, not an agent or your configuration.
+This browser smoke is opt-in; `npm test` and CI do not run it.
