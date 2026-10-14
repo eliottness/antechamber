@@ -76,12 +76,17 @@ export class Http {
     res.setHeader("Vary", "Origin");
     const origin = req.headers.origin;
     if (origin !== undefined) {
-      if (!allowedOrigin(origin)) {
+      if (allowedOrigin(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      } else if (this.credentials === undefined) {
+        // Without a password the Origin check is the only guard against
+        // drive-by browser requests. With one, the password is the boundary:
+        // OpenChamber's proxy forwards its own clients' Origin (LAN pages,
+        // the desktop app), which must not be rejected.
         json(res, 403, errorBody("ForbiddenError", "Origin is not allowed"));
         return;
       }
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
     }
     if (this.credentials !== undefined) {
       const match = req.headers.authorization?.match(/^Basic\s+([A-Za-z0-9+/]+=*)$/i);

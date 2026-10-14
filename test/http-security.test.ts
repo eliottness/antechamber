@@ -115,6 +115,20 @@ for (const origin of [
   });
 }
 
+for (const origin of ["http://192.168.1.50:4096", "tauri://localhost"]) {
+  test(`with a password, proxied origin ${origin} is served without CORS headers`, async (t) => {
+    setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
+    const { server } = await start(t);
+    const authorized = await fetch(server.url + "/global/health", {
+      headers: { Origin: origin, Authorization: basic("opencode", "secret") },
+    });
+    assert.equal(authorized.status, 200);
+    assert.equal(authorized.headers.get("access-control-allow-origin"), null);
+    const anonymous = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
+    assert.equal(anonymous.status, 401);
+  });
+}
+
 test("allowlist and authorized preflight use explicit CORS origins", async (t) => {
   setting(t, "ANTECHAMBER_ALLOWED_ORIGINS", " https://trusted.example, https://second.example ");
   setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
