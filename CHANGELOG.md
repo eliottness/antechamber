@@ -11,10 +11,16 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - fix(session): accept OmO messages stored as plain-string content when titling, binding and restoring sessions instead of crashing
 - fix(api): answer OpenChamber's location eviction (`DELETE /api/debug/location`) with OpenCode's empty 204
+- fix(api): answer the v2 routes OpenChamber 2.3.2 calls instead of a generic 404/501. Plugin list and check return an empty inventory, `/api/experimental/generate` returns OpenCode's typed 503, and plugin update, credential update/activate, integration connections and session generate/background/move return `UnsupportedError`
+- fix(api): stop faking mutations. `POST /api/credential` and `PATCH /api/project/{projectID}` return `UnsupportedError` instead of keeping an in-memory credential or echoing an unsaved project
+- fix(api): reject missing or empty prompt and synthetic-context input with a typed 400 before anything reaches OmO
+- fix(vcs): back `/api/vcs/status`, `/api/vcs/diff`, `/api/vcs/branch` and `/api/vcs/base` with read-only git instead of fixed empty data
+- fix(cli): refuse `opencode-antechamber upgrade` with the antechamber upgrade command, and document OpenChamber 2.3.2's OpenCode update notice
 
 ### Changed
 
 - refactor: use `findLast` for last-match scans
+- docs(api): unknown routes return 404 on both APIs; only unknown subpaths of an existing v2 session return 501
 
 ## [0.2.0] - 2026-10-14
 
