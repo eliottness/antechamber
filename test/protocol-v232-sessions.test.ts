@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -174,43 +174,142 @@ test("V232-003: messages paginate with a stable cursor", async (t) => {
   assert.equal(typeof cursor.next, "string", "OpenChamber requires a next cursor while older messages remain");
 });
 
-test("V232-004: prompt preserves rich input fields", async (t) => {
+async function listMessages(url: string, sessionID: string): Promise<RecordValue[]> {
+  const response = await fetch(`${url}/api/session/${sessionID}/message`);
+  assert.equal(response.status, 200);
+  const page = record(await response.json(), "message page");
+  assert.ok(Array.isArray(page.data), "message page data must be an array");
+  return page.data.map((item, index) => record(item, `message ${index}`));
+}
+
+/** The fake agent's own session file: what the native conversation really holds. */
+function nativeEntries(root: string): RecordValue[] {
+  const file = readdirSync(root).find((name) => name.startsWith("fake-endpoints-") && name.endsWith(".jsonl"));
+  assert.ok(file, "the fake agent writes its native session file in the session directory");
+  return readFileSync(join(root, file), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => record(JSON.parse(line), "native entry"))
+    .filter((entry) => entry.type !== "session");
+}
+
+function nativeKinds(entries: RecordValue[]): string[] {
+  return entries.map((entry) =>
+    entry.type === "message" ? String(record(entry.message, "native message").role) : String(entry.type),
+  );
+}
+
+test("V232-004: rich prompt input reaches native input and history, not just the response", async (t) => {
   const { url } = await startServer(t);
   const sessionID = await createSession(url);
+  const stream = openSse(t, url);
+  await stream.ready;
+  const idle = stream.wait(
+    (event) => event.type === "session.idle" && event.data?.sessionID === sessionID,
+    "session idle",
+  );
+  const inline = `data:text/plain;base64,${Buffer.from("ATTACHMENT_SENTINEL").toString("base64")}`;
   const response = await postJson(url, `/api/session/${sessionID}/prompt`, {
-    parts: [
-      { type: "text", text: "review this" },
-      { type: "file", path: "src/server.ts" },
+    id: "msg_v232_rich",
+    text: "review this",
+    files: [
+      { uri: inline, name: "notes.txt" },
+      { uri: "file:///workspace/src/server.ts", name: "server.ts" },
     ],
-    mentions: [{ type: "file", path: "src/routes-v2.ts" }],
-    skills: ["protocol-audit"],
+    agents: [{ name: "explore", mention: { start: 0, end: 8, text: "@explore" } }],
     metadata: { source: "openchamber" },
   });
   assert.equal(response.status, 200);
-  const accepted = record(record(await response.json(), "prompt response").data, "prompt response data");
-  assert.deepEqual(accepted.prompt, {
-    text: "review this",
-    parts: [
-      { type: "text", text: "review this" },
-      { type: "file", path: "src/server.ts" },
-    ],
-    mentions: [{ type: "file", path: "src/routes-v2.ts" }],
-    skills: ["protocol-audit"],
-    metadata: { source: "openchamber" },
-  });
+  await idle;
+
+  const list = await listMessages(url, sessionID);
+  const user = list.find((message) => message.id === "msg_v232_rich");
+  assert.ok(user, "the prompt is listed under its client id");
+  assert.equal(user.type, "user");
+  assert.equal(user.text, "review this");
+  assert.deepEqual(user.files, [
+    { mime: "text/plain", name: "notes.txt", source: { type: "uri", uri: inline } },
+    {
+      mime: "application/octet-stream",
+      name: "server.ts",
+      source: { type: "uri", uri: "file:///workspace/src/server.ts" },
+    },
+  ]);
+  assert.deepEqual(user.agents, [{ name: "explore", mention: { start: 0, end: 8, text: "@explore" } }]);
+  assert.deepEqual(user.metadata, { source: "openchamber" });
+  // The fake agent replies with the native prompt message, so its reply shows what the agent received.
+  const reply = JSON.stringify(list.find((message) => message.type === "assistant")?.content);
+  assert.match(reply, /ATTACHMENT_SENTINEL/);
+  assert.match(reply, /server\.ts/);
+  assert.match(reply, /@explore/);
 });
 
-test("V232-005: accepts synthetic context admission", async (t) => {
+test("V232-004: an unknown skill attachment gets OpenCode's tagged not-found error", async (t) => {
   const { url } = await startServer(t);
   const sessionID = await createSession(url);
+  const response = await postJson(url, `/api/session/${sessionID}/prompt`, {
+    text: "use a skill",
+    skills: [{ id: "protocol-audit" }],
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { _tag: "InvalidRequestError", message: "Skill not found: protocol-audit" });
+});
+
+test("V232-005: synthetic context joins the native conversation without a turn and precedes the next prompt", async (t) => {
+  const { root, server, url } = await startServer(t);
+  const sessionID = await createSession(url);
+  const stream = openSse(t, url);
+  await stream.ready;
+  const delivered = stream.wait(
+    (event) => event.type === "session.inbox.delivered" && event.data?.inboxID === "msg_v232_context",
+    "context delivered",
+  );
   const response = await postJson(url, `/api/session/${sessionID}/context`, {
-    text: "Synthetic context from OpenChamber",
+    id: "msg_v232_context",
+    text: "CONTEXT_SENTINEL",
   });
   assert.equal(response.status, 200);
   const data = record(record(await response.json(), "context response").data, "context record");
   assert.equal(data.type, "synthetic");
   assert.equal(data.sessionID, sessionID);
-  assert.deepEqual(data.payload, { text: "Synthetic context from OpenChamber" });
+  assert.deepEqual(data.payload, { text: "CONTEXT_SENTINEL" });
+  await delivered;
+  assert.deepEqual(nativeKinds(nativeEntries(root)), ["custom_message"], "context alone must not start a turn");
+
+  const idle = stream.wait(
+    (event) => event.type === "session.idle" && event.data?.sessionID === sessionID,
+    "session idle",
+  );
+  const prompt = await postJson(url, `/api/session/${sessionID}/prompt`, { id: "msg_v232_next", text: "NEXT_PROMPT" });
+  assert.equal(prompt.status, 200);
+  await idle;
+  const native = nativeEntries(root);
+  assert.deepEqual(nativeKinds(native), ["custom_message", "user", "assistant"]);
+  assert.equal(native[0]?.customType, "antechamber.context");
+  assert.deepEqual(native[0]?.content, [{ type: "text", text: "CONTEXT_SENTINEL" }]);
+  assert.deepEqual(native[0]?.details, { messageID: "msg_v232_context" });
+
+  const live = await listMessages(url, sessionID);
+  const context = live.find((message) => message.id === "msg_v232_context");
+  assert.equal(context?.type, "synthetic");
+  assert.equal(context?.text, "CONTEXT_SENTINEL");
+  const session = record(
+    record(await (await fetch(`${url}/api/session/${sessionID}`)).json(), "session").data,
+    "session data",
+  );
+  assert.equal(session.title, "NEXT_PROMPT", "context must not title the session");
+
+  await server.stop();
+  const restarted = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: root });
+  await restarted.start();
+  try {
+    const restored = await listMessages(restarted.url, sessionID);
+    const again = restored.find((message) => message.id === "msg_v232_context");
+    assert.equal(again?.type, "synthetic", "the native custom message restores the context under its client id");
+    assert.equal(again?.text, "CONTEXT_SENTINEL");
+  } finally {
+    await restarted.stop();
+  }
 });
 
 test("V232-006: accepts the v2 command payload", async (t) => {

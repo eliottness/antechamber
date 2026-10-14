@@ -12,6 +12,7 @@ import {
   resultText,
 } from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
+import { contextMessageID } from "./prompt-parts.js";
 import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree.js";
 import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
@@ -31,6 +32,8 @@ interface PiFileEntry {
   message?: PiFileMessage;
   customType?: string;
   details?: unknown;
+  /** `custom_message` entries */
+  content?: unknown;
   /** `compaction` entries */
   summary?: string;
   firstKeptEntryId?: string;
@@ -208,6 +211,39 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     if (e.type === "compaction" && typeof e.summary === "string" && typeof e.firstKeptEntryId === "string") {
       // Not a run boundary: an automatic compaction can sit between steps of one turn.
       out.push(...compactionMessages(s, e.id ?? `r${indexOf.get(e) ?? 0}`, e.summary, entryTime(e), currentModel));
+      continue;
+    }
+    const contextID = contextMessageID(e);
+    if (contextID !== undefined) {
+      endRun();
+      const content = Array.isArray(e.content)
+        ? (e.content as Array<Record<string, unknown>>)
+        : typeof e.content === "string"
+          ? [{ type: "text", text: e.content }]
+          : [];
+      const time = entryTime(e);
+      if (e.id) s.tree.messageEntries[contextID] = e.id;
+      out.push({
+        info: {
+          id: contextID,
+          sessionID,
+          role: "user",
+          time: { created: time },
+          agent: agentName,
+          model: currentModel,
+          synthetic: true,
+        },
+        parts: [
+          {
+            id: `prt_${contextID}_context`,
+            sessionID,
+            messageID: contextID,
+            type: "text",
+            text: textOf(content),
+            time: { start: time, end: time },
+          },
+        ],
+      });
       continue;
     }
     if (e.type !== "message") continue;
@@ -515,6 +551,8 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     (s.inputs ??= new Map()).set(messageID, { text, delivery, accepted: true, delivered: false });
   }
   for (const message of out) {
+    const metadata = s.tree.promptMetadata?.[message.info.id];
+    if (message.info.role === "user" && metadata !== undefined) message.info.metadata = metadata;
     const inputParts = s.tree.promptParts?.[message.info.id];
     if (message.info.role === "user" && inputParts !== undefined)
       message.parts = inputParts.map((part, index) => ({

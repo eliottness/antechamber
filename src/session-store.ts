@@ -358,6 +358,11 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
   )
     return false;
   if (
+    value.promptMetadata !== undefined &&
+    (!record(value.promptMetadata) || !Object.values(value.promptMetadata).every((metadata) => record(metadata)))
+  )
+    return false;
+  if (
     value.messageParts !== undefined &&
     (!record(value.messageParts) ||
       !Object.values(value.messageParts).every(

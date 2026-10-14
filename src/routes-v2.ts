@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { errorBody, json, RequestBodyError } from "./http.js";
+import { nativePromptInput, parsePromptParts, v2PromptAttachments, v2PromptParts } from "./prompt-parts.js";
 import { debugLog, miscRoute } from "./misc-routes.js";
 import { OPENCODE_API_VERSION } from "./version.js";
 import { toV2Permission } from "./approvals.js";
@@ -684,21 +685,37 @@ export async function handleV2(
         const body = (await services.body(req)) as {
           id?: string;
           text?: string;
-          parts?: Array<{ type: string; text?: string; [key: string]: unknown }>;
-          files?: unknown[];
-          mentions?: unknown[];
-          agents?: unknown[];
-          skills?: unknown[];
-          metadata?: Record<string, unknown>;
+          parts?: unknown;
+          files?: unknown;
+          agents?: unknown;
+          skills?: unknown;
+          metadata?: unknown;
           model?: { providerID?: string; id?: string; modelID?: string; variant?: string };
           variant?: string;
           delivery?: string;
         };
-        const parts = body.parts ?? [];
-        const text =
-          typeof body.text === "string"
-            ? body.text
-            : (parts.find((part) => part.type === "text" && typeof part.text === "string")?.text ?? "");
+        const explicit = parsePromptParts(body.parts);
+        const firstText = explicit.find((part) => part.type === "text");
+        const text = typeof body.text === "string" ? body.text : firstText?.type === "text" ? firstText.text : "";
+        const parts =
+          explicit.length > 0
+            ? [...explicit, ...v2PromptParts("", body.files, body.agents)]
+            : v2PromptParts(text, body.files, body.agents);
+        const metadata = sessionMetadata(body.metadata);
+        if (body.skills !== undefined) {
+          if (!Array.isArray(body.skills)) throw new RequestBodyError(400, "skills must be an array");
+          const skill: unknown = body.skills[0];
+          if (skill !== undefined) {
+            if (typeof skill !== "object" || skill === null || !("id" in skill) || typeof skill.id !== "string")
+              throw new RequestBodyError(400, "skills must contain {id} references");
+            // GET /api/skill lists none, so any reference is unknown. OpenChamber retries without
+            // the attachment on exactly this tagged OpenCode error.
+            json(res, 400, { _tag: "InvalidRequestError", message: `Skill not found: ${skill.id}` });
+            return;
+          }
+        }
+        // Reject an attachment the native RPC cannot carry before acknowledging the prompt.
+        nativePromptInput(text, parts);
         const messageID =
           typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
         const model = modelRefFromBody(
@@ -710,16 +727,17 @@ export async function handleV2(
           return;
         }
         const delivery = body.delivery ?? "steer";
-        promptAsync(services, managed, text, model, false, messageID, delivery);
-        const prompt = {
+        promptAsync(
+          services,
+          managed,
           text,
-          ...(parts.length > 0 ? { parts } : {}),
-          ...(Array.isArray(body.files) ? { files: body.files } : {}),
-          ...(Array.isArray(body.mentions) ? { mentions: body.mentions } : {}),
-          ...(Array.isArray(body.agents) ? { agents: body.agents } : {}),
-          ...(Array.isArray(body.skills) ? { skills: body.skills } : {}),
-          ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
-        };
+          model,
+          false,
+          messageID,
+          delivery,
+          parts.length > 0 ? parts : undefined,
+          metadata,
+        );
         json(res, 200, {
           data: {
             id: messageID,
@@ -727,24 +745,30 @@ export async function handleV2(
             time: { created: Date.now() },
             type: "user",
             text,
-            payload: { text },
+            payload: { text, ...v2PromptAttachments(parts) },
             delivery,
-            prompt,
+            ...(metadata !== undefined ? { metadata } : {}),
           },
         });
         return;
       }
       case "POST /synthetic":
       case "POST /context": {
-        const body = (await services.body(req)) as { id?: string; text?: string; delivery?: string };
+        const body = (await services.body(req)) as {
+          id?: string;
+          text?: string;
+          metadata?: unknown;
+          delivery?: string;
+        };
         if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue") {
           json(res, 400, errorBody("BadRequestError", 'delivery must be "steer" or "queue"'));
           return;
         }
+        const metadata = sessionMetadata(body.metadata);
         const messageID =
           typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
         const text = typeof body.text === "string" ? body.text : "";
-        promptAsync(services, managed, text, undefined, true, messageID, body.delivery ?? "steer");
+        promptAsync(services, managed, text, undefined, true, messageID, body.delivery ?? "steer", undefined, metadata);
         // OpenChamber 2.3.2 treats anything but 200 + the admitted record as a failed send (captured OpenCode shape).
         json(res, 200, {
           data: {

@@ -45,6 +45,10 @@ export interface OCUserMessage {
   time: { created: number };
   agent: string;
   model: OCModelRef;
+  /** No-reply context admitted without a turn (v2 lists it as `type: "synthetic"`). */
+  synthetic?: boolean;
+  /** Client metadata sent with the prompt (OpenChamber 2.x). */
+  metadata?: Record<string, unknown>;
 }
 
 export interface OCAssistantMessage {
@@ -179,7 +183,17 @@ export type OCEvent =
       properties: {
         sessionID: string;
         inboxID: string;
-        item: { type: "user"; delivery: "steer" | "queue"; payload: { text: string } };
+        item:
+          | {
+              type: "user";
+              delivery: "steer" | "queue";
+              payload: {
+                text: string;
+                files?: Array<Record<string, unknown>>;
+                agents?: Array<Record<string, unknown>>;
+              };
+            }
+          | { type: "synthetic"; payload: { text: string } };
       };
     }
   | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string } }

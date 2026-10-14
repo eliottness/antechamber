@@ -87,9 +87,10 @@ export function promptAsync(
   messageID?: string,
   delivery: "steer" | "queue" = "steer",
   parts?: readonly OCPromptPart[],
+  metadata?: Record<string, unknown>,
 ): void {
   void services.sessions
-    .prompt(session.info.id, text, model, noReply, messageID, delivery, parts)
+    .prompt(session.info.id, text, model, noReply, messageID, delivery, parts, metadata)
     .catch((error: unknown) => {
       announceSessionError(
         { sessions: services.sessions, session, emit: services.broadcast },

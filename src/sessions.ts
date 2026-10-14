@@ -5,7 +5,7 @@
 
 import { id, PiEventTranslator, syncSessionCost } from "./pi-event-translation.js";
 import { parsePiSessionFile, parsePiSessionText } from "./session-history.js";
-import { nativePromptInput } from "./prompt-parts.js";
+import { CONTEXT_MESSAGE_TYPE, nativePromptInput, v2PromptAttachments } from "./prompt-parts.js";
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -960,10 +960,11 @@ export class SessionManager {
     messageID?: string,
     delivery: "steer" | "queue" = "steer",
     parts?: readonly OCPromptPart[],
+    metadata?: Record<string, unknown>,
   ): Promise<void> {
     const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
-    return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID, delivery, parts));
+    return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID, delivery, parts, metadata));
   }
 
   private async preparePrompt(s: ManagedSession, model: ModelSelection | undefined): Promise<PiRpcClient> {
@@ -1003,6 +1004,8 @@ export class SessionManager {
     model: ModelSelection | undefined,
     messageID: string | undefined,
     inputParts?: readonly OCPromptPart[],
+    metadata?: Record<string, unknown>,
+    context = false,
   ): OCUserMessage {
     // OpenChamber sends a client-generated messageID with its optimistic
     // insert; the server MUST reuse it so the echoed message.part.updated /
@@ -1015,7 +1018,10 @@ export class SessionManager {
       time: { created: Date.now() },
       agent: getAgentName(),
       model: s.model ?? model ?? { providerID: "unknown", modelID: "unknown" },
+      ...(context ? { synthetic: true } : {}),
+      ...(metadata !== undefined ? { metadata } : {}),
     };
+    if (metadata !== undefined) (s.tree.promptMetadata ??= {})[userMsg.id] = metadata;
     const parts: OCPart[] = (inputParts ?? [{ type: "text", text }]).map((part) => ({
       ...part,
       id: part.id ?? id("prt"),
@@ -1025,7 +1031,7 @@ export class SessionManager {
     if (inputParts?.some((part) => part.type !== "text")) (s.tree.promptParts ??= {})[userMsg.id] = [...inputParts];
     s.messages?.push({ info: userMsg, parts });
     s.info.time.updated = Date.now();
-    if (s.info.title === "New session" && s.titleSource !== "user" && s.titleSource !== "native") {
+    if (!context && s.info.title === "New session" && s.titleSource !== "user" && s.titleSource !== "native") {
       s.info.title = text.trim().replace(/\s+/g, " ").slice(0, SESSION_TITLE_MAX_CHARS) || "New session";
       s.titleSource = "fallback";
     }
@@ -1047,15 +1053,49 @@ export class SessionManager {
     messageID?: string,
     delivery: "steer" | "queue" = "steer",
     parts?: readonly OCPromptPart[],
+    metadata?: Record<string, unknown>,
   ): Promise<void> {
     const pi = await this.preparePrompt(s, model);
     const native = nativePromptInput(text, parts ?? []);
-    const userMsg = this.publishPrompt(s, text, model, messageID, parts);
+    const userMsg = this.publishPrompt(s, text, model, messageID, parts, metadata, noReply);
 
-    if (noReply) return; // register-only semantics: record the message, do not run the agent
+    if (noReply) {
+      await this.admitContext(s, pi, userMsg, native.message);
+      return;
+    }
 
-    if (!(await this.dispatchPrompt(s, pi, userMsg, text, delivery, native))) return;
+    if (!(await this.dispatchPrompt(s, pi, userMsg, text, delivery, native, parts ?? []))) return;
     await this.bindPromptState(s);
+  }
+
+  /**
+   * No-reply context (v2 synthetic, v1 noReply) joins the native conversation without a turn:
+   * OmO appends it now when idle, or after the running turn, so the next prompt carries it.
+   */
+  private async admitContext(s: ManagedSession, pi: PiRpcClient, userMsg: OCUserMessage, text: string): Promise<void> {
+    const res = await pi.command({
+      type: "send_custom_message",
+      customType: CONTEXT_MESSAGE_TYPE,
+      content: [{ type: "text", text }],
+      display: true,
+      details: { messageID: userMsg.id },
+      triggerTurn: false,
+    });
+    if (!res.success) {
+      if (s.tree.promptParts) delete s.tree.promptParts[userMsg.id];
+      if (s.tree.promptMetadata) delete s.tree.promptMetadata[userMsg.id];
+      s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
+      this.emit(s.info.directory, {
+        type: "message.removed",
+        properties: { sessionID: s.info.id, messageID: userMsg.id },
+      });
+      throw new Error(res.error ?? "context admission rejected");
+    }
+    this.emit(s.info.directory, {
+      type: "session.inbox.enqueued",
+      properties: { sessionID: s.info.id, inboxID: userMsg.id, item: { type: "synthetic", payload: { text } } },
+    });
+    this.events.deliverInput(s, userMsg.id);
   }
 
   private async dispatchPrompt(
@@ -1065,6 +1105,7 @@ export class SessionManager {
     text: string,
     delivery: "steer" | "queue",
     native: ReturnType<typeof nativePromptInput>,
+    parts: readonly OCPromptPart[],
   ): Promise<boolean> {
     const wasIdle = s.status.type === "idle";
     if (wasIdle) {
@@ -1076,6 +1117,7 @@ export class SessionManager {
     const rejectInput = (): void => {
       s.inputs?.delete(userMsg.id);
       if (s.tree.promptParts) delete s.tree.promptParts[userMsg.id];
+      if (s.tree.promptMetadata) delete s.tree.promptMetadata[userMsg.id];
       s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
       this.emit(s.info.directory, {
         type: "message.removed",
@@ -1118,7 +1160,11 @@ export class SessionManager {
     input.accepted = true;
     this.emit(s.info.directory, {
       type: "session.inbox.enqueued",
-      properties: { sessionID: s.info.id, inboxID: userMsg.id, item: { type: "user", delivery, payload: { text } } },
+      properties: {
+        sessionID: s.info.id,
+        inboxID: userMsg.id,
+        item: { type: "user", delivery, payload: { text, ...v2PromptAttachments(parts) } },
+      },
     });
     if (input.delivered) this.events.deliverInput(s, userMsg.id);
     // Extension commands can finish without starting an agent turn.

@@ -103,7 +103,7 @@ invented resource IDs.
 | GET | `/session/{sessionID}/children` | 200 | Direct child sessions. |
 | GET | `/session/{sessionID}/todo` | 200 | Session todo items. |
 | GET | `/session/{sessionID}/diff` | 200 | Unified diff for the session. |
-| POST | `/session/{sessionID}/prompt_async` | 204 | Admits a prompt asynchronously; accepts text, file, and agent parts, optional `delivery: "steer" \| "queue"`, and a client message ID. |
+| POST | `/session/{sessionID}/prompt_async` | 204 | Admits a prompt asynchronously; accepts text, file, and agent parts, optional `delivery: "steer" \| "queue"`, and a client message ID. `noReply: true` admits the message into the native conversation without a turn, like v2 synthetic context. |
 | POST | `/session/{sessionID}/message` | 200 | Message record after prompt admission; accepts the same rich v1 parts. |
 | POST | `/session/{sessionID}/abort` | 200 | Boolean abort result. |
 | POST | `/session/{sessionID}/fork` | 200 | Forked session record; optional `messageID` selects the fork boundary. |
@@ -137,8 +137,8 @@ invented resource IDs.
 | POST | `/api/session/{sessionID}/shell` | 204 | Runs a shell command; 400 for invalid input and 409 if busy. |
 | POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command; 400 if missing. |
 | POST or DELETE | `/api/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/api/session/{sessionID}/prompt` | 200 | Admission result retaining rich client fields; OmO receives the extracted text and `delivery: "steer" \| "queue"`. |
-| POST | `/api/session/{sessionID}/synthetic`, `/api/session/{sessionID}/context` | 200 | No-reply context admission returning `{data: {id, sessionID, time: {created}, type: "synthetic", payload: {text}}}` (the captured OpenCode 2.x record; OpenChamber 2.3.2 aborts the send on any other status); `context` is a compatibility alias for `synthetic`. |
+| POST | `/api/session/{sessionID}/prompt` | 200 | Admission record `{data: {id, sessionID, time, type: "user", payload: {text, files?, agents?}, delivery, metadata?}}`. `files: [{uri, name?}]` and `agents: [{name, mention?}]` become prompt parts: OmO receives inline text attachments, images, file references and `@agent` mentions with the text, and the user message lists them back as `files: [{mime, name?, source: {type: "uri", uri}}]`, `agents` and `metadata` after reloads. Any `skills` reference answers 400 `{_tag: "InvalidRequestError", message: "Skill not found: <id>"}` because no skills are listed. |
+| POST | `/api/session/{sessionID}/synthetic`, `/api/session/{sessionID}/context` | 200 | No-reply context admission returning `{data: {id, sessionID, time: {created}, type: "synthetic", payload: {text}}}` (the captured OpenCode 2.x record; OpenChamber 2.3.2 aborts the send on any other status). The text joins the native conversation as an OmO custom message (`send_custom_message`, `triggerTurn: false`) without starting a turn, so the next prompt carries it; it emits `session.inbox.enqueued`/`delivered`, lists as `type: "synthetic"`, survives restarts and never titles the session. `context` is a compatibility alias for `synthetic`. |
 | POST | `/api/session/{sessionID}/interrupt` | 200 | Bare `{interrupted: boolean}`, as OpenCode 2.x returns it; OpenChamber reads `result.interrupted` directly. |
 | POST | `/api/session/{sessionID}/fork` | 200 | `{data: Session}`; accepts `before` or legacy `messageID`. |
 | POST | `/api/session/{sessionID}/revert`, `/api/session/{sessionID}/revert/stage` | 200 | `{data: revert}`; requires a valid user-message boundary. |

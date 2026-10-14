@@ -193,6 +193,28 @@ input.on("line", (line) => {
     case "set_model":
       reply(command, true, { provider: command.provider, id: command.modelId });
       return;
+    case "send_custom_message": {
+      // Idle OmO with triggerTurn:false appends the message to the conversation without a turn.
+      if (command.triggerTurn !== false) {
+        reply(command, false, undefined, "fixture only admits context without a turn");
+        return;
+      }
+      const entry = {
+        type: "custom_message",
+        id: randomUUID(),
+        parentId: leaf,
+        timestamp: timestamp++,
+        customType: command.customType,
+        content: command.content,
+        display: command.display,
+        details: command.details,
+      };
+      leaf = entry.id;
+      entries.push(entry);
+      appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+      reply(command, true, {});
+      return;
+    }
     default:
       reply(command, true, {});
   }

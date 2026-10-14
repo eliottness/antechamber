@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts } from "./types.js";
 import type { OCPromptPart } from "./types.js";
-import { nativePromptInput } from "./prompt-parts.js";
+import { contextMessageID, nativePromptInput } from "./prompt-parts.js";
 
 export interface SessionTreeState {
   messageEntries: Record<string, string>;
@@ -11,6 +11,8 @@ export interface SessionTreeState {
   messageParts?: Record<string, string[]>;
   /** Original rich user input; native RPC stores only adapted text and images. */
   promptParts?: Record<string, OCPromptPart[]>;
+  /** Client prompt metadata; native RPC does not store it. */
+  promptMetadata?: Record<string, Record<string, unknown>>;
   /** Actual transport dispatch, not inferred from a card's terminal state. */
   shellDispatch?: Record<string, boolean>;
   /** Identity-only dispatched admissions; never rendered without a native entry. */
@@ -23,6 +25,8 @@ export interface TreeEntry {
   type: string;
   id: string;
   parentId: string | null;
+  customType?: string;
+  details?: unknown;
   message?: {
     role: string;
     clientMessageId?: string;
@@ -167,6 +171,12 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
   const branch = branchEntries(tree, s.tree.revert ? s.tree.revert.previousLeafId : leafId);
   const positions = new Map(branch.map((entry, index) => [entry.id, index]));
   pruneStaleShellTurns(s, positions);
+  // Admitted context carries its OpenChamber id in the native custom message.
+  for (const entry of branch) {
+    const messageID = contextMessageID(entry);
+    if (messageID !== undefined && s.messages?.some((message) => message.info.id === messageID))
+      s.tree.messageEntries[messageID] = entry.id;
+  }
   const entries = branch.filter(
     (entry) =>
       entry.type === "message" &&

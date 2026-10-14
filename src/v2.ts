@@ -25,9 +25,11 @@
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
 import { questionFormID, toQuestionForm } from "./question-forms.js";
+import { v2PromptAttachments } from "./prompt-parts.js";
 import type {
   OCAssistantMessage,
   OCMessageWithParts,
+  OCUserMessage,
   OCModelRef,
   OCPart,
   OCSession,
@@ -207,8 +209,11 @@ export function toV2Session(
 export interface V2Message {
   id: string;
   time: { created: number; completed?: number; streamed?: number };
-  type: "user" | "assistant";
+  type: "user" | "assistant" | "synthetic";
   text?: string;
+  files?: Array<Record<string, unknown>>;
+  agents?: Array<Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
   agent?: string;
   model?: { id: string; providerID: string; variant?: string };
   content?: Array<Record<string, unknown>>;
@@ -221,11 +226,19 @@ export interface V2Message {
 /** v2 user message (list + prompt response): the UI reads `.text`. */
 function toV2UserMessage(info: OCMessageWithParts): V2Message {
   const text = info.parts.map((p) => (p.type === "text" ? p.text : p.type === "compaction" ? "/compact" : "")).join("");
+  const user = info.info as OCUserMessage;
+  const metadata = user.metadata !== undefined ? { metadata: user.metadata } : {};
+  // Admitted no-reply context lists as OpenCode's synthetic item, not as a user turn.
+  if (user.synthetic)
+    return { id: user.id, time: { created: user.time.created }, type: "synthetic", text, ...metadata };
+  const inputs = info.parts.flatMap((part) => (part.type === "file" || part.type === "agent" ? [part] : []));
   return {
-    id: info.info.id,
-    time: { created: info.info.time.created },
+    id: user.id,
+    time: { created: user.time.created },
     type: "user",
     text,
+    ...v2PromptAttachments(inputs),
+    ...metadata,
   };
 }
 
