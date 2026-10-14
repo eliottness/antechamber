@@ -40,7 +40,6 @@ contrib/
 - Claiming processes by command-line match. Ownership requires the cwd to be inside the run root and an exact private HOME in `/proc/<pid>/environ`.
 
 ## GOTCHAS
-- `docs/development.md` and CONTRIBUTING cite `contrib/omo-smoke.ts` and `contrib/smoke/`. The real paths are `contrib/omo/...`.
-- `omo/smoke/checks/90-routes.ts` reads `docs/omo-endpoint-inventory.md`, which is not in the repo, so the route sweep fails until that file exists.
-  The closest existing doc is `docs/api-surface.md`.
+- `docs/development.md` and CONTRIBUTING point at `contrib/omo/omo-smoke.ts` and `contrib/omo/smoke/`.
+- `omo/smoke/checks/90-routes.ts` reads the static route table in `docs/api-surface.md`; parameterized routes are probed through their lifecycle checks where needed.
 - The lifecycle checks need Linux `/proc` and GNU `tail --pid`.

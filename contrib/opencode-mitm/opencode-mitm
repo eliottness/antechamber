@@ -1,0 +1,159 @@
+#!/bin/sh
+# OpenChamber launcher for a real OpenCode server behind contrib/opencode-mitm/proxy.ts.
+#
+# OpenChamber invokes its configured binary as either:
+#   <binary> --version
+#   <binary> serve --hostname <host> --port <port> [other args]
+#
+# The version command reaches the real binary unchanged. For serve, this script
+# reserves a loopback upstream port, starts the public logging proxy first, and
+# then forwards every remaining OpenCode argument to the real server.
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REAL_BINARY="${OPENCODE_MITM_REAL_BINARY:-opencode}"
+NODE_BINARY="${OPENCODE_MITM_NODE_BINARY:-node}"
+PROXY="$SCRIPT_DIR/proxy.ts"
+
+usage() {
+  echo "usage: opencode-mitm (--version|-v|serve --hostname HOST --port PORT [args...])" >&2
+  exit 2
+}
+
+allocate_upstream_port() {
+  "$NODE_BINARY" -e '
+const net = require("node:net");
+const server = net.createServer();
+server.once("error", (error) => {
+  process.stderr.write(`opencode-mitm: unable to allocate upstream port: ${error.message}\n`);
+  process.exitCode = 1;
+});
+server.listen({ host: "127.0.0.1", port: 0 }, () => {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    process.stderr.write("opencode-mitm: upstream listener did not report a TCP port\n");
+    process.exitCode = 1;
+    server.close();
+    return;
+  }
+  process.stdout.write(String(address.port));
+  server.close();
+});
+'
+}
+
+case "${1:-}" in
+  --version|-v)
+    exec "$REAL_BINARY" "$@"
+    ;;
+  serve)
+    shift
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+PUBLIC_HOST=""
+PUBLIC_PORT=""
+case "${1:-}" in
+  --hostname)
+    [ "$#" -ge 2 ] || usage
+    PUBLIC_HOST="$2"
+    shift 2
+    ;;
+  *)
+    usage
+    ;;
+esac
+case "${1:-}" in
+  --port)
+    [ "$#" -ge 2 ] || usage
+    PUBLIC_PORT="$2"
+    shift 2
+    ;;
+  *)
+    usage
+    ;;
+esac
+
+case "$PUBLIC_PORT" in
+  *[!0-9]*|"")
+    echo "opencode-mitm: --port must be a positive integer" >&2
+    exit 2
+    ;;
+esac
+
+[ -f "$PROXY" ] || {
+  echo "opencode-mitm: proxy script not found: $PROXY" >&2
+  exit 1
+}
+
+UPSTREAM_PORT="$(allocate_upstream_port)"
+case "$UPSTREAM_PORT" in
+  *[!0-9]*|"")
+    echo "opencode-mitm: failed to allocate an upstream port" >&2
+    exit 1
+    ;;
+esac
+
+READY_DIR="${TMPDIR:-/tmp}/opencode-mitm.$$"
+READY_FIFO="$READY_DIR/proxy-ready"
+mkdir -m 700 "$READY_DIR"
+mkfifo "$READY_FIFO"
+
+PROXY_PID=""
+REAL_PID=""
+STOPPED=0
+
+stop_children() {
+  if [ "$STOPPED" -eq 1 ]; then
+    return
+  fi
+  STOPPED=1
+  if [ -n "$REAL_PID" ] && kill -0 "$REAL_PID" 2>/dev/null; then
+    kill -TERM "$REAL_PID" 2>/dev/null || true
+  fi
+  if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then
+    kill -TERM "$PROXY_PID" 2>/dev/null || true
+  fi
+}
+
+cleanup() {
+  stop_children
+  rm -rf "$READY_DIR"
+}
+
+on_signal() {
+  cleanup
+  exit 0
+}
+
+trap on_signal INT TERM HUP
+trap cleanup EXIT
+
+"$NODE_BINARY" --experimental-strip-types "$PROXY" \
+  --hostname "$PUBLIC_HOST" \
+  --port "$PUBLIC_PORT" \
+  --upstream-port "$UPSTREAM_PORT" \
+  --ready-fifo "$READY_FIFO" &
+PROXY_PID=$!
+
+if ! IFS= read -r ready < "$READY_FIFO" || [ "$ready" != "ready" ]; then
+  echo "opencode-mitm: proxy failed before it became ready" >&2
+  exit 1
+fi
+rm -f "$READY_FIFO"
+
+"$REAL_BINARY" serve --hostname 127.0.0.1 --port "$UPSTREAM_PORT" "$@" &
+REAL_PID=$!
+
+set +e
+wait "$REAL_PID"
+REAL_STATUS=$?
+set -e
+stop_children
+set +e
+wait "$PROXY_PID"
+set -e
+exit "$REAL_STATUS"

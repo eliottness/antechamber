@@ -5,25 +5,41 @@ import type { OCSession } from "../../../../src/types.js";
 import type { Check } from "../core.js";
 import type { SmokeContext } from "../context.js";
 
+interface RouteRow {
+  method: string;
+  path: string;
+  unavailable: boolean;
+  staticOnly: boolean;
+}
+
+/**
+ * docs/api-surface.md is the checked-in API contract. Its route tables are
+ * intentionally human-readable, so derive the directly runnable static routes
+ * here rather than depending on a second, stale endpoint-inventory document.
+ */
+export function routeInventory(): RouteRow[] {
+  const contract = readFileSync(new URL("../../../../docs/api-surface.md", import.meta.url), "utf8");
+  const rows = contract.split("\n").flatMap((line): RouteRow[] => {
+    const row = line.match(/\|\s*`(GET|POST|PUT|PATCH|DELETE) ([^`]+)`\s*\|/);
+    if (!row?.[1] || !row[2] || row[2].includes("{")) return [];
+    return [
+      {
+        method: row[1],
+        path: row[2],
+        unavailable: line.includes("unsupported"),
+        staticOnly: line.includes("static-only"),
+      },
+    ];
+  });
+  assert.ok(rows.length > 0, "docs/api-surface.md must supply runnable routes");
+  return rows;
+}
+
 export function register(check: Check, context: SmokeContext): void {
   check(
     "routes",
     async (signal) => {
-      const inventory = readFileSync(new URL("../../../../docs/omo-endpoint-inventory.md", import.meta.url), "utf8");
-      const rows = inventory.split("\n").flatMap((line) => {
-        const row = line.match(/^\| (GET|POST|PUT|PATCH|DELETE) \| `([^`]+)` \|/);
-        return row?.[1] && row[2]
-          ? [
-              {
-                method: row[1],
-                path: row[2],
-                unavailable: line.includes("| unavailable"),
-                staticOnly: line.includes("static-only"),
-              },
-            ]
-          : [];
-      });
-      assert.ok(rows.length > 0, "the endpoint inventory must supply routes");
+      const rows = routeInventory();
       const covered = new Set<string>();
       const staticStatuses: Array<{ method: string; path: string; status: number }> = [];
       const request = async (

@@ -11,7 +11,7 @@
  *   ANTECHAMBER_PI_BINARY=/path/to/pi npx tsx contrib/probe-archive.ts
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AdapterServer } from "../src/server.js";
@@ -47,28 +47,10 @@ async function api<T>(url: string, path: string, init?: RequestInit): Promise<{ 
   return { status: res.status, body };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 async function startServer(): Promise<AdapterServer> {
   const server = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: WORKSPACE });
   await server.start();
   return server;
-}
-
-/** Wait until the registry file knows the session (piPath bound, meta persisted). */
-async function waitForRegistry(sessionId: string): Promise<boolean> {
-  const file = join(STATE_DIR, "sessions.json");
-  for (let i = 0; i < 40; i++) {
-    try {
-      if (existsSync(file) && readFileSync(file, "utf8").includes(`"${sessionId}"`)) return true;
-    } catch {
-      /* mid-write — retry */
-    }
-    await sleep(200);
-  }
-  return false;
 }
 
 async function main(): Promise<void> {
@@ -81,9 +63,6 @@ async function main(): Promise<void> {
   const created = await api<OCSession>(url, "/session", { method: "POST", body: JSON.stringify({}) });
   ok("POST /session", created.status === 200 && typeof created.body.id === "string");
   const sessionId = created.body.id;
-
-  const bound = await waitForRegistry(sessionId);
-  ok("registry entry bound (piPath persisted)", bound);
 
   const live0 = await api<OCSession[]>(
     url,
@@ -106,6 +85,15 @@ async function main(): Promise<void> {
     JSON.stringify(archived.body.time),
   );
   ok("archive-only PATCH preserves title", archived.body.title === "New session", JSON.stringify(archived.body.title));
+  // Session update persists synchronously, so this response is an explicit
+  // completion boundary — no registry polling or quiet-time guess is needed.
+  const registry = JSON.parse(readFileSync(join(STATE_DIR, "sessions.json"), "utf8")) as Record<
+    string,
+    { piSessionId: string }
+  >;
+  const registryEntry = registry[sessionId];
+  ok("archive PATCH persists the registry entry", registryEntry !== undefined);
+  if (registryEntry === undefined) throw new Error(`session registry omitted ${sessionId} after archive PATCH`);
 
   const archList = await api<OCSession[]>(
     url,
@@ -150,11 +138,7 @@ async function main(): Promise<void> {
     method: "PATCH",
     body: JSON.stringify({ time: { archived: archivedAt2 } }),
   });
-  const reg = JSON.parse(readFileSync(join(STATE_DIR, "sessions.json"), "utf8")) as Record<
-    string,
-    { piSessionId: string }
-  >;
-  const piSessionId = reg[sessionId]!.piSessionId;
+  const piSessionId = registryEntry.piSessionId;
   const piDir = piSessionDir(WORKSPACE);
   const piFile = join(piDir, `${Date.now()}_${piSessionId}.jsonl`);
   mkdirSync(piDir, { recursive: true });
