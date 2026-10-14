@@ -1,6 +1,6 @@
 {
   "name": "antechamber",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode-compatible HTTP/SSE server that lets OpenChamber drive the pi coding agent (and OmO) over RPC",
   "type": "module",
   "license": "MIT",
