@@ -87,10 +87,10 @@ invented resource IDs.
 | `GET /api/form` | 200 | `{location, data: FormInfo[]}` for pending questions. |
 | `POST /api/vcs/init` | 204 | Initializes a Git repository in the selected directory. |
 | `GET /api/vcs` | 200 | `{location, data: {provider: "git", branch}}`. |
-| `GET /api/vcs/base` | 200 | `{location, data: null}`. |
-| `GET /api/vcs/status` | 200 | `{location, data: []}`. |
-| `GET /api/vcs/branch` | 200 | `{location, data: []}`. |
-| `GET /api/vcs/diff` | 200 | `{location, data: ""}`. |
+| `GET /api/vcs/base` | 200 | OpenCode 2.0.28 `VcsBaseOutput`: `{location, data: {name, ref, source: "reflog" \| "default"} \| null}`. Resolves the checkout source branch from HEAD's reflog, then origin's default branch, then main/master; `ref` is its commit ID. Null outside Git, before the first commit, or when no base can be found. |
+| `GET /api/vcs/status` | 200 | OpenCode 2.0.28 `VcsStatusOutput`: `{location, data: [{file, additions, deletions, status: "added" \| "deleted" \| "modified"}]}`. Git index/worktree and untracked files, with net HEAD line counts (binary counts are zero); cancelled staged/unstaged changes remain listed. Empty outside Git. All four VCS read routes use the same directory selectors as `/api/vcs`, run read-only Git with optional locks disabled, and cap each command at 5 seconds / 16 MiB (combined patches also at 16 MiB); invalid queries or Git failures return 400 `{name: "BadRequestError", data: {message}}`, not empty success. |
+| `GET /api/vcs/branch` | 200 | OpenCode 2.0.28 `VcsBranchListOutput`: `{location, data: string[]}` of sorted local branch names; optional substring `search` and non-negative integer `limit` (default 100). Empty outside Git. |
+| `GET /api/vcs/diff` | 200 | OpenCode 2.0.28 `VcsDiffOutput`: `{location, data: [{file, patch, additions, deletions, status: "added" \| "deleted" \| "modified"}]}`. Required `mode=working` compares HEAD to the worktree; `branch` compares the merge-base to the worktree (both include untracked files); `committed` compares the merge-base to HEAD. Optional `base` selects a commit for branch/committed (otherwise the detected base); `context` is a non-negative integer (default 3). Empty outside Git. |
 | `GET /api/session` | 200 | `{data: Session[], cursor: {previous, next}}`; supports location, search, parent, order, cursor, and limit. |
 | `POST /api/session` | 200 | `{data: Session}`; validates the requested location, model, agent, ID, and metadata. |
 | `GET /api/session/active` | 200 | `{data: Record<sessionID, {type: "running"}>}`. |
