@@ -160,14 +160,11 @@ test("V232-032: inventories provider integrations", async (t) => {
   assert.equal(Array.isArray(payload.data), true);
 });
 
-test("V232-035: provides location release debug data", async (t) => {
+test("V232-035: location eviction answers OpenCode's empty 204", async (t) => {
   const { root, url } = await startServer(t);
   const response = await fetch(`${url}/api/debug/location?location=${encodeURIComponent(root)}`, { method: "DELETE" });
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), {
-    name: "UnsupportedError",
-    data: { message: "Location eviction is not available with OmO" },
-  });
+  assert.equal(response.status, 204);
+  assert.equal(await response.text(), "");
 });
 
 test("V232-036: reports experimental session usage statistics", async (t) => {

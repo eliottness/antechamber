@@ -67,7 +67,7 @@ invented resource IDs.
 | `GET /api/agent` | 200 | `{location, data: Agent[]}`. |
 | `GET /api/command` | 200 | `{location, data: Command[]}`. |
 | `GET /api/skill` | 200 | `{location, data: []}`; skill inventory is unavailable. |
-| `DELETE /api/debug/location` | 400 | `UnsupportedError`; location eviction is unavailable with OmO. Unsupported. |
+| `DELETE /api/debug/location` | 204 | Empty, as OpenCode answers. OpenChamber evicts a location after git worktree changes; antechamber keeps no per-location instance, so there is nothing to evict. |
 | `GET /api/credential` | 200 | `{location, data: Credential[]}` for this process and directory. |
 | `POST /api/credential` | 200 | `{location, data: Credential}`; requires `id`, `integrationID`, and `label`; credentials are held in memory. |
 | `GET /api/integration` | 200 | `{location, data: []}`; no integrations are configured by this adapter. |

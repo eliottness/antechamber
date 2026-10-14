@@ -242,7 +242,9 @@ export async function handleV2(
   // --- bootstrap ---
   if (await handleV2Bootstrap(services, res, path, method, directory)) return;
   if (path === "/api/debug/location" && method === "DELETE") {
-    json(res, 400, errorBody("UnsupportedError", "Location eviction is not available with OmO"));
+    // OpenChamber evicts a location after git worktree changes so OpenCode re-reads it. antechamber
+    // keeps no per-location instance (project and VCS reads are fresh per request): nothing to evict.
+    res.writeHead(204).end();
     return;
   }
 

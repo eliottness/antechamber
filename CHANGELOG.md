@@ -10,6 +10,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - fix(session): accept OmO messages stored as plain-string content when titling, binding and restoring sessions instead of crashing
+- fix(api): answer OpenChamber's location eviction (`DELETE /api/debug/location`) with OpenCode's empty 204
 
 ## [0.2.0] - 2026-10-14
 
