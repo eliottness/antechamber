@@ -22,12 +22,6 @@ export async function serve(options: ServeOptions): Promise<void> {
     );
   }
   const server = new AdapterServer({ port, host, defaultDirectory: directory });
-  await server.start();
-  if (compatible) console.log(`opencode server listening on ${server.url}`);
-  else {
-    console.log(`antechamber listening on ${server.url}`);
-    console.log(`default directory: ${directory}`);
-  }
   const shutdown = (): void => {
     void server.stop().then(
       () => process.exit(0),
@@ -37,6 +31,14 @@ export async function serve(options: ServeOptions): Promise<void> {
       },
     );
   };
+  // Install handlers before announcing readiness: a supervisor may signal as
+  // soon as it reads the listening line, before this process runs again.
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  await server.start();
+  if (compatible) console.log(`opencode server listening on ${server.url}`);
+  else {
+    console.log(`antechamber listening on ${server.url}`);
+    console.log(`default directory: ${directory}`);
+  }
 }
