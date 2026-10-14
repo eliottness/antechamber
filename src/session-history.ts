@@ -147,7 +147,7 @@ function activeChain(
 ): { chain: PiFileEntry[]; nativeTree: Entries } {
   const byId = new Map<string, PiFileEntry>();
   for (const entry of entries) if (typeof entry.id === "string") byId.set(entry.id, entry);
-  let leaf = [...entries].reverse().find((entry) => entry.type !== "session" && typeof entry.id === "string");
+  let leaf = entries.findLast((entry) => entry.type !== "session" && typeof entry.id === "string");
   let selectedLeaf = s.tree.revert ? s.tree.revert.previousLeafId : s.tree.leafId;
   if (!s.tree.revert && s.tree.localShellTurns?.length) {
     // Follow a newly recorded descendant, never a sibling of the selected native branch.
@@ -485,7 +485,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     }
     // system / custom entries are not rendered
   }
-  const lastAssistant = [...chain].reverse().find((entry) => entry.message?.role === "assistant");
+  const lastAssistant = chain.findLast((entry) => entry.message?.role === "assistant");
   const stopReason = lastAssistant?.message?.stopReason;
   if (lastAssistant !== undefined && ["stop", "length", "error", "aborted"].includes(stopReason ?? "")) {
     finishProviderToolParts(

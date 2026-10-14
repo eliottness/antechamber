@@ -237,7 +237,7 @@ export class PiEventTranslator {
     });
     if (status.type === "idle") {
       s.info.time.idle = Date.now();
-      const last = [...(s.messages ?? [])].reverse().find((message) => message.info.role === "assistant");
+      const last = s.messages?.findLast((message) => message.info.role === "assistant");
       s.info.outcome =
         s.interruptRequested || (last?.info.role === "assistant" && last.info.error?.name === "MessageAbortedError")
           ? "interrupted"
@@ -483,7 +483,7 @@ export class PiEventTranslator {
         // Trust that over our snapshot, which goes stale whenever pi switches on
         // its own side (subagent routing, an in-session /model, a resumed file).
         this.services.applyPiModel(s, msg.provider, piModelId(msg.responseModel, msg.model));
-        const parent = [...(s.messages ?? [])].reverse().find((m) => m.info.role === "user");
+        const parent = s.messages?.findLast((m) => m.info.role === "user");
         const assistant: OCAssistantMessage = {
           id: id("msg"),
           sessionID: s.info.id,

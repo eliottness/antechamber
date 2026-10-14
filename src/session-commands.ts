@@ -65,7 +65,7 @@ function assistantMessage(session: ManagedSession): OCAssistantMessage {
   const messages = session.messages ?? [];
   const boundary = messages.findIndex((message) => message.info.id === session.tree.revert?.messageID);
   const visible = boundary < 0 ? messages : messages.slice(0, boundary);
-  const parentID = [...visible].reverse().find((message) => message.info.role === "user")?.info.id ?? "";
+  const parentID = visible.findLast((message) => message.info.role === "user")?.info.id ?? "";
   return {
     id: id("msg"),
     sessionID: session.info.id,
@@ -201,7 +201,7 @@ export async function runSlashCommand(
   );
   await sessions.reloadMessages(sessionId);
   const messages = sessions.messages(sessionId) ?? [];
-  return [...messages].reverse().find((message) => message.info.role === "assistant") ?? messages[messages.length - 1];
+  return messages.findLast((message) => message.info.role === "assistant") ?? messages[messages.length - 1];
 }
 
 export function parseShellCommand(value: unknown): string | undefined {

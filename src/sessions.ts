@@ -844,8 +844,7 @@ export class SessionManager {
       s.info.id,
       (event) => this.emit(s.info.directory, event as OCEvent),
       (response) => s.pi?.respondExtensionUI(response),
-      () =>
-        s.streaming?.message.id ?? [...(s.messages ?? [])].reverse().find((m) => m.info.role === "assistant")?.info.id,
+      () => s.streaming?.message.id ?? s.messages?.findLast((m) => m.info.role === "assistant")?.info.id,
       async (response) => {
         if (!s.pi) return false;
         const reply = await s.pi.command({ ...response, type: "extension_ui_response" });
