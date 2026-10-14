@@ -66,6 +66,11 @@ export function register(check: Check, context: SmokeContext): void {
         if (staticOnly) {
           assert.notEqual(response.status, 500, `${method} ${path}: ${text}`);
           staticStatuses.push({ method, path, status: response.status });
+        } else if (method === "POST" && path === "/api/experimental/generate") {
+          assert.equal(response.status, 503, `${method} ${path}: ${text}`);
+          const body = JSON.parse(text);
+          assert.equal(body._tag, "ServiceUnavailableError");
+          assert.equal(body.service, "opencode");
         } else {
           assert.notEqual(response.status, 404, `${method} ${path}: ${text}`);
           assert.notEqual(response.status, 501, `${method} ${path}: ${text}`);

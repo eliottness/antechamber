@@ -68,9 +68,13 @@ invented resource IDs.
 | `GET /api/command` | 200 | `{location, data: Command[]}`. |
 | `GET /api/skill` | 200 | `{location, data: []}`; skill inventory is unavailable. |
 | `DELETE /api/debug/location` | 204 | Empty, as OpenCode answers. OpenChamber evicts a location after git worktree changes; antechamber keeps no per-location instance, so there is nothing to evict. |
-| `GET /api/credential` | 200 | `{location, data: Credential[]}` for this process and directory. |
-| `POST /api/credential` | 200 | `{location, data: Credential}`; requires `id`, `integrationID`, and `label`; credentials are held in memory. |
+| `GET /api/credential` | 200 | `{location, data: []}`; no credentials are retained. |
+| `POST /api/credential` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | `GET /api/integration` | 200 | `{location, data: []}`; no integrations are configured by this adapter. |
+| `GET /api/plugin` | 200 | `{location, data: []}`; no OpenCode plugins are loaded by OmO. |
+| `POST /api/plugin/check` | 200 | Read-only update query returning `{location, data: []}`; there are no plugins to check. |
+| `POST /api/plugin/update` | 400 | `UnsupportedError`; plugin updates are unavailable with OmO. Unsupported. |
+| `POST /api/experimental/generate` | 503 | `{_tag: "ServiceUnavailableError", message: "No generation model is available through antechamber/OmO", service: "opencode"}`. |
 | `GET /api/experimental/session/stats` | 400 | `UnsupportedError`; session statistics are unavailable with OmO. Unsupported. |
 | `GET /api/mcp` | 200 | `{location, data: []}`; no MCP servers exist under OmO, so the read-only inventory is empty. |
 | `POST /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
@@ -124,8 +128,20 @@ invented resource IDs.
 | POST | `/mcp/{name}/auth/callback`, `/mcp/{name}/auth/authenticate` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/global/upgrade` | 409 | `UnsupportedError`; there is no OpenCode installation to upgrade. Unsupported. |
 | GET | `/api/agent/{agentID}` | 200 | `{location, data: Agent}`; 404 for an unknown agent. |
-| PATCH | `/api/project/{projectID}` | 200 | Updated project-shaped record. |
-| DELETE | `/api/credential/{credentialID}` | 204 | Deletes an in-memory credential; unknown IDs are also 204. |
+| PATCH | `/api/project/{projectID}` | 400 | `UnsupportedError`; project updates are unavailable with OmO. Unsupported. |
+| DELETE | `/api/credential/{credentialID}` | 204 | Idempotent no-op; no credentials are retained. |
+| PATCH | `/api/credential/{credentialID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/credential/{credentialID}/activate` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| GET | `/api/integration/{integrationID}` | 404 | `NotFoundError`; the integration inventory is empty. |
+| POST | `/api/integration/{integrationID}/connect/key` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/integration/{integrationID}/connect/external` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/integration/{integrationID}/connect/oauth` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| GET | `/api/integration/{integrationID}/connect/oauth/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| DELETE | `/api/integration/{integrationID}/connect/oauth/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/integration/{integrationID}/connect/oauth/{attemptID}/complete` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/integration/{integrationID}/connect/command` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| GET | `/api/integration/{integrationID}/connect/command/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| DELETE | `/api/integration/{integrationID}/connect/command/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | DELETE | `/api/permission/saved/{permissionID}` | 204 | No saved-permission state is retained. |
 | GET | `/api/session/{sessionID}` | 200 | `{data: Session}`; 404 if unknown. |
 | PATCH | `/api/session/{sessionID}` | 204 | Updates title, archive time, or metadata. |
@@ -137,6 +153,9 @@ invented resource IDs.
 | POST | `/api/session/{sessionID}/shell` | 204 | Runs a shell command; 400 for invalid input and 409 if busy. |
 | POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command; 400 if missing. |
 | POST or DELETE | `/api/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/api/session/{sessionID}/generate` | 400 | `UnsupportedError`; session generation is unavailable with OmO. Unknown sessions return 404. Unsupported. |
+| POST | `/api/session/{sessionID}/background` | 400 | `UnsupportedError`; background session control is unavailable with OmO. Unknown sessions return 404. Unsupported. |
+| POST | `/api/session/{sessionID}/move` | 400 | `UnsupportedError`; session moves are unavailable with OmO. Unknown sessions return 404. Unsupported. |
 | POST | `/api/session/{sessionID}/prompt` | 200 | Admission record `{data: {id, sessionID, time, type: "user", payload: {text, files?, agents?}, delivery, metadata?}}`. `files: [{uri, name?}]` and `agents: [{name, mention?}]` become prompt parts: OmO receives inline text attachments, images, file references and `@agent` mentions with the text, and the user message lists them back as `files: [{mime, name?, source: {type: "uri", uri}}]`, `agents` and `metadata` after reloads; the `session.inbox.enqueued` payload carries the same `files`, `agents` and `metadata`. Any `skills` reference answers 400 `{_tag: "InvalidRequestError", message: "Skill not found: <id>"}` because no skills are listed. |
 | POST | `/api/session/{sessionID}/synthetic`, `/api/session/{sessionID}/context` | 200 | No-reply context admission returning `{data: {id, sessionID, time: {created}, type: "synthetic", payload: {text}}}` (the captured OpenCode 2.x record; OpenChamber 2.3.2 aborts the send on any other status). The text joins the native conversation as an OmO custom message (`send_custom_message`, `triggerTurn: false`) without starting a turn, so the next prompt carries it; it emits `session.inbox.enqueued` (payload `{text, metadata?}`) and `delivered`, lists as `type: "synthetic"`, becomes the saved native leaf so it survives restarts even without a later prompt, and never titles the session. `context` is a compatibility alias for `synthetic`. |
 | POST | `/api/session/{sessionID}/interrupt` | 200 | Bare `{interrupted: boolean}`, as OpenCode 2.x returns it; OpenChamber reads `result.interrupted` directly. |
@@ -192,8 +211,11 @@ checks as HTTP routes.
   400 errors unless a route above specifies another status.
 - Native permission/question refusals return 409. A shell request against a
   busy session also returns 409.
-- Unknown routes return 404 on v1 and 501 on v2. The explicit v2
-  `/api/session/{sessionID}/context` route returns 501.
+- Unknown top-level routes return 404 `NotFoundError` (`no route: ...`) on
+  both v1 and v2, including `/api/*`. Unrecognized subpaths beneath an
+  existing `/session/{sessionID}` or `/api/session/{sessionID}` return 501
+  `NotImplemented`; unknown session IDs return 404 instead. The explicit v2
+  `GET /api/session/{sessionID}/context` route also returns 501.
 - Passwordless requests with a disallowed browser origin return 403;
   configured Basic authentication failures return 401.
 

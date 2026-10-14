@@ -229,7 +229,9 @@ test("empty and exact-limit object bodies remain valid", async (t) => {
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "2");
   const { server } = await start(t);
   for (const body of ["", "{}"]) {
-    assert.equal((await fetch(server.url + "/api/project/example", { method: "PATCH", body })).status, 200);
+    const response = await fetch(server.url + "/api/project/example", { method: "PATCH", body });
+    assert.equal(response.status, 400);
+    assert.equal((await errorOf(response)).name, "UnsupportedError");
   }
 });
 
