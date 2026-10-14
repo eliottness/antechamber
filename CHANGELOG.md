@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-15
+
 ### Fixed
 
 - fix(session): accept OmO messages stored as plain-string content when titling, binding and restoring sessions instead of crashing
