@@ -1,14 +1,203 @@
-# OpenCode API surface consumed by OpenChamber
+# OpenCode API surface implemented by antechamber
 
-Inventory extracted from `reference/openchamber` (commit: shallow clone of
-`main`, 2026-09-20). Sources:
+The SDK call-site notes below are based on `reference/openchamber` (shallow
+clone of `main`, 2026-09-20). Route behavior is checked against the current
+adapter source and the maintained inventory below. Sources:
 
 - `packages/ui/src/sync/event-reducer.ts`: authoritative SSE event contract.
 - `packages/ui/src/sync/session-actions.ts`, `bootstrap.ts`,
   `stores/globalSessions.ts`, `lib/api/`: SDK call sites via
   `@opencode-ai/sdk/v2`.
 
-## REST/SDK methods used
+The HTTP inventory below is maintained against `src/routes-v1.ts`,
+`src/routes-v2.ts`, `src/misc-routes.ts`, and `src/server.ts`. Each row gives
+the successful status and response shape; resource-dependent 4xx responses
+are called out where they are part of the contract. JSON is returned unless a
+row says `204`, `SSE`, or `WebSocket`. Requests also pass through the shared
+authentication, origin, body-size, and JSON validation in `src/http.ts`;
+WebSocket upgrades use the shared authentication and origin checks.
+
+## HTTP route inventory
+
+Static rows use the format consumed by the OmO route smoke. Parameterized
+routes use separate method and path columns so the smoke does not probe
+invented resource IDs.
+
+### Static HTTP routes
+
+| Route | Success | Response or behavior |
+|---|---:|---|
+| `GET /global/health` | 200 | JSON `{healthy: true}` and optional configured compatibility `version`. |
+| `GET /global/upgrade` | 409 | `UnsupportedError`; there is no OpenCode installation to upgrade. Unsupported; static-only. |
+| `GET /session` | 200 | `OCSession[]`; accepts `directory` and `archived` filters. |
+| `POST /session` | 200 | Created `OCSession`. |
+| `GET /session/status` | 200 | Map of session IDs to status objects. |
+| `GET /project/current` | 200 | Current `OCProject`. |
+| `GET /project` | 200 | Array containing the current `OCProject`. |
+| `GET /config` | 200 | OpenCode-compatible configuration object. |
+| `GET /global/config` | 200 | Same configuration object as `/config`. |
+| `GET /provider` | 200 | `{all, default, connected}` provider catalog. |
+| `GET /config/providers` | 200 | `{providers, default}` provider catalog. |
+| `GET /experimental/session` | 200 | Sessions sorted by update time; supports directory, roots, cursor, and limit. `archived=false` excludes archived sessions; `archived=true` does not filter to archived-only. |
+| `GET /question` | 200 | Pending v1 question cards. |
+| `GET /permission` | 200 | Pending v1 permission cards. |
+| `GET /skill` | 200 | Empty array; skill inventory is unavailable. |
+| `GET /lsp` | 200 | Empty array; LSP status is unavailable. |
+| `GET /formatter` | 200 | Empty array; formatter inventory is unavailable. |
+| `GET /experimental/tool/ids` | 200 | Empty array; experimental tool inventory is unavailable. |
+| `GET /provider/auth` | 200 | Empty object; provider authentication state is unavailable. |
+| `GET /mcp` | 200 | Empty object; MCP inventory is unavailable. |
+| `GET /command` | 200 | Agent slash-command descriptors. |
+| `GET /path` | 200 | Home, state, config, worktree, and directory paths. |
+| `GET /vcs` | 200 | `{branch, default_branch}` for the selected directory. |
+| `GET /agent` | 200 | Supported agent descriptors. |
+| `GET /file` | 200 | Directory entries confined to the selected session directory. |
+| `GET /find/file` | 200 | Matching relative paths, confined to the selected session directory. |
+| `PATCH /config` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| `POST /experimental/control-plane/move-session` | 400 | `UnsupportedError`; configure session directories in OmO. Unsupported. |
+| `GET /global/event` | 200 | Global v1 SSE stream; see [SSE and WebSocket streams](#sse-and-websocket-streams). |
+| `GET /api/info` | 200 | OpenCode API version, process ID, server URL, and temporary path. |
+| `GET /api/location` | 200 | Current directory and project location. |
+| `GET /api/config` | 200 | Bare `ConfigEntry[]` (OpenCode 2.x contract): one `{type: "document", path: "antechamber", info: {default_agent}}` entry that OpenChamber folds with `mergeConfigDocuments`. |
+| `GET /api/shell` | 200 | `{location, data: []}`; OmO has no background shells to list. |
+| `GET /api/websearch/provider` | 200 | `{location, data: []}`; no web-search providers are configured through antechamber. |
+| `GET /api/provider` | 200 | `{location, data: Provider[]}` from the agent catalog. |
+| `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog. |
+| `GET /api/model/default` | 200 | `{location, data: Model \| null}` for the active model. |
+| `GET /api/agent` | 200 | `{location, data: Agent[]}`. |
+| `GET /api/command` | 200 | `{location, data: Command[]}`. |
+| `GET /api/skill` | 200 | `{location, data: []}`; skill inventory is unavailable. |
+| `DELETE /api/debug/location` | 400 | `UnsupportedError`; location eviction is unavailable with OmO. Unsupported. |
+| `GET /api/credential` | 200 | `{location, data: Credential[]}` for this process and directory. |
+| `POST /api/credential` | 200 | `{location, data: Credential}`; requires `id`, `integrationID`, and `label`; credentials are held in memory. |
+| `GET /api/integration` | 200 | `{location, data: []}`; no integrations are configured by this adapter. |
+| `GET /api/experimental/session/stats` | 400 | `UnsupportedError`; session statistics are unavailable with OmO. Unsupported. |
+| `GET /api/mcp` | 200 | `{location, data: []}`; no MCP servers exist under OmO, so the read-only inventory is empty. |
+| `POST /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
+| `DELETE /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
+| `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file"}]}`. |
+| `GET /api/project` | 200 | Project records for the default directory and directories with restorable sessions. |
+| `GET /api/permission/request` | 200 | `{location, data: Permission[]}` for the selected directory. |
+| `GET /api/question/request` | 200 | `{location, data: Question[]}`. |
+| `GET /api/permission/saved` | 200 | `{data: []}`; saved permissions are unavailable. |
+| `GET /api/form` | 200 | `{location, data: FormInfo[]}` for pending questions. |
+| `POST /api/vcs/init` | 204 | Initializes a Git repository in the selected directory. |
+| `GET /api/vcs` | 200 | `{location, data: {provider: "git", branch}}`. |
+| `GET /api/vcs/base` | 200 | `{location, data: null}`. |
+| `GET /api/vcs/status` | 200 | `{location, data: []}`. |
+| `GET /api/vcs/branch` | 200 | `{location, data: []}`. |
+| `GET /api/vcs/diff` | 200 | `{location, data: ""}`. |
+| `GET /api/session` | 200 | `{data: Session[], cursor: {previous, next}}`; supports location, search, parent, order, cursor, and limit. |
+| `POST /api/session` | 200 | `{data: Session}`; validates the requested location, model, agent, ID, and metadata. |
+| `GET /api/session/active` | 200 | `{data: Record<sessionID, {type: "running"}>}`. |
+
+### Parameterized HTTP routes
+
+| Method | Path | Success | Response or behavior |
+|---|---|---:|---|
+| GET | `/session/{sessionID}` | 200 | Session record; 404 if unknown. |
+| PATCH | `/session/{sessionID}` | 200 | Updated session record; supports title, archive time, and metadata. |
+| DELETE | `/session/{sessionID}` | 200 | Session removal result. |
+| GET | `/session/{sessionID}/message` | 200 | Message list; optional `limit` returns the newest bounded page. |
+| GET | `/session/{sessionID}/message/{messageID}` | 200 | One message; 404 if unknown. |
+| GET | `/session/{sessionID}/children` | 200 | Direct child sessions. |
+| GET | `/session/{sessionID}/todo` | 200 | Session todo items. |
+| GET | `/session/{sessionID}/diff` | 200 | Unified diff for the session. |
+| POST | `/session/{sessionID}/prompt_async` | 204 | Admits a prompt asynchronously; accepts text, file, and agent parts, optional `delivery: "steer" \| "queue"`, and a client message ID. |
+| POST | `/session/{sessionID}/message` | 200 | Message record after prompt admission; accepts the same rich v1 parts. |
+| POST | `/session/{sessionID}/abort` | 200 | Boolean abort result. |
+| POST | `/session/{sessionID}/fork` | 200 | Forked session record; optional `messageID` selects the fork boundary. |
+| POST | `/session/{sessionID}/revert` | 200 | Session record with staged revert state; requires a user-message `messageID`. |
+| POST | `/session/{sessionID}/unrevert` | 200 | Session record after restoring the saved leaf. |
+| POST | `/session/{sessionID}/summarize` | 200 | Boolean success after compaction; 400 if compaction cannot run. |
+| POST | `/session/{sessionID}/shell` | 200 | Shell message; 400 for invalid input and 409 if the session is busy. |
+| POST | `/session/{sessionID}/command` | 200 | Slash-command message envelope; 400 if the command is missing. |
+| POST | `/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
+| DELETE | `/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/question/{requestID}/reply` | 200 | `true` after native acknowledgment; 404 unknown/settled, 409 native refusal. |
+| POST | `/question/{requestID}/reject` | 200 | `true` after native acknowledgment; 404 unknown/settled, 409 native refusal. |
+| POST | `/permission/{requestID}/reply` | 200 | `true` after reply; 404 unknown or invalid request. |
+| PUT | `/auth/{providerID}` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/provider/{providerID}/oauth/authorize` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/provider/{providerID}/oauth/callback` | 400 | `UnsupportedError`. Unsupported. |
+| POST or DELETE | `/mcp/{name}/connect`, `/mcp/{name}/disconnect`, `/mcp/{name}/auth` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/mcp/{name}/auth/callback`, `/mcp/{name}/auth/authenticate` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/global/upgrade` | 409 | `UnsupportedError`; there is no OpenCode installation to upgrade. Unsupported. |
+| GET | `/api/agent/{agentID}` | 200 | `{location, data: Agent}`; 404 for an unknown agent. |
+| PATCH | `/api/project/{projectID}` | 200 | Updated project-shaped record. |
+| DELETE | `/api/credential/{credentialID}` | 204 | Deletes an in-memory credential; unknown IDs are also 204. |
+| DELETE | `/api/permission/saved/{permissionID}` | 204 | No saved-permission state is retained. |
+| GET | `/api/session/{sessionID}` | 200 | `{data: Session}`; 404 if unknown. |
+| PATCH | `/api/session/{sessionID}` | 204 | Updates title, archive time, or metadata. |
+| DELETE | `/api/session/{sessionID}` | 204 | Removes the session. |
+| GET | `/api/session/{sessionID}/message` | 200 | `{data: Message[], cursor}`; supports order, cursor, and limit. |
+| GET | `/api/session/{sessionID}/message/{messageID}` | 200 | `{data: Message}`; 404 if unknown. |
+| GET | `/api/session/{sessionID}/todo` | 200 | `{data: Todo[]}`. |
+| POST | `/api/session/{sessionID}/compact`, `/api/session/{sessionID}/summarize` | 200 | `{data: true}` after compaction. |
+| POST | `/api/session/{sessionID}/shell` | 204 | Runs a shell command; 400 for invalid input and 409 if busy. |
+| POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command; 400 if missing. |
+| POST or DELETE | `/api/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/api/session/{sessionID}/prompt` | 200 | Admission result retaining rich client fields; OmO receives the extracted text and `delivery: "steer" \| "queue"`. |
+| POST | `/api/session/{sessionID}/synthetic`, `/api/session/{sessionID}/context` | 200 | No-reply context admission returning `{data: {id, sessionID, time: {created}, type: "synthetic", payload: {text}}}` (the captured OpenCode 2.x record; OpenChamber 2.3.2 aborts the send on any other status); `context` is a compatibility alias for `synthetic`. |
+| POST | `/api/session/{sessionID}/interrupt` | 200 | Bare `{interrupted: boolean}`, as OpenCode 2.x returns it; OpenChamber reads `result.interrupted` directly. |
+| POST | `/api/session/{sessionID}/fork` | 200 | `{data: Session}`; accepts `before` or legacy `messageID`. |
+| POST | `/api/session/{sessionID}/revert`, `/api/session/{sessionID}/revert/stage` | 200 | `{data: revert}`; requires a valid user-message boundary. |
+| DELETE | `/api/session/{sessionID}/revert` | 204 | Clears a staged revert. |
+| POST | `/api/session/{sessionID}/revert/commit` | 204 | Commits the staged conversation change; does not change files. |
+| POST | `/api/session/{sessionID}/agent` | 204 | Selects a supported agent alias; unknown aliases return 400. |
+| POST | `/api/session/{sessionID}/model` | 204 | Selects the requested model; invalid selection returns 400. |
+| GET | `/api/session/{sessionID}/form` | 200 | `{data: FormInfo[]}`. |
+| GET | `/api/session/{sessionID}/form/{formID}` | 200 | `{data: FormInfo & {state: {status: "pending"}}}`; 404 if unknown/settled. |
+| POST | `/api/session/{sessionID}/form/{formID}/reply` | 204 | Replies after native acknowledgment; 404 unknown/settled, 409 native refusal. |
+| DELETE | `/api/session/{sessionID}/form/{formID}` | 204 | Cancels after native acknowledgment; 404 unknown/settled, 409 native refusal. |
+| GET | `/api/session/{sessionID}/question` | 200 | `{data: Question[]}`. |
+| GET | `/api/session/{sessionID}/question/{requestID}` | 200 | `{data: Question}`; 404 if unknown. |
+| POST | `/api/session/{sessionID}/question/{requestID}/reply` | 204 | Replies after native acknowledgment; 404 unknown/settled, 409 native refusal. |
+| POST | `/api/session/{sessionID}/question/{requestID}/reject` | 204 | Rejects after native acknowledgment; 404 unknown/settled, 409 native refusal. |
+| GET | `/api/session/{sessionID}/permission` | 200 | `{data: Permission[]}`. |
+| GET | `/api/session/{sessionID}/permission/{requestID}` | 200 | `{data: Permission}`; 404 if unknown. |
+| POST | `/api/session/{sessionID}/permission/{requestID}/reply` | 204 | Replies using `decision` (or legacy `reply`); 404 if unknown or invalid. |
+| GET | `/api/session/{sessionID}/inbox` | 200 | `{data: []}`; inbox listing is unavailable. |
+| GET | `/api/session/{sessionID}/diff` | 200 | `{data: Diff[]}`; supports `from`, `to`, and `context`. |
+| GET | `/api/session/{sessionID}/context` | 501 | `NotImplemented`. |
+| Any | `/api/mcp/{...}`, `/api/experimental/mcp/{...}` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
+
+### SSE and WebSocket streams
+
+| Method | Path | Success | Response or behavior |
+|---|---|---:|---|
+| GET | `/event` | 200 | Directory-scoped v1 SSE; events keep their raw v1 shape. |
+| GET | `/global/event` | 200 | Global v1 SSE; broadcast event frames wrap events as `{directory, project, payload}`. |
+| GET | `/api/event` | 200 | Directory-scoped v2 SSE envelopes with `location` and `data`. |
+| WebSocket | `/api/global/event/ws` | 101 | Global event stream; sends `ready`, then event frames with directory and payload; `lastEventId` replays retained events. |
+
+The v1 local `/event` stream is not wrapped and remains data-only. The global
+v1 stream wraps its initial connection event and subsequent events; subsequent
+event frames carry an `id:` line and nested payload. The v2 SSE stream carries
+event IDs and replays retained events after `Last-Event-ID`. Replay storage is
+bounded to the most recent 1,024 records in process memory; reconnectable
+global v1 and v2 frames use event IDs, while local v1 frames do not. V2 event
+frames whose `data` has a top-level `sessionID` include
+`durable: {aggregateID, seq, version: 1}` metadata. This is event identity and
+sequence metadata, not an on-disk event log. The global WebSocket endpoint
+sends `ready`, then `{type: "event", eventId, directory, scope: "global",
+payload}` frames. `ready` includes `replayReset: true` when `lastEventId`
+predates the retained window. It uses the same authentication and origin
+checks as HTTP routes.
+
+### Shared status behavior
+
+- Unknown sessions and resources return typed 404 errors. Invalid JSON, body
+  shapes, unsupported input values, and unsupported capabilities return typed
+  400 errors unless a route above specifies another status.
+- Native permission/question refusals return 409. A shell request against a
+  busy session also returns 409.
+- Unknown routes return 404 on v1 and 501 on v2. The explicit v2
+  `/api/session/{sessionID}/context` route returns 501.
+- Passwordless requests with a disallowed browser origin return 403;
+  configured Basic authentication failures return 401.
+
+## OpenChamber SDK methods used
 
 ### Sessions (core)
 
@@ -20,7 +209,7 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `session.update` | rename/archive/metadata | adapter-side title + `time.archived` (persisted in the registry; `archived=true/false` list filtering honored on `/session` and `/experimental/session`) |
 | `session.delete` | delete session | kill process + remove session file |
 | `session.messages` | load message history | RPC `get_messages` |
-| `session.promptAsync` | send prompt (async) | RPC `prompt`. **Echo contract** (verified against OpenChamber's event-reducer): reuse the client's optimistic `messageID` from the body for the user message and emit `message.updated` + `message.part.updated` (user text part) so the optimistic insert reconciles in place instead of rendering twice. |
+| `session.promptAsync` | send prompt (async) | RPC `prompt`. Reuses the client's optimistic `messageID` and emits the user message and parts so the optimistic insert reconciles in place. V1 text, file, and agent parts are retained in history; inline image data becomes native image input, inline text files become prompt text, and agent mentions become `@name` text. |
 | `session.abort` | stop generation | RPC `abort` |
 | `session.fork` | fork from a message | RPC `fork` / `get_fork_messages`; conversation-only fork backed by the agent's session tree (see docs/architecture.md) |
 | `session.revert` / `session.unrevert` | undo/redo conversation context | backed by the agent's native session-tree navigation; conversation-only, never touches files on disk |
@@ -28,7 +217,7 @@ Inventory extracted from `reference/openchamber` (commit: shallow clone of
 | `session.status` | busy/idle map | derive from RPC events |
 | `session.todo` | todo list rendering | bridged from the agent's todo tool (`src/todo-bridge.ts`) |
 | `session.shell` | run shell in session ctx | RPC `bash`, with cancellation via `abort_bash` |
-| `session.command` | slash commands | RPC `prompt` with `/cmd` or `get_commands`. OmO skips native title generation for a first prompt starting with `/`, so any `/cmd args` prompt also sends `sessionTitlePrompt: args`. |
+| `session.command` | slash commands | RPC `prompt` with `/cmd` or `get_commands`. File parts are retained and adapted like ordinary v1 prompts. OmO skips native title generation for a first prompt starting with `/`, so any `/cmd args` prompt also sends `sessionTitlePrompt: args`. |
 | `session.share` / `session.unshare` | share links | unsupported, returns `400 UnsupportedError`, no pi/OmO equivalent |
 
 ### Permissions & questions
@@ -104,42 +293,47 @@ fix; this adapter does not invent a reply target absent from native state.
 | SDK method | pi counterpart |
 |---|---|
 | `project.current` / `project.list` | adapter directory registry |
-| `config.get` / `config.update` | adapter config (pi flags, session dirs) |
+| `config.get` | adapter config and selected agent name; `PATCH /config` is unsupported |
 | `config.providers` | RPC `get_available_models` (translated) |
 | `command.list` | RPC `get_commands` |
 | `app.agents` | static pi agent descriptors: `build` plus pi's own agent name |
 | `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
-| `auth.set`, `provider.oauth`, `mcp.connect/disconnect` | stub or proxy to pi config |
+| `auth.set`, `provider.oauth`, `mcp.connect/disconnect` | unsupported with OmO; configure providers and MCP in OmO |
 
-## SSE event contract (event-reducer.ts)
+## SSE event contract
 
-The reducer handles exactly these `type` values; the adapter must emit
-compatible payloads for the subset it supports:
+V1 `/event` carries raw OpenCode v1 events scoped to the selected directory.
+V1 `/global/event` carries broadcast events in `{directory, project, payload}`
+envelopes; its initial `server.connected` frame is `{directory, payload}`.
+V2 `/api/event` carries `{id, created, type, location, data}`
+envelopes. These are distinct wire shapes; the global wrapper is not used on
+the directory-scoped v1 stream.
 
-```
-server.connected            session.created           session.updated
-session.deleted             session.status            session.idle
-session.error               session.diff              message.updated
-message.removed             message.part.updated      message.part.delta
-message.part.removed        permission.asked          permission.replied
-question.asked              question.replied          question.rejected
-todo.updated                project.updated           vcs.branch.updated
-lsp.updated                 server.instance.disposed  global.disposed
-```
+The adapter emits the supported v1 lifecycle, message/part, permission,
+question, todo, and diff events. Text and reasoning deltas use a dedicated
+`message.part.delta` event before the updated-part snapshot; the snapshot does
+not repeat that append delta. This ordering lets clients apply the delta once
+and then reconcile to the authoritative part state.
 
-Implemented: `server.connected`, `session.created`, `session.updated`,
-`session.status`, `session.idle`, `session.error`, `message.updated`,
-`message.part.updated`, `message.part.delta`, `permission.asked`,
-`permission.replied`, `question.asked`, `question.replied`,
-`question.rejected`, `todo.updated`, `session.diff`. `project.updated`,
-`vcs.branch.updated`, and `lsp.updated` are not emitted (no corresponding
-pi/OmO signal is adapted).
+The v2 translator maps user interruptions to
+`session.execution.interrupted` with `reason: "user"`, provider or session
+errors to `session.execution.failed`, and successful turns to
+`session.execution.succeeded`. Failed assistant steps use
+`session.step.failed` with `rawFinish: "error"`, the error, cost, and token
+usage; they do not also emit a successful step or execution terminal.
+Interrupted and failed executions likewise do not later emit a success
+terminal. Successful steps use `session.step.ended`.
 
-## pi RPC → OpenCode event mapping (draft)
+V2 also projects staged/cleared/committed revert events, compaction
+started/ended/failed events, shell started/ended events, permission events,
+question forms, session ancestry/metadata, and text/reasoning deltas. Other
+OpenCode events with no adapter source are not emitted.
+
+## pi RPC → OpenCode event mapping
 
 | pi stdout event | OpenCode SSE |
 |---|---|
-| `message_update` / `assistantMessageEvent: text_delta` | `message.part.delta` + `message.part.updated` |
+| `message_update` / `assistantMessageEvent: text_delta` | `message.part.delta` followed by `message.part.updated` snapshot |
 | `assistantMessageEvent: toolcall_start/delta/end` | `message.part.updated` (tool part; pending `{raw}` accumulates the streamed JSON fragments, running carries parsed `arguments`, result lands at `turn_end`) |
 | `turn_end` (`toolResults[]`) | `message.part.updated` (tool part, completed `{output}` or error per `isError`, matched by `toolCallId`) |
 | `bash_execution_update` | unmapped; folded into tool parts above |

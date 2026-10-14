@@ -28,7 +28,13 @@ export const RPC_COMMAND_TIMEOUT_MS = 60_000;
  * long before a large session finished, leaving the run orphaned.
  */
 export const COMPACT_RPC_TIMEOUT_MS = 31 * 60_000;
-export const MAX_JSONL_FRAME_BYTES = 64 * 1024 * 1024;
+const MAX_JSONL_FRAME_BYTES = 64 * 1024 * 1024;
+export class UpstreamProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamProtocolError";
+  }
+}
 const PROCESS_KILL_GRACE_MS = 5_000;
 
 export type PiRpcResponse<T = unknown> = {
@@ -40,7 +46,7 @@ export type PiRpcResponse<T = unknown> = {
   | { readonly success: false; readonly error?: string; readonly data?: never }
 );
 
-export interface PiRpcClientOptions {
+interface PiRpcClientOptions {
   cwd: string;
   /** Path/name of the pi binary. Defaults to ANTECHAMBER_PI_BINARY env or "omo" from PATH. */
   piBinary?: string;
@@ -50,6 +56,7 @@ export interface PiRpcClientOptions {
 }
 
 interface PendingRequest {
+  command: string;
   resolve: (r: PiRpcResponse) => void;
   reject: (e: Error) => void;
 }
@@ -115,6 +122,9 @@ export class PiRpcClient extends EventEmitter {
       this.stderrTail = (this.stderrTail + chunk.toString()).slice(-8192);
     });
 
+    this.proc.stdin?.on("error", (error) => {
+      this.closeForTransportFailure(error);
+    });
     this.proc.stdout!.on("data", (chunk: Buffer | string) => {
       const text = typeof chunk === "string" ? chunk : this.decoder.write(chunk);
       this.buffer += text;
@@ -126,11 +136,10 @@ export class PiRpcClient extends EventEmitter {
       this.buffer += text;
       this.bufferBytes += Buffer.byteLength(text);
       this.drain();
-      this.failAll(new Error("pi process closed stdout"));
+      this.closeForTransportFailure(new Error("pi process closed stdout"));
     });
     this.proc.on("error", (err) => {
-      this.closed = true;
-      this.failAll(err);
+      this.closeForTransportFailure(err);
     });
     this.proc.on("exit", (code, signal) => {
       this.closed = true;
@@ -175,6 +184,16 @@ export class PiRpcClient extends EventEmitter {
     else process.kill(-this.proc.pid, "SIGKILL");
   }
 
+  private closeForTransportFailure(error: Error): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.failAll(error);
+    void this.dispose().catch((disposeError: unknown) => {
+      const message = disposeError instanceof Error ? disposeError.message : String(disposeError);
+      console.error(`[pi-rpc] failed to dispose after transport failure: ${message}`);
+    });
+  }
+
   private handleLine(line: string): void {
     let value: unknown;
     try {
@@ -197,6 +216,14 @@ export class PiRpcClient extends EventEmitter {
         const error = new Error("pi returned a malformed RPC response");
         console.error(`[pi-rpc] ${error.message}`);
         pending?.reject(error);
+        return;
+      }
+      if (pending !== undefined && pending.command !== msg.command) {
+        const error = new Error(
+          `pi returned mismatched RPC response command "${msg.command}" for pending command "${pending.command}"`,
+        );
+        console.error(`[pi-rpc] ${error.message}`);
+        pending.reject(error);
         return;
       }
       const response: PiRpcResponse = msg.success
@@ -253,30 +280,31 @@ export class PiRpcClient extends EventEmitter {
     if (this.closed) return Promise.reject(new Error("pi process is not running"));
     if (signal?.aborted) return Promise.reject(signal.reason);
     const id = randomUUID();
+    const expectedCommand = String(cmd.type);
     return new Promise((resolve, reject) => {
       const cleanup = (): void => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         this.pending.delete(id);
       };
-      const onAbort = (): void => {
+      const rejectCommand = (reason: unknown): void => {
         cleanup();
-        reject(signal?.reason);
+        reject(reason);
+      };
+      const onAbort = (): void => {
+        rejectCommand(signal?.reason);
       };
       const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error(`pi command "${cmd.type}" timed out after ${timeoutMs}ms`));
+        this.closeForTransportFailure(new Error(`pi command "${expectedCommand}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       this.pending.set(id, {
+        command: expectedCommand,
         resolve: (r) => {
           cleanup();
           // The envelope is checked at the transport boundary; callers own data schemas.
           resolve(r.success ? { ...r, data: r.data as T } : r);
         },
-        reject: (e) => {
-          cleanup();
-          reject(e);
-        },
+        reject: rejectCommand,
       });
       signal?.addEventListener("abort", onAbort, { once: true });
       this.write({ ...cmd, id });
@@ -294,7 +322,7 @@ export class PiRpcClient extends EventEmitter {
     this.closed = true;
     this.failAll(new Error("pi process disposed"));
     const pid = this.proc.pid;
-    if (pid === undefined) return;
+    if (pid === undefined || this.proc.exitCode !== null || this.proc.signalCode !== null) return;
     const clock = this.options.clock ?? systemClock;
     const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
       try {

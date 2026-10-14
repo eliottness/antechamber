@@ -1,0 +1,25 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/api/event",
+    "headers": {
+      "accept": "text/event-stream",
+      "cache-control": "no-cache"
+    }
+  },
+  "event": {
+    "id": "evt_[redacted]",
+    "created": 1791999147030,
+    "type": "session.text.started",
+    "data": {
+      "sessionID": "ses_[redacted]",
+      "assistantMessageID": "msg_[redacted]",
+      "ordinal": 0
+    },
+    "durable": {
+      "aggregateID": "ses_[redacted]",
+      "seq": 7,
+      "version": 1
+    }
+  }
+}

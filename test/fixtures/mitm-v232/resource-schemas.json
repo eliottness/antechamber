@@ -1,0 +1,123 @@
+{
+  "requests": {
+    "project": {
+      "method": "GET",
+      "path": "/api/project",
+      "headers": {
+        "accept": "application/json",
+        "x-opencode-directory": "[directory]"
+      }
+    },
+    "vcs": {
+      "method": "GET",
+      "path": "/api/vcs",
+      "headers": {
+        "accept": "application/json",
+        "x-opencode-directory": "[directory]"
+      }
+    },
+    "session": {
+      "method": "GET",
+      "path": "/api/session/[session-id]",
+      "headers": {
+        "accept": "application/json",
+        "x-opencode-directory": "[directory]"
+      }
+    },
+    "message": {
+      "method": "GET",
+      "path": "/api/session/[session-id]/message?order=desc&limit=1",
+      "headers": {
+        "accept": "application/json",
+        "x-opencode-directory": "[directory]"
+      }
+    }
+  },
+  "responses": {
+    "project": [
+      {
+        "id": "project_[redacted]",
+        "canonical": "/tmp/[redacted]",
+        "time": {
+          "created": 1791998970960,
+          "updated": 1791998970960,
+          "active": 1791998970963
+        },
+        "sandboxes": [],
+        "vcs": "git"
+      }
+    ],
+    "vcs": {
+      "location": {
+        "directory": "/tmp/[redacted]"
+      },
+      "data": {
+        "branch": {
+          "current": "main"
+        },
+        "provider": "git"
+      }
+    },
+    "session": {
+      "data": {
+        "id": "ses_[redacted]",
+        "projectID": "project_[redacted]",
+        "agent": "build",
+        "model": {
+          "id": "claude-haiku-4-5",
+          "providerID": "anthropic",
+          "variant": "default"
+        },
+        "cost": 0,
+        "tokens": "[REDACTED]",
+        "time": {
+          "created": 1791999146814,
+          "updated": 1791999146814,
+          "idle": 1791999147814
+        },
+        "title": "Captured session",
+        "location": {
+          "directory": "/tmp/[redacted]"
+        },
+        "metadata": {
+          "openchamber": {
+            "knowledge_context_delivered": "l:on|w:ask",
+            "work": {
+              "state": "active",
+              "openedAt": 1791999146814,
+              "openedBy": "user"
+            }
+          }
+        },
+        "outcome": "succeeded"
+      }
+    },
+    "message": {
+      "data": [
+        {
+          "id": "msg_[redacted]",
+          "time": {
+            "created": 1791999147022,
+            "streamed": 1791999147030,
+            "completed": 1791999147814
+          },
+          "type": "assistant",
+          "content": [],
+          "agent": "build",
+          "model": {
+            "id": "claude-haiku-4-5",
+            "providerID": "anthropic",
+            "variant": "default"
+          },
+          "finish": "stop",
+          "cost": 0,
+          "tokens": "[REDACTED]"
+        }
+      ],
+      "cursor": {
+        "previous": null,
+        "next": "cursor_[redacted]"
+      }
+    }
+  }
+}

@@ -1,10 +1,11 @@
 # Configuration
 
-All settings are read from environment variables. Each one is read under its
-current `ANTECHAMBER_` name first; if that's unset, antechamber falls back to
-the deprecated `OCPI_` name for compatibility with existing deployments. Set
-either, but prefer the `ANTECHAMBER_` name for anything new. A blank value
-(empty string) counts as unset.
+Connector settings are read under their current `ANTECHAMBER_` name first; if
+that's unset, antechamber falls back to the deprecated `OCPI_` name for
+compatibility with existing deployments. Set either, but prefer the
+`ANTECHAMBER_` name for anything new. A blank value (empty string) counts as
+unset. The OmO/Senpi RPC capability variables below are direct passthrough
+inputs and do not have `ANTECHAMBER_` or `OCPI_` aliases.
 
 ## Reference
 
@@ -20,6 +21,8 @@ either, but prefer the `ANTECHAMBER_` name for anything new. A blank value
 | `ANTECHAMBER_DEBUG_LOG` | `OCPI_DEBUG_LOG` | `<os tmpdir>/antechamber-debug-<uid>.log` (created mode `0600`) | Path for the debug log when `ANTECHAMBER_DEBUG` is set. A write failure disables logging for the rest of the process and prints one warning; it never crashes the server. |
 | `ANTECHAMBER_OPENCODE_COMPAT_VERSION` | `OCPI_OPENCODE_COMPAT_VERSION` | unset | Overrides the `version` field `GET /global/health` reports. Unset means `null`, so OpenChamber's update checker reports no available update instead of reporting every adapter version as outdated. |
 | `OMO_CODING_AGENT_DIR` | `SENPI_CODING_AGENT_DIR`, `PI_CODING_AGENT_DIR` (read directly, in that order, matching OmO; no `ANTECHAMBER_`/`OCPI_` prefix) | `~/.omo/agent` (`~/.pi/agent` when the backend binary is `pi`) | Agent state directory: sessions, child transcripts, and config discovery (agent name, models). |
+| `OMO_RPC_CLIENT_CAPABILITIES` | none | inherited, then adapter additions | Comma-separated RPC client capabilities inherited from the environment. Antechamber merges this list first with `SENPI_RPC_CLIENT_CAPABILITIES`, trims and deduplicates entries, then adds `auto_title_sessions` and `question`; it writes the combined list to both variables for the agent process. |
+| `SENPI_RPC_CLIENT_CAPABILITIES` | none | inherited, then adapter additions | Comma-separated RPC client capabilities merged after `OMO_RPC_CLIENT_CAPABILITIES`. Entries are trimmed and deduplicated; antechamber always adds `auto_title_sessions` and `question`, then writes the combined list to both capability variables for the agent process. |
 
 Non-prefixed CLI flags (`--port`, `--host`/`--hostname`, `--directory`) are
 set on the command line, not through environment variables; see the README's
@@ -72,7 +75,7 @@ is informational and never exposes the password.
 | `OPENCODE_SERVER_PASSWORD` | unset (no auth) | Enables HTTP Basic auth on every route, including `/global/health` and the SSE streams, matching [OpenCode's server contract](https://opencode.ai/docs/server/#authentication). Takes precedence over `ANTECHAMBER_SERVER_PASSWORD`. |
 | `ANTECHAMBER_SERVER_PASSWORD` (legacy `OCPI_SERVER_PASSWORD`) | unset | Fallback password when `OPENCODE_SERVER_PASSWORD` is not set. |
 | `OPENCODE_SERVER_USERNAME` | `opencode` | Basic auth username. |
-| `ANTECHAMBER_ALLOWED_ORIGINS` (legacy `OCPI_ALLOWED_ORIGINS`) | none | Comma-separated extra browser origins (`https://host:port`). Loopback origins are always allowed. Without a server password, requests carrying any other `Origin` get `403`; with one, they are served (the password is the boundary, and OpenChamber's proxy forwards its clients' origins) but receive no CORS headers. CORS headers echo allowed origins only. |
+| `ANTECHAMBER_ALLOWED_ORIGINS` (legacy `OCPI_ALLOWED_ORIGINS`) | none | Comma-separated extra browser origins (`https://host:port`). The adapter's exact origin and HTTP(S) loopback origins (including a different loopback port) are allowed by default. Without a server password, another `Origin` gets `403` unless listed here. With a password, other origins may make authenticated requests but receive no CORS headers unless explicitly allowed. CORS headers echo allowed origins only. |
 | `ANTECHAMBER_MAX_BODY_BYTES` (legacy `OCPI_MAX_BODY_BYTES`) | `10485760` (10 MiB) | Maximum request body; larger bodies get `413`. Malformed JSON or a non-object body gets `400`. |
 | `ANTECHAMBER_ALLOW_INSECURE` (legacy `OCPI_ALLOW_INSECURE`) | unset | Set to exactly `1` to allow binding a non-loopback host without a password. |
 | `--insecure-no-auth` (CLI flag) | absent | Same as `ANTECHAMBER_ALLOW_INSECURE=1`. |

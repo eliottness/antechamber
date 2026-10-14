@@ -49,7 +49,7 @@ cli.ts (parseArgs, lazy import per command; no command framework)
   Exceptions that read `process.env` directly: the OpenCode auth vars in `http.ts` and the RPC capability vars plus child env in `pi-rpc.ts`.
 
 ## CONVENTIONS
-- `types.ts` holds the OpenCode v1 types (`OC*`). v2 shapes are `V2*` in `v2.ts`. Do not mix them.
+- `types.ts` holds the OpenCode v1 types (`OC*`). `v2.ts` owns the `V2*` translation shapes; `catalog.ts` has local `OCv2Model` and `OCv2Provider` interfaces. Do not mix these contracts.
 - Domain errors (`SessionTreeError`, `SessionPersistenceError`, `ApprovalInputError`) are mapped in `http.ts` to `{name, data: {message}}`. Anything else becomes `UnknownError` 500.
 - Debug logging uses `debugLog` (`misc-routes.ts`), gated on `ANTECHAMBER_DEBUG`. The log file is mode 0600, and logging latches off after the first write failure.
 - Unsupported capabilities (MCP, OAuth, skills, LSP, formatter) are stubs in `misc-routes.ts`.

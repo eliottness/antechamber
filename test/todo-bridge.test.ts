@@ -277,7 +277,12 @@ test("HTTP SSE subscribers receive v1 properties and v2 data todo events", async
         const boundary = buffer.indexOf("\n\n");
         const frame = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        return JSON.parse(frame.replace(/^data: /, ""));
+        const data = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        return JSON.parse(data);
       };
       assert.equal((await readEvent()).type, "server.connected"); // subscribe before triggering the entry
       const s = session("/nonexistent");

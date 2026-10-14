@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "PATCH",
+    "path": "/api/session/[session-id]",
+    "headers": {
+      "content-type": "application/json",
+      "x-opencode-directory": "[directory]"
+    },
+    "body": {
+      "metadata": {
+        "openchamber": {
+          "knowledge_context_delivered": "l:on|w:ask",
+          "work": {
+            "state": "active",
+            "openedAt": 1791999146814,
+            "openedBy": "user"
+          }
+        }
+      }
+    }
+  },
+  "read": {
+    "data": {
+      "metadata": {
+        "openchamber": {
+          "knowledge_context_delivered": "l:on|w:ask",
+          "work": {
+            "state": "active",
+            "openedAt": 1791999146814,
+            "openedBy": "user"
+          }
+        }
+      }
+    }
+  },
+  "event": {
+    "type": "session.metadata.updated",
+    "data": {
+      "sessionID": "ses_[redacted]",
+      "metadata": {
+        "openchamber": {
+          "knowledge_context_delivered": "l:on|w:ask",
+          "work": {
+            "state": "active",
+            "openedAt": 1791999146814,
+            "openedBy": "user"
+          }
+        }
+      }
+    }
+  }
+}

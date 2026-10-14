@@ -91,7 +91,7 @@ interface CatalogProviderLike {
   models: Record<string, CatalogModelLike>;
 }
 
-export interface CatalogLike {
+interface CatalogLike {
   providers: CatalogProviderLike[];
   defaults: Record<string, string>;
   /** The model the agent reported as active (see catalog.ts). */
@@ -152,6 +152,7 @@ export function defaultV2Model(cat: CatalogLike): V2Model | undefined {
 export interface V2Session {
   id: string;
   parentID?: string;
+  parentMessageID?: string;
   projectID: string;
   agent: string;
   model?: { id: string; providerID: string; variant?: string };
@@ -161,6 +162,10 @@ export interface V2Session {
   title: string;
   subpath: string;
   location: { directory: string };
+  directory: string;
+  metadata?: Record<string, unknown>;
+  outcome?: OCSession["outcome"];
+  revert?: { messageID: string };
 }
 
 export function toV2Session(
@@ -172,19 +177,29 @@ export function toV2Session(
     projectID: info.projectID,
     agent: opts.agent ?? getAgentName(),
     cost: info.cost ?? 0,
-    tokens: zeroTokens(),
+    tokens: info.tokens ?? zeroTokens(),
     time: {
       created: info.time.created,
       updated: info.time.updated,
+      ...(info.time.idle !== undefined ? { idle: info.time.idle } : {}),
       ...(info.time.archived !== undefined ? { archived: info.time.archived } : {}),
     },
     title: info.title,
     subpath: subpathOf(info.directory),
     location: { directory: info.directory },
+    directory: info.directory,
+    ...(info.metadata !== undefined ? { metadata: info.metadata } : {}),
+    ...(info.outcome !== undefined ? { outcome: info.outcome } : {}),
+    ...(info.revert !== undefined ? { revert: info.revert } : {}),
   };
   if (info.parentID !== undefined) session.parentID = info.parentID;
+  if (info.parentMessageID !== undefined) session.parentMessageID = info.parentMessageID;
   if (opts.model !== undefined) {
-    session.model = { id: opts.model.modelID, providerID: opts.model.providerID };
+    session.model = {
+      id: opts.model.modelID,
+      providerID: opts.model.providerID,
+      variant: info.model?.variant ?? "default",
+    };
   }
   return session;
 }
@@ -204,7 +219,7 @@ export interface V2Message {
 }
 
 /** v2 user message (list + prompt response): the UI reads `.text`. */
-export function toV2UserMessage(info: OCMessageWithParts): V2Message {
+function toV2UserMessage(info: OCMessageWithParts): V2Message {
   const text = info.parts.map((p) => (p.type === "text" ? p.text : p.type === "compaction" ? "/compact" : "")).join("");
   return {
     id: info.info.id,
@@ -220,7 +235,7 @@ export function toV2UserMessage(info: OCMessageWithParts): V2Message {
  */
 export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
   const i = info.info as OCAssistantMessage;
-  const model = { id: i.modelID, providerID: i.providerID };
+  const model = { id: i.modelID, providerID: i.providerID, variant: "default" };
   const content: Array<Record<string, unknown>> = [];
   for (const part of info.parts) {
     if (part.type === "text") {
@@ -240,6 +255,10 @@ export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
   }
   const msg: V2Message = { id: i.id, time: { created: i.time.created }, type: "assistant", content };
   if (i.time.completed !== undefined) msg.time.completed = i.time.completed;
+  const streamed = info.parts.flatMap((part) =>
+    part.type === "text" || part.type === "reasoning" ? (part.time?.start === undefined ? [] : [part.time.start]) : [],
+  );
+  if (streamed.length > 0) msg.time.streamed = Math.min(...streamed);
   msg.agent = i.mode;
   msg.model = model;
   if (i.finish !== undefined) msg.finish = i.finish;
@@ -304,6 +323,7 @@ export function toV2Message(info: OCMessageWithParts): V2Message {
 // ---------------------------------------------------------------------
 
 export interface V2Envelope {
+  durable?: { aggregateID: string; seq: number; version: number };
   id: string;
   created: number;
   type: string;
@@ -317,6 +337,7 @@ interface StepState {
   agent: string;
   model: { id: string; providerID: string };
   finish?: string;
+  error?: OCAssistantMessage["error"];
   cost: number;
   tokens: V2Tokens;
   ended: boolean;
@@ -341,6 +362,7 @@ interface ToolState {
 
 interface SessionState {
   executionStarted: boolean;
+  executionEnded?: boolean;
   step?: StepState;
   parts: Map<string, PartState>;
   counters: Map<string, { text: number; reasoning: number }>;
@@ -354,11 +376,20 @@ interface SessionState {
  */
 export class V2EventTranslator {
   private sessions = new Map<string, SessionState>();
+  private sequences = new Map<string, number>();
 
   translate(directory: string, ev: OCEvent): V2Envelope[] {
     switch (ev.type) {
       case "session.inbox.enqueued":
       case "session.inbox.delivered":
+      case "session.revert.staged":
+      case "session.revert.cleared":
+      case "session.revert.committed":
+      case "session.compaction.started":
+      case "session.compaction.ended":
+      case "session.compaction.failed":
+      case "session.shell.started":
+      case "session.shell.ended":
         return [this.frame(directory, ev.type, ev.properties)];
       case "message.removed":
         return [
@@ -376,12 +407,22 @@ export class V2EventTranslator {
             location: { directory: info.directory },
             subpath: subpathOf(info.directory),
             title: info.title,
+            agent: info.agent ?? getAgentName(),
+            ...(info.parentID !== undefined ? { parentID: info.parentID } : {}),
+            ...(info.parentMessageID !== undefined ? { parentMessageID: info.parentMessageID } : {}),
+            ...(info.metadata !== undefined ? { metadata: info.metadata } : {}),
           }),
         ];
       }
       case "session.updated": {
         const info = ev.properties.info;
-        return [this.frame(directory, "session.renamed", { sessionID: info.id, title: info.title })];
+        return [
+          this.frame(directory, "session.renamed", { sessionID: info.id, title: info.title }),
+          ...(info.metadata !== undefined
+            ? [this.frame(directory, "session.metadata.updated", { sessionID: info.id, metadata: info.metadata })]
+            : []),
+          this.frame(directory, "session.agent.selected", { sessionID: info.id, agent: info.agent ?? getAgentName() }),
+        ];
       }
       case "session.diff":
         return [this.frame(directory, "session.diff", ev.properties)];
@@ -397,7 +438,20 @@ export class V2EventTranslator {
         const st = this.sessions.get(sessionID);
         const frames: V2Envelope[] = [];
         if (st?.step && !st.step.ended) frames.push(...this.finalizeStep(directory, st.step));
-        frames.push(this.frame(directory, "session.execution.succeeded", { sessionID }));
+        if (st?.executionEnded) {
+          // session.error already published the execution's terminal frame.
+        } else if (st?.step?.error?.name === "MessageAbortedError") {
+          frames.push(this.frame(directory, "session.execution.interrupted", { sessionID, reason: "user" }));
+        } else if (st?.step?.finish === "error") {
+          frames.push(
+            this.frame(directory, "session.execution.failed", {
+              sessionID,
+              error: st.step.error ?? { name: "UnknownError", data: { message: "Provider error" } },
+            }),
+          );
+        } else {
+          frames.push(this.frame(directory, "session.execution.succeeded", { sessionID }));
+        }
         frames.push(this.frame(directory, "session.idle", { sessionID }));
         this.sessions.delete(sessionID);
         return frames;
@@ -405,27 +459,21 @@ export class V2EventTranslator {
       case "session.error": {
         const { sessionID, error } = ev.properties;
         const frames: V2Envelope[] = [];
-        const st = sessionID !== undefined ? this.sessions.get(sessionID) : undefined;
+        const st = sessionID !== undefined ? this.state(sessionID) : undefined;
         if (sessionID !== undefined && st?.step && !st.step.ended) {
-          st.step.ended = true;
-          frames.push(
-            this.frame(directory, "session.step.failed", {
-              sessionID,
-              assistantMessageID: st.step.messageID,
-              finish: st.step.finish ?? "error",
-              error: error ?? { name: "UnknownError", data: { message: "session error" } },
-              cost: st.step.cost,
-              tokens: st.step.tokens,
-            }),
-          );
-          this.sessions.delete(sessionID);
+          st.step.finish = "error";
+          st.step.error = error ?? { name: "UnknownError", data: { message: "session error" } };
+          frames.push(...this.finalizeStep(directory, st.step));
         }
-        if (sessionID !== undefined) {
+        if (sessionID !== undefined && st !== undefined && !st.executionEnded) {
+          st.executionEnded = true;
           frames.push(
-            this.frame(directory, "session.execution.failed", {
-              sessionID,
-              error: error ?? { name: "UnknownError", data: { message: "session error" } },
-            }),
+            error?.name === "MessageAbortedError"
+              ? this.frame(directory, "session.execution.interrupted", { sessionID, reason: "user" })
+              : this.frame(directory, "session.execution.failed", {
+                  sessionID,
+                  error: error ?? { name: "UnknownError", data: { message: "session error" } },
+                }),
           );
         }
         return frames;
@@ -434,6 +482,19 @@ export class V2EventTranslator {
         return this.onMessageUpdated(directory, ev.properties.info);
       case "message.part.updated":
         return this.onPartUpdated(directory, ev.properties.part, ev.properties.delta);
+      case "message.part.delta": {
+        const { sessionID, messageID, partID, delta } = ev.properties;
+        const part = this.state(sessionID).parts.get(partID);
+        if (part === undefined || delta === "") return [];
+        return [
+          this.frame(directory, `session.${part.kind}.delta`, {
+            sessionID,
+            assistantMessageID: messageID,
+            ordinal: part.ordinal,
+            delta,
+          }),
+        ];
+      }
       case "model.changed": {
         const { sessionID, model, previous } = ev.properties;
         return [
@@ -446,20 +507,10 @@ export class V2EventTranslator {
       }
       case "permission.asked": {
         const p = ev.properties;
-        return [
-          this.frame(directory, "permission.v2.asked", {
-            id: p.id,
-            sessionID: p.sessionID,
-            action: p.permission,
-            resources: p.patterns,
-            save: p.always,
-            metadata: p.metadata,
-            ...(p.tool ? { source: { type: "tool", ...p.tool } } : {}),
-          }),
-        ];
+        return [this.frame(directory, "permission.asked", p)];
       }
       case "permission.replied":
-        return [this.frame(directory, "permission.v2.replied", ev.properties)];
+        return [this.frame(directory, "permission.replied", ev.properties)];
       case "question.asked":
         return [this.frame(directory, "form.created", { form: toQuestionForm(ev.properties) })];
       case "question.replied":
@@ -512,6 +563,9 @@ export class V2EventTranslator {
         streamed: false,
       };
       if (info.finish !== undefined) step.finish = info.finish;
+      if (info.finish === "error") {
+        step.error = info.error ?? { name: "UnknownError", data: { message: "Provider error" } };
+      }
       st.step = step;
       frames.push(
         this.frame(directory, "session.step.started", {
@@ -525,6 +579,9 @@ export class V2EventTranslator {
       st.step.cost = info.cost;
       st.step.tokens = info.tokens;
       if (info.finish !== undefined) st.step.finish = info.finish;
+      if (info.finish === "error") {
+        st.step.error = info.error ?? { name: "UnknownError", data: { message: "Provider error" } };
+      }
       if (!st.step.streamed) {
         st.step.streamed = true;
         frames.push(
@@ -544,17 +601,27 @@ export class V2EventTranslator {
     st.ended = true;
     return [
       this.frame(directory, "session.usage.updated", { sessionID: st.sessionID, cost: st.cost, tokens: st.tokens }),
-      this.frame(directory, "session.step.ended", {
-        sessionID: st.sessionID,
-        assistantMessageID: st.messageID,
-        ...(st.finish !== undefined ? { finish: st.finish } : {}),
-        cost: st.cost,
-        tokens: st.tokens,
-      }),
+      st.finish === "error"
+        ? this.frame(directory, "session.step.failed", {
+            sessionID: st.sessionID,
+            assistantMessageID: st.messageID,
+            rawFinish: st.finish,
+            error: st.error ?? { name: "UnknownError", data: { message: "Provider error" } },
+            cost: st.cost,
+            tokens: st.tokens,
+          })
+        : this.frame(directory, "session.step.ended", {
+            sessionID: st.sessionID,
+            assistantMessageID: st.messageID,
+            ...(st.finish !== undefined ? { finish: st.finish } : {}),
+            cost: st.cost,
+            tokens: st.tokens,
+          }),
     ];
   }
 
   private onPartUpdated(directory: string, part: OCPart, delta?: string): V2Envelope[] {
+    if (part.type === "file" || part.type === "agent") return [];
     if (part.type === "compaction")
       // Like shell turns, the server creates this user turn; there is no optimistic prompt.
       return [
@@ -715,7 +782,17 @@ export class V2EventTranslator {
   }
 
   private frame(directory: string, type: string, data: Record<string, unknown>): V2Envelope {
-    return { id: genId("evt"), created: Date.now(), type, location: { directory }, data };
+    const aggregateID = typeof data.sessionID === "string" ? data.sessionID : undefined;
+    const seq = aggregateID === undefined ? undefined : (this.sequences.get(aggregateID) ?? 0) + 1;
+    if (aggregateID !== undefined && seq !== undefined) this.sequences.set(aggregateID, seq);
+    return {
+      id: genId("evt"),
+      created: Date.now(),
+      type,
+      location: { directory },
+      data,
+      ...(aggregateID !== undefined && seq !== undefined ? { durable: { aggregateID, seq, version: 1 } } : {}),
+    };
   }
 }
 

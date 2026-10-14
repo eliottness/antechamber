@@ -33,12 +33,15 @@ export function bugHarness(t: TestContext) {
     );
   let manager = makeManager();
   t.after(async () => {
-    await manager.disposeAll();
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    try {
+      await manager.disposeAll();
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(root, { recursive: true, force: true });
     }
-    rmSync(root, { recursive: true, force: true });
   });
   return {
     root,

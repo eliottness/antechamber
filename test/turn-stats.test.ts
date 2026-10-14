@@ -112,12 +112,46 @@ for (const input of ["normal", "steps", "no-usage", "error", "aborted", "length"
           e.properties.info.time.completed !== undefined,
       );
       assert.equal(completed.length, 1);
+      const deltas = h.frames.filter(
+        (e) => e.type === "session.text.delta" && e.data.assistantMessageID === message.info.id,
+      );
+      assert.deepEqual(
+        deltas.map((e) => e.data.delta),
+        ["result"],
+      );
+      const v1Deltas = h.events.filter(
+        (e) => e.type === "message.part.delta" && e.properties.messageID === message.info.id,
+      );
+      assert.deepEqual(
+        v1Deltas.map((e) => (e.type === "message.part.delta" ? e.properties.delta : undefined)),
+        ["result"],
+      );
       const step = h.frames.filter(
-        (e) => e.type === "session.step.ended" && e.data.assistantMessageID === message.info.id,
+        (e) =>
+          e.type === (input === "error" || input === "aborted" ? "session.step.failed" : "session.step.ended") &&
+          e.data.assistantMessageID === message.info.id,
       );
       assert.equal(step.length, 1);
-      assert.equal(step[0]?.data.finish, expected[index]);
+      assert.equal(step[0]?.data[input === "error" || input === "aborted" ? "rawFinish" : "finish"], expected[index]);
       assert.deepEqual(step[0]?.data.tokens, message.info.tokens);
+      if (input === "error" || input === "aborted") {
+        assert.equal(step[0]?.data.cost, message.info.cost);
+        assert.equal(step[0]?.data.finish, undefined);
+        assert.deepEqual(step[0]?.data.error, message.info.error);
+        const terminal = h.frames.filter(
+          (e) =>
+            e.data.sessionID === session.id &&
+            ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(
+              e.type,
+            ),
+        );
+        assert.equal(terminal.length, 1);
+        assert.equal(
+          terminal[0]?.type,
+          input === "error" ? "session.execution.failed" : "session.execution.interrupted",
+        );
+        if (input === "aborted") assert.equal(terminal[0]?.data.reason, "user");
+      }
       const v2 = toV2Message(message);
       assert.equal(v2.finish, message.info.finish);
       assert.equal(v2.cost, message.info.cost);

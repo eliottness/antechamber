@@ -1,7 +1,7 @@
 import type { OCToolPart } from "./types.js";
 
 /** OmO arguments translated to OpenChamber's renderer contracts. */
-export interface MappedTool {
+interface MappedTool {
   tool: string;
   input: Record<string, unknown>;
   title: string;
@@ -15,7 +15,7 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-export type ToolMapper = (args: Record<string, unknown>, result?: ToolResult) => MappedTool;
+type ToolMapper = (args: Record<string, unknown>, result?: ToolResult) => MappedTool;
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

@@ -5,20 +5,24 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { errorBody, json } from "./http.js";
 import { miscRoute } from "./misc-routes.js";
-import { getAgentName, getExposedAgentNames } from "./agent-name.js";
-import { agentDefaults } from "./catalog.js";
+import { getAgentName } from "./agent-name.js";
+import { nativePromptInput, parsePromptParts } from "./prompt-parts.js";
+import { RequestBodyError } from "./http.js";
+import { announceSessionError, compactSession, getCommands, unsupportedShare } from "./session-commands.js";
+import type { ModelSelection } from "./thinking-levels.js";
+import type { OCPromptBody, OCProject, OCSession } from "./types.js";
 import {
-  announceSessionError,
-  compactSession,
-  getCommands,
-  parseShellCommand,
-  parseSlashCommand,
-  runShellCommand,
-  runSlashCommand,
-  unsupportedShare,
-} from "./session-commands.js";
-import type { OCPromptBody, OCSession } from "./types.js";
-import { modelRefFromBody, OPENCODE_COMPAT_VERSION, promptAsync, type RouteServices } from "./route-services.js";
+  agentDescriptors,
+  modelRefFromBody,
+  numberParam,
+  OPENCODE_COMPAT_VERSION,
+  promptAsync,
+  runSessionShell,
+  runSessionSlash,
+  sessionDirectory,
+  sessionMetadata,
+  type RouteServices,
+} from "./route-services.js";
 
 /**
  * `archived` list filter per SDK v2 (`boolean | "true" | "false"`):
@@ -30,27 +34,15 @@ function applyArchivedFilter(sessions: OCSession[], archived: string | null) {
   return sessions;
 }
 
-export async function handleV1(
-  services: RouteServices,
-  req: IncomingMessage,
-  res: ServerResponse,
-  url: URL,
-  path: string,
-  method: string,
-  directory: string,
-): Promise<void> {
+function handleV1GlobalRoute(res: ServerResponse, path: string, method: string): boolean {
   if (method === "GET" && path === "/global/health") {
     json(
       res,
       200,
       OPENCODE_COMPAT_VERSION === null ? { healthy: true } : { healthy: true, version: OPENCODE_COMPAT_VERSION },
     );
-    return;
+    return true;
   }
-
-  // There is no opencode install behind this endpoint to upgrade: the adapter
-  // speaks the OpenCode API itself. Answer instead of 404 so a direct upgrade
-  // call gets a clear reason rather than a bare HTTP status.
   if ((method === "POST" || method === "GET") && path === "/global/upgrade") {
     json(
       res,
@@ -60,8 +52,34 @@ export async function handleV1(
         "This endpoint is served by antechamber (a pi adapter), not a real opencode install — there is nothing to upgrade.",
       ),
     );
-    return;
+    return true;
   }
+  return false;
+}
+
+function parseV1Prompt(body: OCPromptBody & { variant?: string }, defaultModel?: ModelSelection) {
+  const parts = parsePromptParts(body.parts);
+  if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
+    throw new RequestBodyError(400, "delivery must be steer or queue");
+  const text = parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n");
+  const model = modelRefFromBody(body.model ?? (body.variant !== undefined ? defaultModel : undefined), body.variant);
+  if (!body.noReply) nativePromptInput(text, parts);
+  return { text, model, parts, delivery: body.delivery ?? "steer" };
+}
+
+export async function handleV1(
+  services: RouteServices,
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  path: string,
+  method: string,
+  directory: string,
+): Promise<void> {
+  if (handleV1GlobalRoute(res, path, method)) return;
 
   // --- sessions ---
   const misc = await miscRoute(method, path, url, directory);
@@ -70,8 +88,18 @@ export async function handleV1(
     return;
   }
   if (path === "/session" && method === "POST") {
-    const body = (await services.body(req)) as { parentID?: string; title?: string };
-    json(res, 200, await services.sessions.create(directory, body.title, body.parentID));
+    const body = (await services.body(req)) as { parentID?: string; title?: string; metadata?: unknown };
+    const metadata = sessionMetadata(body.metadata);
+    json(
+      res,
+      200,
+      await services.sessions.create(
+        sessionDirectory(directory),
+        body.title,
+        body.parentID,
+        metadata === undefined ? {} : { metadata },
+      ),
+    );
     return;
   }
   if (path === "/session" && method === "GET") {
@@ -98,52 +126,66 @@ export async function handleV1(
       json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
       return;
     }
+    const messageMatch = sub?.match(/^\/message\/([^/]+)$/);
+    if (messageMatch && method === "GET") {
+      const messageID = decodeURIComponent(messageMatch[1]!);
+      const message = (services.sessions.messages(sessionId!) ?? []).find(
+        (candidate) => candidate.info.id === messageID,
+      );
+      if (message === undefined) json(res, 404, errorBody("NotFoundError", `message not found: ${messageID}`));
+      else json(res, 200, message);
+      return;
+    }
     switch (`${method} ${sub ?? ""}`) {
       case "GET /diff":
         json(res, 200, await services.sessions.diff(sessionId!));
         return;
       case "GET ":
-        json(res, 200, managed.info);
+        json(res, 200, { ...managed.info, cost: managed.info.cost ?? 0 });
         return;
       case "PATCH ": {
-        const body = (await services.body(req)) as { title?: string; time?: { archived?: number } };
-        json(res, 200, services.sessions.update(sessionId, { title: body.title, archived: body.time?.archived }));
+        const body = (await services.body(req)) as { title?: string; time?: { archived?: number }; metadata?: unknown };
+        json(
+          res,
+          200,
+          await services.sessions.update(sessionId, {
+            title: body.title,
+            archived: body.time?.archived,
+            metadata: sessionMetadata(body.metadata),
+          }),
+        );
         return;
       }
       case "DELETE ":
         json(res, 200, await services.sessions.remove(sessionId));
         return;
-      case "GET /message":
-        json(res, 200, services.sessions.messages(sessionId));
+      case "GET /message": {
+        const messages = services.sessions.messages(sessionId) ?? [];
+        const limit = numberParam(url.searchParams.get("limit"));
+        json(res, 200, limit === undefined ? messages : limit === 0 ? [] : messages.slice(-limit));
+        return;
+      }
+      case "GET /children":
+        json(
+          res,
+          200,
+          services.sessions.list(directory).filter((candidate) => candidate.parentID === sessionId),
+        );
         return;
       case "GET /todo":
         json(res, 200, services.sessions.todos(sessionId!));
         return;
       case "POST /prompt_async": {
         const body = (await services.body(req)) as OCPromptBody & { variant?: string };
-        const text = (body.parts ?? [])
-          .filter((p) => p.type === "text" && typeof p.text === "string")
-          .map((p) => p.text ?? "")
-          .join("\n");
-        const model = modelRefFromBody(
-          body.model ?? (body.variant !== undefined ? managed.model : undefined),
-          body.variant,
-        );
-        promptAsync(services, managed, text, model, body.noReply, body.messageID);
+        const { text, model, parts, delivery } = parseV1Prompt(body, managed.model);
+        promptAsync(services, managed, text, model, body.noReply, body.messageID, delivery, parts);
         res.writeHead(204).end();
         return;
       }
       case "POST /message": {
         const body = (await services.body(req)) as OCPromptBody & { variant?: string };
-        const text = (body.parts ?? [])
-          .filter((p) => p.type === "text" && typeof p.text === "string")
-          .map((p) => p.text ?? "")
-          .join("\n");
-        const model = modelRefFromBody(
-          body.model ?? (body.variant !== undefined ? managed.model : undefined),
-          body.variant,
-        );
-        await services.sessions.prompt(sessionId, text, model, body.noReply, body.messageID);
+        const { text, model, parts, delivery } = parseV1Prompt(body, managed.model);
+        await services.sessions.prompt(sessionId, text, model, body.noReply, body.messageID, delivery, parts);
         const msgs = services.sessions.messages(sessionId) ?? [];
         json(res, 200, msgs[msgs.length - 1] ?? null);
         return;
@@ -192,40 +234,34 @@ export async function handleV1(
         return;
       }
       case "POST /shell": {
-        const command = parseShellCommand(await services.body(req));
-        if (command === undefined) {
-          json(res, 400, errorBody("BadRequestError", "command is required"));
-          return;
-        }
         const managed = services.sessions.get(sessionId);
         if (!managed) {
           json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
           return;
         }
-        if (managed.status.type !== "idle") {
+        const result = await runSessionShell(services, managed, await services.body(req));
+        if (result.kind === "input") {
+          json(res, 400, errorBody("BadRequestError", "command is required"));
+          return;
+        }
+        if (result.kind === "busy") {
           json(res, 409, errorBody("SessionBusyError", "session is busy"));
           return;
         }
-        const result = await runShellCommand({
-          sessions: services.sessions,
-          session: managed,
-          command,
-          emit: services.broadcast,
-        });
         if (result.kind === "error") {
           json(res, 400, errorBody("BadRequestError", result.message));
           return;
         }
-        json(res, 200, result.message.info);
+        json(res, 200, result.message);
         return;
       }
       case "POST /command": {
-        const input = parseSlashCommand(await services.body(req));
-        if (input === undefined) {
+        const result = await runSessionSlash(services, sessionId, await services.body(req));
+        if (result.kind === "input") {
           json(res, 400, errorBody("BadRequestError", "command is required"));
           return;
         }
-        const message = await runSlashCommand(services.sessions, sessionId, input);
+        const { message } = result;
         json(
           res,
           200,
@@ -253,15 +289,39 @@ export async function handleV1(
 
   // --- project / config ---
   if (path === "/project/current" && method === "GET") {
-    json(res, 200, { id: directory, worktree: directory, time: { created: Date.now() } });
+    json(res, 200, {
+      id: directory,
+      worktree: directory,
+      vcs: "git",
+      time: { created: Date.now(), updated: Date.now() },
+      sandboxes: [],
+    } satisfies OCProject);
     return;
   }
   if (path === "/project" && method === "GET") {
-    json(res, 200, [{ id: directory, worktree: directory, time: { created: Date.now() } }]);
+    json(res, 200, [
+      {
+        id: directory,
+        worktree: directory,
+        vcs: "git",
+        time: { created: Date.now(), updated: Date.now() },
+        sandboxes: [],
+      } satisfies OCProject,
+    ]);
     return;
   }
   if ((path === "/config" || path === "/global/config") && method === "GET") {
-    json(res, 200, { default_agent: getAgentName() });
+    const cat = await services.catalog();
+    json(res, 200, {
+      $schema: "https://opencode.ai/config.json",
+      default_agent: getAgentName(),
+      plugin: [],
+      command: {},
+      mode: {},
+      agent: {},
+      username: process.env.OPENCODE_SERVER_USERNAME ?? "opencode",
+      ...(cat.default ? { model: `${cat.default.providerID}/${cat.default.modelID}` } : {}),
+    });
     return;
   }
 
@@ -298,7 +358,14 @@ export async function handleV1(
     if (url.searchParams.get("archived") === "false") {
       sessions = sessions.filter((s) => s.time.archived === undefined);
     }
-    json(res, 200, sessions);
+    sessions.sort((a, b) => b.time.updated - a.time.updated || a.id.localeCompare(b.id));
+    const cursor = numberParam(url.searchParams.get("cursor"));
+    if (cursor !== undefined) sessions = sessions.filter((session) => session.time.updated < cursor);
+    const limit = numberParam(url.searchParams.get("limit"));
+    const page = limit === undefined ? sessions : sessions.slice(0, limit);
+    if (limit !== undefined && page.length < sessions.length && page.at(-1)?.time.updated !== undefined)
+      res.setHeader("x-next-cursor", String(page.at(-1)!.time.updated));
+    json(res, 200, page);
     return;
   }
   if (path === "/question" && method === "GET") {
@@ -369,7 +436,16 @@ export async function handleV1(
     return;
   }
   if (path === "/command" && method === "GET") {
-    json(res, 200, await getCommands(directory));
+    json(
+      res,
+      200,
+      (await getCommands(directory)).map((command) => ({
+        ...command,
+        source: "command",
+        hints: [],
+        subtask: false,
+      })),
+    );
     return;
   }
   if (path === "/path" && method === "GET") {
@@ -379,32 +455,12 @@ export async function handleV1(
   if (path === "/vcs" && method === "GET") {
     execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: directory, timeout: 3000 }, (err, stdout) => {
       const branch = err ? undefined : stdout.trim() || undefined;
-      json(res, 200, branch === undefined ? {} : { branch });
+      json(res, 200, { branch: branch ?? null, default_branch: null });
     });
     return;
   }
   if (path === "/agent" && method === "GET") {
-    // pi has one agent; publish OpenChamber's conventional `build` primary
-    // agent next to pi's own name so the picker — and its default resolution,
-    // which looks for `build` — has a real option. Both names run the same
-    // pi agent (see getExposedAgentNames).
-    const piName = getAgentName();
-    const defaults = agentDefaults(await services.catalog());
-    json(
-      res,
-      200,
-      getExposedAgentNames().map((name) => ({
-        name,
-        description:
-          name === piName
-            ? `${piName} (pi coding agent via antechamber)`
-            : `${name} — ${piName} (pi coding agent via antechamber)`,
-        mode: "primary",
-        hidden: name === "build" && piName !== "build",
-        options: {},
-        ...defaults,
-      })),
-    );
+    json(res, 200, await agentDescriptors(services));
     return;
   }
 

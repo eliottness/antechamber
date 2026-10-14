@@ -19,7 +19,7 @@ import { syncSessionCost } from "./pi-event-translation.js";
 import { ocIdFor, SessionPersistenceError, type SessionStore } from "./session-store.js";
 import { mapTool, resultText, toolMappers, type ToolResult } from "./tool-map.js";
 import type { ManagedSession } from "./sessions.js";
-import type { OCEvent, OCMessageWithParts, OCToolPart } from "./types.js";
+import type { OCEvent, OCMessageWithParts, OCSession, OCToolPart } from "./types.js";
 import { ADAPTER_VERSION } from "./version.js";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -242,6 +242,14 @@ interface Child {
   live: boolean;
 }
 
+interface RefreshState {
+  previousMessages: OCMessageWithParts[];
+  previousStatus: ManagedSession["status"]["type"];
+  running: boolean;
+  costChanged: boolean;
+  updatedParts: OCToolPart[];
+}
+
 type ParseHistory = (session: ManagedSession, raw: string) => OCMessageWithParts[];
 
 export class SubagentBridge {
@@ -335,26 +343,15 @@ export class SubagentBridge {
   }
 
   private create(parent: ManagedSession, task: ChildTask): Child {
-    const session: ManagedSession = {
-      info: {
-        id: ocIdFor(task.id),
-        parentID: parent.info.id,
-        projectID: parent.info.projectID,
-        directory: parent.info.directory,
-        title: typeof task.input.description === "string" ? task.input.description : task.id,
-        version: parent.info.version,
-        time: { ...parent.info.time },
-      },
-      pi: undefined,
-      messages: undefined,
-      model: undefined,
-      streaming: undefined,
-      status: { type: "idle" },
-      toolByCallId: new Map(),
-      tree: { messageEntries: {} },
-      hasPendingInteraction: () => false,
-      hasRunningChildren: () => false,
-    };
+    const session = this.managedSession({
+      id: ocIdFor(task.id),
+      parentID: parent.info.id,
+      projectID: parent.info.projectID,
+      directory: parent.info.directory,
+      title: typeof task.input.description === "string" ? task.input.description : task.id,
+      version: parent.info.version,
+      time: { ...parent.info.time },
+    });
     const child: Child = {
       session,
       task,
@@ -378,15 +375,22 @@ export class SubagentBridge {
     if (known) return known.session;
     const entry = this.store.get(id);
     if (!entry?.task || !entry.parentID) return undefined;
-    const parent: ManagedSession = {
-      info: {
-        id: entry.parentID,
-        projectID: entry.directory,
-        directory: entry.directory,
-        title: "",
-        version: ADAPTER_VERSION,
-        time: { created: entry.created, updated: entry.updated },
-      },
+    const parent = this.managedSession({
+      id: entry.parentID,
+      projectID: entry.directory,
+      directory: entry.directory,
+      title: "",
+      version: ADAPTER_VERSION,
+      time: { created: entry.created, updated: entry.updated },
+    });
+    const child = this.create(parent, entry.task);
+    child.session.info.title = entry.title ?? child.session.info.title;
+    return child.session;
+  }
+
+  private managedSession(info: OCSession): ManagedSession {
+    return {
+      info,
       pi: undefined,
       messages: undefined,
       model: undefined,
@@ -397,9 +401,6 @@ export class SubagentBridge {
       hasPendingInteraction: () => false,
       hasRunningChildren: () => false,
     };
-    const child = this.create(parent, entry.task);
-    child.session.info.title = entry.title ?? child.session.info.title;
-    return child.session;
   }
 
   restoreAll(): void {
@@ -438,48 +439,64 @@ export class SubagentBridge {
 
   private refresh(child: Child, publish: boolean, useRecord = true): void {
     const archive = this.archive(child.task.id);
-    const found = findTask(child.task.id, child.task.parentPiId);
-    if (found) {
-      child.recordPath = found.path;
-      const updated = typeof found.data.updated_at === "string" ? Date.parse(found.data.updated_at) : NaN;
-      const retainedTerminal = Math.max(
-        child.task.terminalAt ?? 0,
-        existsSync(archive) ? statSync(archive).mtimeMs : 0,
-      );
-      const staleRunning =
-        active(found.data.status) && terminal(child.task.details.status) && updated <= retainedTerminal;
-      if (useRecord && !staleRunning) child.task.details = { ...child.task.details, ...found.data };
-      const host = found.data.host_session;
-      if (record(host) && typeof host.session_path === "string") child.livePath = host.session_path;
-      else if (typeof found.data.child_session_id === "string" && found.data.child_session_id !== "") {
-        // In-process agents persist under the task store but have no RPC host_session.
-        // Match the recorded session, not another retained run in the same directory.
-        const sessions = join(dirname(dirname(found.path)), "children", child.task.id, "sessions", child.task.id);
-        try {
-          const file = readdirSync(sessions, { withFileTypes: true }).find(
-            (entry) => entry.isFile() && entry.name.endsWith(`_${found.data.child_session_id}.jsonl`),
-          );
-          child.livePath = file ? join(sessions, file.name) : undefined;
-        } catch (error) {
-          if (
-            !(error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
-          )
-            throw error;
-          child.livePath = undefined;
-        }
-      }
-    }
+    const found = this.reconcileTaskRecord(child, archive, useRecord);
     const running = active(child.task.details.status) && (found !== undefined || child.live);
-    const previousMessages = child.session.messages ?? [];
-    const previousStatus = child.session.status.type;
+    const state: RefreshState = {
+      previousMessages: child.session.messages ?? [],
+      previousStatus: child.session.status.type,
+      running,
+      costChanged: this.hydrateTranscript(child, archive, running, child.session.status.type),
+      updatedParts: this.reconcileRuntime(child, running),
+    };
+    if (state.costChanged)
+      this.emit(child.session.info.directory, { type: "session.updated", properties: { info: child.session.info } });
+    if (publish) for (const part of state.updatedParts) this.emitPart(child.session, part);
+    this.persist(child);
+    this.publishRefresh(child, state, publish);
+  }
+
+  private reconcileTaskRecord(
+    child: Child,
+    archive: string,
+    useRecord: boolean,
+  ): { path: string; data: Record<string, unknown> } | undefined {
+    const found = findTask(child.task.id, child.task.parentPiId);
+    if (!found) return undefined;
+    child.recordPath = found.path;
+    const updated = typeof found.data.updated_at === "string" ? Date.parse(found.data.updated_at) : NaN;
+    const retainedTerminal = Math.max(child.task.terminalAt ?? 0, existsSync(archive) ? statSync(archive).mtimeMs : 0);
+    const staleRunning =
+      active(found.data.status) && terminal(child.task.details.status) && updated <= retainedTerminal;
+    if (useRecord && !staleRunning) child.task.details = { ...child.task.details, ...found.data };
+    const host = found.data.host_session;
+    if (record(host) && typeof host.session_path === "string") {
+      child.livePath = host.session_path;
+      return found;
+    }
+    if (typeof found.data.child_session_id !== "string" || found.data.child_session_id === "") return found;
+    // In-process agents persist under the task store but have no RPC host_session.
+    // Match the recorded session, not another retained run in the same directory.
+    const sessions = join(dirname(dirname(found.path)), "children", child.task.id, "sessions", child.task.id);
+    try {
+      const file = readdirSync(sessions, { withFileTypes: true }).find(
+        (entry) => entry.isFile() && entry.name.endsWith(`_${found.data.child_session_id}.jsonl`),
+      );
+      child.livePath = file ? join(sessions, file.name) : undefined;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code))))
+        throw error;
+      child.livePath = undefined;
+    }
+    return found;
+  }
+
+  private hydrateTranscript(child: Child, archive: string, running: boolean, previousStatus: string): boolean {
     // A resumed live task can be newer than its archive; completed history prefers the archive.
     const liveRun = running || previousStatus === "busy";
     let raw = liveRun ? undefined : optionalFile(archive);
     if (running && child.recordPath) this.watch(child, child.recordPath);
     if (raw === undefined && child.livePath !== undefined) {
-      if (running) {
-        this.watch(child, child.livePath);
-      }
+      if (running) this.watch(child, child.livePath);
       child.tail.read(child.livePath);
       if (child.tail.text !== "") raw = child.tail.text;
     }
@@ -500,11 +517,14 @@ export class SubagentBridge {
     }
     child.loaded = true;
     // Each child reports only its own spend; OpenChamber sums the subtree by parentID.
-    if (syncSessionCost(child.session))
-      this.emit(child.session.info.directory, { type: "session.updated", properties: { info: child.session.info } });
+    return syncSessionCost(child.session);
+  }
+
+  private reconcileRuntime(child: Child, running: boolean): OCToolPart[] {
     child.session.status = { type: running ? "busy" : "idle" };
     if (!running) this.closeWatchers(child);
-    for (const part of child.parts.values()) {
+    const parts = [...child.parts.values()];
+    for (const part of parts) {
       updateTaskParts(
         [part],
         {
@@ -514,22 +534,24 @@ export class SubagentBridge {
         !running,
         Date.now(),
       );
-      if (publish) this.emitPart(child.session, part);
     }
-    this.persist(child);
+    return parts;
+  }
+
+  private publishRefresh(child: Child, state: RefreshState, publish: boolean): void {
     if (!publish) return;
-    const before = new Map(previousMessages.map((message) => [message.info.id, JSON.stringify(message)]));
-    for (const message of child.session.messages) {
+    const before = new Map(state.previousMessages.map((message) => [message.info.id, JSON.stringify(message)]));
+    for (const message of child.session.messages ?? []) {
       if (before.get(message.info.id) === JSON.stringify(message)) continue;
       this.emit(child.session.info.directory, { type: "message.updated", properties: { info: message.info } });
       for (const part of message.parts) this.emitPart(child.session, part);
     }
-    if (previousStatus !== child.session.status.type) {
+    if (state.previousStatus !== child.session.status.type) {
       this.emit(child.session.info.directory, {
         type: "session.status",
         properties: { sessionID: child.session.info.id, status: child.session.status },
       });
-      if (!running)
+      if (!state.running)
         this.emit(child.session.info.directory, {
           type: "session.idle",
           properties: { sessionID: child.session.info.id },

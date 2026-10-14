@@ -7,6 +7,28 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- feat(api): add v2 credential, integration, file-search, VCS, and synthetic-context routes
+- feat(events): replay retained SSE events and expose v2 shell, compaction, and execution terminals
+
+### Fixed
+
+- fix(session): preserve rich prompt parts, metadata, ancestry, and part identities across reloads
+- fix(runtime): retain operation ordering after caller cancellation and finalize interrupted tool cards
+- fix(rpc): close failed transports and reject responses correlated to the wrong command
+- fix(http): allow passwordless loopback origins across ports while retaining explicit origin checks
+- fix(security): validate registry records and write registry state with private permissions
+- fix(cli): advertise OpenCode API compatibility as 2.0.20
+- fix(api): return OpenCode 2.x bootstrap shapes for `/api/config`, `/api/shell`, `/api/websearch/provider` and `GET /api/mcp` so OpenChamber 2.3.2 can initialize workspaces
+- fix(api): answer v2 synthetic context admission with the admitted record and return the bare interrupt flag, so OpenChamber 2.3.2 can send prompts and stop turns
+- fix(extension): bound graph responses and display omitted-node counts
+
+### Changed
+
+- docs(api): document route statuses, response envelopes, stream framing, and unsupported capabilities
+- docs(maintainers): correct smoke paths, typecheck commands, and release guidance
+
 ## [0.1.1] - 2026-10-14
 
 ### Added

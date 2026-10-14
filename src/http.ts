@@ -4,10 +4,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ApprovalInputError } from "./approvals.js";
 import { envSetting } from "./config.js";
+import { UpstreamProtocolError } from "./pi-rpc.js";
 
 const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
 
-class RequestBodyError extends Error {
+export class RequestBodyError extends Error {
   constructor(
     readonly status: 400 | 413,
     message: string,
@@ -26,7 +27,7 @@ export function isLoopbackHost(host: string): boolean {
   return /^127(?:\.\d{1,3}){3}$/.test(host) && host.split(".").every((part) => Number(part) <= 255);
 }
 
-function allowedOrigin(origin: string): boolean {
+function allowedOrigin(origin: string, serverOrigin?: string): boolean {
   try {
     const url = new URL(origin);
     if (
@@ -39,7 +40,8 @@ function allowedOrigin(origin: string): boolean {
     )
       return false;
     return (
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+      origin === serverOrigin ||
+      isLoopbackHost(url.hostname) ||
       (envSetting("ALLOWED_ORIGINS") ?? "").split(",").some((entry) => entry.trim() === origin)
     );
   } catch {
@@ -60,7 +62,7 @@ export class Http {
   private readonly credentials: Buffer | undefined;
   private readonly maxBodyBytes: number;
 
-  constructor() {
+  constructor(private serverOrigin?: () => string) {
     const maxBodyBytes = Number(envSetting("MAX_BODY_BYTES"));
     this.maxBodyBytes = Number.isSafeInteger(maxBodyBytes) && maxBodyBytes > 0 ? maxBodyBytes : DEFAULT_MAX_BODY_BYTES;
     const password = serverPassword();
@@ -72,11 +74,18 @@ export class Http {
             .digest();
   }
 
+  allowsUpgrade(req: IncomingMessage): boolean {
+    const origin = req.headers.origin;
+    if (origin !== undefined && !allowedOrigin(origin, this.serverOrigin?.()) && this.credentials === undefined)
+      return false;
+    return this.authorized(req);
+  }
+
   async route(req: IncomingMessage, res: ServerResponse, handle: () => Promise<void>): Promise<void> {
     res.setHeader("Vary", "Origin");
     const origin = req.headers.origin;
     if (origin !== undefined) {
-      if (allowedOrigin(origin)) {
+      if (allowedOrigin(origin, this.serverOrigin?.())) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Access-Control-Allow-Credentials", "true");
       } else if (this.credentials === undefined) {
@@ -88,16 +97,10 @@ export class Http {
         return;
       }
     }
-    if (this.credentials !== undefined) {
-      const match = req.headers.authorization?.match(/^Basic\s+([A-Za-z0-9+/]+=*)$/i);
-      const supplied = createHash("sha256")
-        .update(Buffer.from(match?.[1] ?? "", "base64"))
-        .digest();
-      if (!match || !timingSafeEqual(this.credentials, supplied)) {
-        res.setHeader("WWW-Authenticate", 'Basic realm="OpenCode"');
-        json(res, 401, errorBody("UnauthorizedError", "Authentication required"));
-        return;
-      }
+    if (!this.authorized(req)) {
+      res.setHeader("WWW-Authenticate", 'Basic realm="OpenCode"');
+      json(res, 401, errorBody("UnauthorizedError", "Authentication required"));
+      return;
     }
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-opencode-directory");
@@ -116,14 +119,24 @@ export class Http {
       }
       json(
         res,
-        err instanceof RequestBodyError ? err.status : err instanceof ApprovalInputError ? 400 : 500,
+        err instanceof UpstreamProtocolError
+          ? 502
+          : err instanceof RequestBodyError
+            ? err.status
+            : err instanceof ApprovalInputError || err instanceof URIError
+              ? 400
+              : 500,
         errorBody(
-          err instanceof RequestBodyError
+          err instanceof UpstreamProtocolError
             ? err.name
-            : err instanceof ApprovalInputError
-              ? "InvalidRequestError"
-              : "UnknownError",
-          message,
+            : err instanceof RequestBodyError
+              ? err.name
+              : err instanceof ApprovalInputError
+                ? "InvalidRequestError"
+                : err instanceof URIError
+                  ? "BadRequestError"
+                  : "UnknownError",
+          err instanceof URIError ? "invalid URL encoding" : message,
         ),
       );
     }
@@ -187,5 +200,14 @@ export class Http {
       req.once("error", onError);
       req.once("aborted", onAborted);
     });
+  }
+
+  private authorized(req: IncomingMessage): boolean {
+    if (this.credentials === undefined) return true;
+    const match = req.headers.authorization?.match(/^Basic\s+([A-Za-z0-9+/]+=*)$/i);
+    const supplied = createHash("sha256")
+      .update(Buffer.from(match?.[1] ?? "", "base64"))
+      .digest();
+    return match !== null && match !== undefined && timingSafeEqual(this.credentials, supplied);
   }
 }

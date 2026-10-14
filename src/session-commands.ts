@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { PiRpcClient } from "./pi-rpc.js";
+import { PiRpcClient, UpstreamProtocolError } from "./pi-rpc.js";
 import { getAgentName } from "./agent-name.js";
+import { nativePromptInput, parsePromptParts } from "./prompt-parts.js";
+import type { OCPromptPart } from "./types.js";
 import type { ManagedSession, SessionManager } from "./sessions.js";
 import type {
   OCAssistantMessage,
@@ -11,34 +13,34 @@ import type {
   OCUserMessage,
 } from "./types.js";
 
-export type CommandDescriptor = { name: string; description: string; template: "" };
-export type SlashCommandInput = { command: string; arguments: string; messageID?: string };
-export type ShellResult = { output: string; exitCode: number | null; cancelled: boolean; truncated: boolean };
+type CommandDescriptor = { name: string; description: string; template: "" };
+type SlashCommandInput = { command: string; arguments: string; messageID?: string; parts?: OCPromptPart[] };
+type ShellResult = { output: string; exitCode: number | null; cancelled: boolean; truncated: boolean };
 export type ShellMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCToolPart] };
-export type ShellUserMessage = OCMessageWithParts & { info: OCUserMessage; parts: [OCTextPart] };
+type ShellUserMessage = OCMessageWithParts & { info: OCUserMessage; parts: [OCTextPart] };
 
-export type ShareNoticeMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCTextPart] };
+type ShareNoticeMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCTextPart] };
 
-export type ShellExecution = { kind: "completed"; message: ShellMessage } | { kind: "error"; message: string };
+type ShellExecution = { kind: "completed"; message: ShellMessage } | { kind: "error"; message: string };
 
-export interface ShellCommandContext {
+interface ShellCommandContext {
   sessions: SessionManager;
   session: ManagedSession;
   command: string;
   emit: (directory: string, event: OCEvent) => void;
 }
 
-export interface ShareNoticeContext {
+interface ShareNoticeContext {
   sessions: SessionManager;
   session: ManagedSession;
   emit: (directory: string, event: OCEvent) => void;
 }
 
-export type CompactResult = { kind: "compacted" } | { kind: "error"; message: string };
+type CompactResult = { kind: "compacted" } | { kind: "error"; message: string };
 
 // OpenChamber drops rejected Share actions, so emit a visible session notice too.
 export const unsupportedShare = {
-  name: "BadRequestError",
+  name: "UnsupportedError",
   data: { message: "Sharing is not available with OmO" },
 } as const;
 
@@ -50,8 +52,11 @@ function id(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
 }
 
+const SHELL_TITLE_MAX_CHARS = 60;
+const SHELL_TITLE_TRUNCATED_CHARS = 57;
+
 export function shellTitle(command: string): string {
-  const short = command.length > 60 ? `${command.slice(0, 57)}…` : command;
+  const short = command.length > SHELL_TITLE_MAX_CHARS ? `${command.slice(0, SHELL_TITLE_TRUNCATED_CHARS)}…` : command;
   return `bash: ${short}`;
 }
 
@@ -155,7 +160,14 @@ export function parseSlashCommand(value: unknown): SlashCommandInput | undefined
   if (typeof value.arguments !== "string") return undefined;
   // OpenChamber inserts the command's user message optimistically under this id.
   const messageID = typeof value.messageID === "string" && value.messageID !== "" ? value.messageID : undefined;
-  return { command: value.command, arguments: value.arguments, ...(messageID ? { messageID } : {}) };
+  const parts = parsePromptParts(value.parts);
+  nativePromptInput("", parts);
+  return {
+    command: value.command,
+    arguments: value.arguments,
+    ...(messageID ? { messageID } : {}),
+    ...(parts.length > 0 ? { parts } : {}),
+  };
 }
 
 /**
@@ -168,7 +180,7 @@ export function slashTitlePrompt(text: string): { sessionTitlePrompt?: string } 
   return match?.[1] !== undefined && !match[1].startsWith("/") ? { sessionTitlePrompt: match[1] } : {};
 }
 
-export function slashCommandPrompt(input: SlashCommandInput): string {
+function slashCommandPrompt(input: SlashCommandInput): string {
   return input.arguments === "" ? `/${input.command}` : `/${input.command} ${input.arguments}`;
 }
 
@@ -177,7 +189,16 @@ export async function runSlashCommand(
   sessionId: string,
   input: SlashCommandInput,
 ): Promise<OCMessageWithParts | undefined> {
-  await sessions.prompt(sessionId, slashCommandPrompt(input), undefined, false, input.messageID);
+  const text = slashCommandPrompt(input);
+  await sessions.prompt(
+    sessionId,
+    text,
+    undefined,
+    false,
+    input.messageID,
+    "steer",
+    input.parts ? [{ type: "text", text }, ...input.parts] : undefined,
+  );
   await sessions.reloadMessages(sessionId);
   const messages = sessions.messages(sessionId) ?? [];
   return [...messages].reverse().find((message) => message.info.role === "assistant") ?? messages[messages.length - 1];
@@ -188,7 +209,7 @@ export function parseShellCommand(value: unknown): string | undefined {
   return value.command;
 }
 
-export function parseShellResult(value: unknown): ShellResult {
+function parseShellResult(value: unknown): ShellResult {
   if (
     !isRecord(value) ||
     typeof value.output !== "string" ||
@@ -198,7 +219,7 @@ export function parseShellResult(value: unknown): ShellResult {
     typeof value.cancelled !== "boolean" ||
     typeof value.truncated !== "boolean"
   ) {
-    throw new Error("OmO bash returned an invalid result");
+    throw new UpstreamProtocolError("OmO bash returned an invalid result");
   }
   return {
     output: value.output,
@@ -332,6 +353,15 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   sessions.messages(session.info.id);
   const message = createShellMessage(session, command);
   const user = shellUserMessage(message);
+  const shell = {
+    id: message.parts[0].callID,
+    command,
+    cwd: session.info.directory,
+    shell: "bash",
+    file: "",
+    metadata: {},
+    time: { started: message.info.time.created },
+  };
   const dispatch = (session.tree.shellDispatch ??= {});
   dispatch[message.info.id] = false;
   const afterEntryId = session.tree.leafId ?? null;
@@ -351,8 +381,12 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   shellEvent(context, { type: "message.updated", properties: { info: user.info } });
   shellEvent(context, { type: "message.part.updated", properties: { part: user.parts[0] } });
   emitShellMessage(context, message);
+  shellEvent(context, {
+    type: "session.shell.started",
+    properties: { sessionID: session.info.id, shell: { ...shell, status: "running" } },
+  });
   try {
-    sessions.update(session.info.id, {});
+    await sessions.update(session.info.id, {});
     const response = await sessions.sessionRpc<unknown>(
       session.info.id,
       { type: "bash", command },
@@ -363,7 +397,7 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
         (session.tree.localShellTurns ??= []).push({ afterEntryId, messages: [user, message] });
         // A native result can land beyond the last synchronized leaf.
         if (!session.tree.revert) delete session.tree.leafId;
-        sessions.update(session.info.id, {});
+        void sessions.update(session.info.id, {}).catch((error: unknown) => controller.abort(error));
       },
     );
     if (controller.signal.aborted) throw controller.signal.reason;
@@ -397,7 +431,24 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     throw error;
   } finally {
     delete session.cancelShell;
+    const state = message.parts[0].state;
+    const metadata = state.status === "pending" ? undefined : state.metadata;
+    const output = state.status === "completed" ? state.output : state.status === "error" ? state.error : "";
+    const size = Buffer.byteLength(output);
+    shellEvent(context, {
+      type: "session.shell.ended",
+      properties: {
+        sessionID: session.info.id,
+        shell: {
+          ...shell,
+          status: state.status === "completed" ? "exited" : "killed",
+          ...(typeof metadata?.exitCode === "number" ? { exit: metadata.exitCode } : {}),
+          time: { ...shell.time, completed: message.info.time.completed ?? Date.now() },
+        },
+        output: { output, cursor: size, size, truncated: metadata?.truncated === true },
+      },
+    });
     setShellStatus(context, "idle");
-    sessions.update(session.info.id, {});
+    await sessions.update(session.info.id, {});
   }
 }
