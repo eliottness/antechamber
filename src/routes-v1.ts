@@ -58,6 +58,7 @@ function handleV1GlobalRoute(res: ServerResponse, path: string, method: string):
 }
 
 function parseV1Prompt(body: OCPromptBody & { variant?: string }, defaultModel?: ModelSelection) {
+  if (!Array.isArray(body.parts)) throw new RequestBodyError(400, "parts must be an array");
   const parts = parsePromptParts(body.parts);
   if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
     throw new RequestBodyError(400, "delivery must be steer or queue");
@@ -66,7 +67,9 @@ function parseV1Prompt(body: OCPromptBody & { variant?: string }, defaultModel?:
     .map((part) => part.text ?? "")
     .join("\n");
   const model = modelRefFromBody(body.model ?? (body.variant !== undefined ? defaultModel : undefined), body.variant);
-  if (!body.noReply) nativePromptInput(text, parts);
+  const native = nativePromptInput(text, parts);
+  if (native.message.trim() === "" && !native.images?.length)
+    throw new RequestBodyError(400, "prompt requires non-whitespace text, file content, or an agent mention");
   return { text, model, parts, delivery: body.delivery ?? "steer" };
 }
 

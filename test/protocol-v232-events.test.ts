@@ -214,10 +214,7 @@ test("V232-010: emits OpenChamber permission event names", async (t) => {
     (event) => event.type === "permission.asked" && event.data?.sessionID === sessionID,
     "current permission event",
   );
-  assert.equal(
-    (await postJson(url, `/api/session/${sessionID}/prompt`, { parts: [{ type: "text", text: "permission" }] })).status,
-    200,
-  );
+  assert.equal((await postJson(url, `/api/session/${sessionID}/prompt`, { text: "permission" })).status, 200);
   assert.equal((await asked).type, "permission.asked");
 });
 
