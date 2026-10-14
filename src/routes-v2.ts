@@ -61,24 +61,6 @@ function v2Session(services: RouteServices, info: OCSession): V2Session {
 const execFileAsync = promisify(execFile);
 
 type V2SessionCursor = { updated: number; id: string };
-type StoredCredential = {
-  id: string;
-  integrationID: string;
-  label: string;
-  value: unknown;
-  active: boolean;
-};
-
-const credentialsByDirectory = new Map<string, Map<string, StoredCredential>>();
-
-function credentials(directory: string): Map<string, StoredCredential> {
-  let stored = credentialsByDirectory.get(directory);
-  if (stored === undefined) {
-    stored = new Map();
-    credentialsByDirectory.set(directory, stored);
-  }
-  return stored;
-}
 
 function encodeSessionCursor(session: V2Session): string {
   return Buffer.from(JSON.stringify({ updated: session.time.updated, id: session.id })).toString("base64url");
@@ -250,52 +232,59 @@ export async function handleV2(
 
   // --- project / vcs / permission / form (2.0.4 bootstrap) ---
   if (path === "/api/credential" && method === "GET") {
-    json(res, 200, withLocation([...credentials(directory).values()]));
+    json(res, 200, withLocation([]));
     return;
   }
-  if (path === "/api/credential" && method === "POST") {
-    const body = (await services.body(req)) as {
-      id?: unknown;
-      integrationID?: unknown;
-      label?: unknown;
-      value?: unknown;
-      activate?: unknown;
-    };
-    if (
-      typeof body.id !== "string" ||
-      body.id === "" ||
-      typeof body.integrationID !== "string" ||
-      body.integrationID === "" ||
-      typeof body.label !== "string"
-    ) {
-      json(res, 400, errorBody("BadRequestError", "credential id, integrationID, and label are required"));
-      return;
-    }
-    const stored = credentials(directory);
-    if (body.activate === true) {
-      for (const credential of stored.values()) {
-        if (credential.integrationID === body.integrationID) credential.active = false;
-      }
-    }
-    const credential: StoredCredential = {
-      id: body.id,
-      integrationID: body.integrationID,
-      label: body.label,
-      value: body.value,
-      active: body.activate === true,
-    };
-    stored.set(credential.id, credential);
-    json(res, 200, withLocation(credential));
+  const credentialMatch = path.match(/^\/api\/credential\/([^/]+)(\/activate)?$/);
+  if (
+    (path === "/api/credential" && method === "POST") ||
+    (credentialMatch && method === (credentialMatch[2] ? "POST" : "PATCH"))
+  ) {
+    await services.body(req);
+    json(res, 400, errorBody("UnsupportedError", "Credential management is not available; configure providers in OmO"));
     return;
   }
-  const credentialMatch = path.match(/^\/api\/credential\/([^/]+)$/);
-  if (credentialMatch && method === "DELETE") {
-    credentials(directory).delete(decodeURIComponent(credentialMatch[1]!));
+  if (credentialMatch && !credentialMatch[2] && method === "DELETE") {
     res.writeHead(204).end();
     return;
   }
   if (path === "/api/integration" && method === "GET") {
     json(res, 200, withLocation([]));
+    return;
+  }
+  const integrationMatch = path.match(/^\/api\/integration\/([^/]+)$/);
+  if (integrationMatch && method === "GET") {
+    json(res, 404, errorBody("NotFoundError", `integration not found: ${decodeURIComponent(integrationMatch[1]!)}`));
+    return;
+  }
+  if (
+    (method === "POST" && /^\/api\/integration\/[^/]+\/connect\/(key|external|oauth|command)$/.test(path)) ||
+    ((method === "GET" || method === "DELETE") &&
+      /^\/api\/integration\/[^/]+\/connect\/(oauth|command)\/[^/]+$/.test(path)) ||
+    (method === "POST" && /^\/api\/integration\/[^/]+\/connect\/oauth\/[^/]+\/complete$/.test(path))
+  ) {
+    json(
+      res,
+      400,
+      errorBody("UnsupportedError", "Integration connections are not available; configure providers in OmO"),
+    );
+    return;
+  }
+  if ((path === "/api/plugin" && method === "GET") || (path === "/api/plugin/check" && method === "POST")) {
+    if (method === "POST") await services.body(req);
+    json(res, 200, withLocation([]));
+    return;
+  }
+  if (path === "/api/plugin/update" && method === "POST") {
+    json(res, 400, errorBody("UnsupportedError", "Plugin updates are not available with OmO"));
+    return;
+  }
+  if (path === "/api/experimental/generate" && method === "POST") {
+    json(res, 503, {
+      _tag: "ServiceUnavailableError",
+      message: "No generation model is available through antechamber/OmO",
+      service: "opencode",
+    });
     return;
   }
   // Read-only inventories OpenChamber loads at bootstrap: OmO has no background shells,
@@ -336,14 +325,8 @@ export async function handleV2(
   }
   const projectMatch = path.match(/^\/api\/project\/([^/]+)$/);
   if (projectMatch && method === "PATCH") {
-    const projectId = decodeURIComponent(projectMatch[1]!);
-    const body = (await services.body(req)) as { canonical?: string };
-    json(res, 200, {
-      id: projectId,
-      canonical: body.canonical ?? projectId,
-      time: { created: 0, updated: Date.now() },
-      sandboxes: [],
-    });
+    await services.body(req);
+    json(res, 400, errorBody("UnsupportedError", "Project updates are not available with OmO"));
     return;
   }
   if (path === "/api/permission/request" && method === "GET") {
@@ -587,6 +570,11 @@ export async function handleV2(
     }
 
     switch (`${method} ${sub}`) {
+      case "POST /generate":
+      case "POST /background":
+      case "POST /move":
+        json(res, 400, errorBody("UnsupportedError", `Session ${sub.slice(1)} is not available with OmO`));
+        return;
       case "GET /todo":
         json(res, 200, { data: services.sessions.todos(sessionId) });
         return;

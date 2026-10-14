@@ -71,20 +71,32 @@ test("V232-031b: bootstrap inventories without OmO equivalents return empty loca
   }
 });
 
-test("V232-012: exposes credential CRUD routes", async (t) => {
+test("V232-012: rejects credential creation without retaining secrets", async (t) => {
+  const { root, url } = await startServer(t);
+  const save = await postJson(url, "/api/credential", {
+    id: "credential_v232",
+    integrationID: "fake",
+    label: "OpenChamber",
+    value: "secret",
+    activate: true,
+  });
+  assert.equal(save.status, 400);
+  assert.deepEqual(await save.json(), {
+    name: "UnsupportedError",
+    data: { message: "Credential management is not available; configure providers in OmO" },
+  });
+  const list = await fetch(`${url}/api/credential`);
+  assert.equal(list.status, 200);
+  assert.deepEqual(await list.json(), { location: { directory: root }, data: [] });
+});
+
+test("credential deletion is an idempotent empty no-op", async (t) => {
   const { url } = await startServer(t);
-  const [list, save, remove] = await Promise.all([
-    fetch(`${url}/api/credential`),
-    postJson(url, "/api/credential", {
-      id: "credential_v232",
-      integrationID: "fake",
-      label: "OpenChamber",
-      value: "secret",
-      activate: true,
-    }),
-    fetch(`${url}/api/credential/credential_v232`, { method: "DELETE" }),
-  ]);
-  assert.deepEqual([list.status, save.status, remove.status], [200, 200, 204]);
+  for (let i = 0; i < 2; i++) {
+    const response = await fetch(`${url}/api/credential/unknown`, { method: "DELETE" });
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), "");
+  }
 });
 
 test("V232-013: decodes URI-marked location headers", async (t) => {
@@ -179,4 +191,119 @@ test("V232-036: reports experimental session usage statistics", async (t) => {
             data: { message: "Session statistics are not available with OmO" },
           })),
   );
+});
+
+test("plugins expose empty read-only inventories and reject updates", async (t) => {
+  const { root, url } = await startServer(t);
+  for (const response of [
+    await fetch(`${url}/api/plugin`),
+    await postJson(url, "/api/plugin/check", {}),
+    await postJson(url, "/api/plugin/check", { target: "example" }),
+  ]) {
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { location: { directory: root }, data: [] });
+  }
+  const update = await postJson(url, "/api/plugin/update", { targets: ["example"] });
+  assert.equal(update.status, 400);
+  assert.deepEqual(await update.json(), {
+    name: "UnsupportedError",
+    data: { message: "Plugin updates are not available with OmO" },
+  });
+});
+
+test("experimental generation reports the captured unavailable service shape", async (t) => {
+  const { url } = await startServer(t);
+  const response = await postJson(url, "/api/experimental/generate", { prompt: "Generate a recap" });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    _tag: "ServiceUnavailableError",
+    message: "No generation model is available through antechamber/OmO",
+    service: "opencode",
+  });
+});
+
+for (const action of ["generate", "background", "move"]) {
+  test(`session ${action} is explicitly unsupported but unknown sessions remain 404`, async (t) => {
+    const { url } = await startServer(t);
+    const created = await postJson(url, "/api/session", {});
+    assert.equal(created.status, 200);
+    const id = record(record(await created.json(), "created session").data, "session").id;
+    assert.equal(typeof id, "string");
+    const response = await postJson(url, `/api/session/${id}/${action}`, {});
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      name: "UnsupportedError",
+      data: { message: `Session ${action} is not available with OmO` },
+    });
+    const missing = await postJson(url, `/api/session/unknown/${action}`, {});
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), {
+      name: "NotFoundError",
+      data: { message: "session not found: unknown" },
+    });
+  });
+}
+
+for (const [method, suffix] of [
+  ["PATCH", ""],
+  ["POST", "/activate"],
+] as const) {
+  test(`credential ${method} ${suffix || "update"} rejects unsupported management`, async (t) => {
+    const { url } = await startServer(t);
+    const response = await fetch(`${url}/api/credential/example${suffix}`, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "Updated" }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      name: "UnsupportedError",
+      data: { message: "Credential management is not available; configure providers in OmO" },
+    });
+  });
+}
+
+test("an empty integration inventory has no detail resources", async (t) => {
+  const { url } = await startServer(t);
+  const response = await fetch(`${url}/api/integration/example`);
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    name: "NotFoundError",
+    data: { message: "integration not found: example" },
+  });
+});
+
+for (const [method, subpath] of [
+  ["POST", "key"],
+  ["POST", "external"],
+  ["POST", "oauth"],
+  ["POST", "command"],
+  ["GET", "oauth/attempt"],
+  ["DELETE", "oauth/attempt"],
+  ["POST", "oauth/attempt/complete"],
+  ["GET", "command/attempt"],
+  ["DELETE", "command/attempt"],
+] as const) {
+  test(`integration ${method} connect/${subpath} directs configuration to OmO`, async (t) => {
+    const { url } = await startServer(t);
+    const response = await fetch(`${url}/api/integration/example/connect/${subpath}`, { method });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      name: "UnsupportedError",
+      data: { message: "Integration connections are not available; configure providers in OmO" },
+    });
+  });
+}
+
+test("project updates reject unsupported mutations", async (t) => {
+  const { url } = await startServer(t);
+  const response = await fetch(`${url}/api/project/example`, {
+    method: "PATCH",
+    body: JSON.stringify({ canonical: "/tmp/renamed" }),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    name: "UnsupportedError",
+    data: { message: "Project updates are not available with OmO" },
+  });
 });
