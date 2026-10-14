@@ -131,18 +131,26 @@ function titleFromHead(head: string, piSessionId: string): string {
   const lines = head.split("\n").slice(0, TITLE_MAX_LINES);
   for (const line of lines) {
     if (line.length === 0) continue;
-    let entry: { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+    let entry: {
+      type?: string;
+      message?: { role?: string; content?: string | Array<{ type?: string; text?: string }> };
+    };
     try {
       entry = JSON.parse(line) as typeof entry;
     } catch {
       continue; // partial trailing line or corrupt entry — keep scanning
     }
     if (entry.type !== "message" || entry.message?.role !== "user") continue;
-    const text = (entry.message.content ?? [])
-      .filter((b) => b?.type === "text" && typeof b.text === "string")
-      .map((b) => b.text as string)
-      .join("\n")
-      .trim();
+    const content = entry.message.content ?? [];
+    // pi allows plain-string message content (extensions, append_user_message).
+    const text = (
+      typeof content === "string"
+        ? content
+        : content
+            .filter((b) => b?.type === "text" && typeof b.text === "string")
+            .map((b) => b.text as string)
+            .join("\n")
+    ).trim();
     if (text !== "") return text.slice(0, TITLE_MAX_CHARS);
   }
   return `pi session ${piSessionId.slice(0, 8)}`;

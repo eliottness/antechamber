@@ -48,7 +48,7 @@ interface PiFileEntry {
 export interface PiFileMessage {
   clientMessageId?: string;
   role?: string;
-  content?: Array<Record<string, unknown>>;
+  content?: string | Array<Record<string, unknown>>;
   usage?: PiUsage;
   provider?: string;
   model?: string;

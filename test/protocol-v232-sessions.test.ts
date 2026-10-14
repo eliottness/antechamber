@@ -377,6 +377,38 @@ test("V232-005: context admitted after a completed turn survives a restart witho
   }
 });
 
+test("a native user entry with plain-string content binds live and restores after restart", async (t) => {
+  const { root, server, url } = await startServer(t);
+  const sessionID = await createSession(url);
+  const stream = openSse(t, url);
+  await stream.ready;
+  const idle = stream.wait(
+    (event) => event.type === "session.idle" && event.data?.sessionID === sessionID,
+    "session idle",
+  );
+  const text = "plain-content: hello";
+  assert.equal((await postJson(url, `/api/session/${sessionID}/prompt`, { id: "msg_plain", text })).status, 200);
+  await idle;
+  const native = nativeEntries(root);
+  assert.equal(record(native[0]?.message, "native user").content, text, "the fake stored plain-string content");
+  assert.equal(
+    stream.history.some((event) => event.type === "session.error" && event.data?.sessionID === sessionID),
+    false,
+    "binding a plain-string entry must not fail the prompt",
+  );
+
+  await server.stop();
+  const restarted = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: root });
+  await restarted.start();
+  try {
+    const user = (await listMessages(restarted.url, sessionID)).find((message) => message.type === "user");
+    assert.equal(user?.id, "msg_plain", "the client id stays bound to the plain-string entry");
+    assert.equal(user?.text, text);
+  } finally {
+    await restarted.stop();
+  }
+});
+
 test("V232-006: accepts the v2 command payload", async (t) => {
   const { url } = await startServer(t);
   const sessionID = await createSession(url);

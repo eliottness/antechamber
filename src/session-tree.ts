@@ -30,7 +30,7 @@ export interface TreeEntry {
   message?: {
     role: string;
     clientMessageId?: string;
-    content?: Array<{ type: string; text?: string }>;
+    content?: string | Array<{ type: string; text?: string }>;
     command?: string;
     output?: string;
     exitCode?: number | null;
@@ -134,10 +134,15 @@ function bindOrdinaryEntry(
   messages: readonly OCMessageWithParts[],
   cursor: number,
 ): number {
-  const text = entry.message?.content
-    ?.filter((part) => part.type === "text")
-    .map((part) => part.text ?? "")
-    .join("");
+  const content = entry.message?.content;
+  // pi allows plain-string message content (extensions, append_user_message).
+  const text =
+    typeof content === "string"
+      ? content
+      : content
+          ?.filter((part) => part.type === "text")
+          .map((part) => part.text ?? "")
+          .join("");
   const index = messages.findIndex(
     (message, position) =>
       position >= cursor &&

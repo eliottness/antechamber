@@ -77,7 +77,9 @@ export function piStopReason(
   }
 }
 
-export function textOf(content: Array<Record<string, unknown>> | undefined): string {
+export function textOf(content: string | Array<Record<string, unknown>> | undefined): string {
+  // pi allows plain-string message content (extensions, append_user_message).
+  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : "")).join("");
 }

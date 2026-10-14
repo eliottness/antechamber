@@ -44,7 +44,7 @@ function reply(command, success, data, error) {
   });
 }
 
-function recordMessage(role, text) {
+function recordMessage(role, text, plain = false) {
   const entry = {
     type: "message",
     id: randomUUID(),
@@ -52,7 +52,8 @@ function recordMessage(role, text) {
     timestamp: timestamp++,
     message: {
       role,
-      content: [{ type: "text", text }],
+      // pi also stores plain-string content (extensions, append_user_message).
+      content: plain ? text : [{ type: "text", text }],
       provider: "fake",
       model: "fake-model",
     },
@@ -119,7 +120,7 @@ input.on("line", (line) => {
         reply(command, true, {});
         return;
       }
-      recordMessage("user", text);
+      recordMessage("user", text, text.startsWith("plain-content:"));
       const assistant = recordMessage("assistant", `reply: ${text}`);
       send({ type: "agent_start" });
       send({ type: "message_start", message: assistant });
