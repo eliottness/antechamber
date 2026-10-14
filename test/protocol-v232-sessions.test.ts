@@ -208,6 +208,10 @@ test("V232-004: rich prompt input reaches native input and history, not just the
     (event) => event.type === "session.idle" && event.data?.sessionID === sessionID,
     "session idle",
   );
+  const enqueued = stream.wait(
+    (event) => event.type === "session.inbox.enqueued" && event.data?.inboxID === "msg_v232_rich",
+    "rich prompt admission event",
+  );
   const inline = `data:text/plain;base64,${Buffer.from("ATTACHMENT_SENTINEL").toString("base64")}`;
   const response = await postJson(url, `/api/session/${sessionID}/prompt`, {
     id: "msg_v232_rich",
@@ -237,6 +241,12 @@ test("V232-004: rich prompt input reaches native input and history, not just the
   ]);
   assert.deepEqual(user.agents, [{ name: "explore", mention: { start: 0, end: 8, text: "@explore" } }]);
   assert.deepEqual(user.metadata, { source: "openchamber" });
+  // OpenChamber rebuilds the live message from the admission event, so it must match history.
+  const payload = record(record((await enqueued).data?.item, "inbox item").payload, "inbox payload");
+  assert.equal(payload.text, "review this");
+  assert.deepEqual(payload.files, user.files);
+  assert.deepEqual(payload.agents, user.agents);
+  assert.deepEqual(payload.metadata, { source: "openchamber" });
   // The fake agent replies with the native prompt message, so its reply shows what the agent received.
   const reply = JSON.stringify(list.find((message) => message.type === "assistant")?.content);
   assert.match(reply, /ATTACHMENT_SENTINEL/);
@@ -264,9 +274,14 @@ test("V232-005: synthetic context joins the native conversation without a turn a
     (event) => event.type === "session.inbox.delivered" && event.data?.inboxID === "msg_v232_context",
     "context delivered",
   );
+  const contextEnqueued = stream.wait(
+    (event) => event.type === "session.inbox.enqueued" && event.data?.inboxID === "msg_v232_context",
+    "context admission event",
+  );
   const response = await postJson(url, `/api/session/${sessionID}/context`, {
     id: "msg_v232_context",
     text: "CONTEXT_SENTINEL",
+    metadata: { kind: "pr-checks" },
   });
   assert.equal(response.status, 200);
   const data = record(record(await response.json(), "context response").data, "context record");
@@ -274,6 +289,10 @@ test("V232-005: synthetic context joins the native conversation without a turn a
   assert.equal(data.sessionID, sessionID);
   assert.deepEqual(data.payload, { text: "CONTEXT_SENTINEL" });
   await delivered;
+  assert.deepEqual(record((await contextEnqueued).data?.item, "context inbox item"), {
+    type: "synthetic",
+    payload: { text: "CONTEXT_SENTINEL", metadata: { kind: "pr-checks" } },
+  });
   assert.deepEqual(nativeKinds(nativeEntries(root)), ["custom_message"], "context alone must not start a turn");
 
   const idle = stream.wait(
@@ -293,6 +312,7 @@ test("V232-005: synthetic context joins the native conversation without a turn a
   const context = live.find((message) => message.id === "msg_v232_context");
   assert.equal(context?.type, "synthetic");
   assert.equal(context?.text, "CONTEXT_SENTINEL");
+  assert.deepEqual(context?.metadata, { kind: "pr-checks" });
   const session = record(
     record(await (await fetch(`${url}/api/session/${sessionID}`)).json(), "session").data,
     "session data",
@@ -307,6 +327,51 @@ test("V232-005: synthetic context joins the native conversation without a turn a
     const again = restored.find((message) => message.id === "msg_v232_context");
     assert.equal(again?.type, "synthetic", "the native custom message restores the context under its client id");
     assert.equal(again?.text, "CONTEXT_SENTINEL");
+  } finally {
+    await restarted.stop();
+  }
+});
+
+test("V232-005: context admitted after a completed turn survives a restart without another prompt", async (t) => {
+  const { root, server, url } = await startServer(t);
+  const sessionID = await createSession(url);
+  const stream = openSse(t, url);
+  await stream.ready;
+  const idle = stream.wait(
+    (event) => event.type === "session.idle" && event.data?.sessionID === sessionID,
+    "session idle",
+  );
+  assert.equal(
+    (await postJson(url, `/api/session/${sessionID}/prompt`, { id: "msg_v232_turn", text: "FIRST" })).status,
+    200,
+  );
+  await idle;
+  const delivered = stream.wait(
+    (event) => event.type === "session.inbox.delivered" && event.data?.inboxID === "msg_v232_late_context",
+    "late context delivered",
+  );
+  const response = await postJson(url, `/api/session/${sessionID}/synthetic`, {
+    id: "msg_v232_late_context",
+    text: "LATE_CONTEXT",
+  });
+  assert.equal(response.status, 200);
+  await delivered;
+  assert.deepEqual(nativeKinds(nativeEntries(root)), ["user", "assistant", "custom_message"]);
+
+  await server.stop();
+  const restarted = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: root });
+  await restarted.start();
+  try {
+    const restored = await listMessages(restarted.url, sessionID);
+    assert.deepEqual(
+      restored
+        .map((message) => message.id)
+        .filter((id) => id === "msg_v232_turn" || id === "msg_v232_late_context")
+        .sort(),
+      ["msg_v232_late_context", "msg_v232_turn"],
+      "the selected branch after restart includes the late context",
+    );
+    assert.equal(restored.find((message) => message.id === "msg_v232_late_context")?.type, "synthetic");
   } finally {
     await restarted.stop();
   }

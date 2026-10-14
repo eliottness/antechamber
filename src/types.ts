@@ -191,9 +191,10 @@ export type OCEvent =
                 text: string;
                 files?: Array<Record<string, unknown>>;
                 agents?: Array<Record<string, unknown>>;
+                metadata?: Record<string, unknown>;
               };
             }
-          | { type: "synthetic"; payload: { text: string } };
+          | { type: "synthetic"; payload: { text: string; metadata?: Record<string, unknown> } };
       };
     }
   | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string } }

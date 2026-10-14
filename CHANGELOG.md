@@ -23,8 +23,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - fix(api): return OpenCode 2.x bootstrap shapes for `/api/config`, `/api/shell`, `/api/websearch/provider` and `GET /api/mcp` so OpenChamber 2.3.2 can initialize workspaces
 - fix(api): answer v2 synthetic context admission with the admitted record and return the bare interrupt flag, so OpenChamber 2.3.2 can send prompts and stop turns
 - fix(extension): bound graph responses and display omitted-node counts
-- fix(api): carry v2 prompt attachments, agent mentions and metadata into OmO's input and message history, and answer skill references with OpenCode's tagged not-found error
-- fix(session): admit synthetic context and v1 `noReply` messages into OmO's conversation without a turn, restore them after restarts, and stop context from titling sessions
+- fix(api): carry v2 prompt attachments, agent mentions and metadata into OmO's input, admission events and message history, and answer skill references with OpenCode's tagged not-found error
+- fix(session): admit synthetic context and v1 `noReply` messages into OmO's conversation without a turn, keep them after restarts even when no prompt follows, and stop context from titling sessions
 - fix(events): keep an unscoped v2 `/api/event` stream global, as OpenChamber 2.3.2 subscribes
 - fix(rpc): after the agent exits during shutdown, kill only re-identified members of its process group
 

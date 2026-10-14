@@ -1091,9 +1091,16 @@ export class SessionManager {
       });
       throw new Error(res.error ?? "context admission rejected");
     }
+    // Bind the appended entry and persist the new leaf before announcing delivery, or a restart
+    // restores the old branch without the context.
+    await this.bindPromptState(s);
     this.emit(s.info.directory, {
       type: "session.inbox.enqueued",
-      properties: { sessionID: s.info.id, inboxID: userMsg.id, item: { type: "synthetic", payload: { text } } },
+      properties: {
+        sessionID: s.info.id,
+        inboxID: userMsg.id,
+        item: { type: "synthetic", payload: { text, ...(userMsg.metadata ? { metadata: userMsg.metadata } : {}) } },
+      },
     });
     this.events.deliverInput(s, userMsg.id);
   }
@@ -1163,7 +1170,15 @@ export class SessionManager {
       properties: {
         sessionID: s.info.id,
         inboxID: userMsg.id,
-        item: { type: "user", delivery, payload: { text, ...v2PromptAttachments(parts) } },
+        item: {
+          type: "user",
+          delivery,
+          payload: {
+            text,
+            ...v2PromptAttachments(parts),
+            ...(userMsg.metadata ? { metadata: userMsg.metadata } : {}),
+          },
+        },
       },
     });
     if (input.delivered) this.events.deliverInput(s, userMsg.id);
