@@ -24,6 +24,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - fix(api): answer v2 synthetic context admission with the admitted record and return the bare interrupt flag, so OpenChamber 2.3.2 can send prompts and stop turns
 - fix(extension): bound graph responses and display omitted-node counts
 - fix(rpc): after the agent exits during shutdown, kill only re-identified members of its process group
+- fix(events): keep an unscoped v2 `/api/event` stream global, as OpenChamber 2.3.2 subscribes
 
 ### Changed
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -51,19 +51,20 @@ async function postJson(url: string, path: string, body: unknown) {
   });
 }
 
-async function createSession(url: string, body: RecordValue = {}) {
-  const response = await postJson(url, "/api/session", body);
+async function createSession(url: string, body: RecordValue = {}, directory?: string) {
+  const query = directory === undefined ? "" : `?directory=${encodeURIComponent(directory)}`;
+  const response = await postJson(url, `/api/session${query}`, body);
   assert.equal(response.status, 200);
   const session = record(record(await response.json(), "session response").data, "session data");
   if (typeof session.id !== "string") assert.fail("session data.id must be a string");
   return session.id;
 }
 
-function openSse(t: TestContext, url: string, path = "/api/event") {
+function openSse(t: TestContext, url: string, path = "/api/event", headers: Record<string, string> = {}) {
   const controller = new AbortController();
   const bus = new EventEmitter();
   const history: Envelope[] = [];
-  const ready = fetch(`${url}${path}`, { signal: controller.signal }).then(async (response) => {
+  const ready = fetch(`${url}${path}`, { signal: controller.signal, headers }).then(async (response) => {
     assert.equal(response.status, 200);
     const body = response.body;
     assert.ok(body);
@@ -143,6 +144,34 @@ async function promptAndWait(url: string, sessionID: string, stream: ReturnType<
   assert.equal(response.status, 200);
   await idle;
 }
+
+test("V232-EVENTS-01: an unscoped v2 stream is global, live and on replay; explicit scopes still filter", async (t) => {
+  const { root, url } = await startServer(t);
+  const other = join(root, "other");
+  mkdirSync(other);
+  const global = openSse(t, url);
+  const scoped = openSse(t, url, `/api/event?directory=${encodeURIComponent(root)}`);
+  await Promise.all([global.ready, scoped.ready]);
+
+  const created = (directory: string) => (event: Envelope) =>
+    event.type === "session.created" && event.location?.directory === directory;
+  const otherCreated = global.wait(created(other), "other-directory session on the global stream");
+  const otherID = await createSession(url, {}, other);
+  const otherEvent = await otherCreated;
+  assert.equal(otherEvent.data?.sessionID, otherID);
+
+  // Events are written in order, so once the scoped stream sees its own later session it
+  // would already have received the other directory's event if it leaked.
+  const rootCreated = scoped.wait(created(root), "default-directory session on the scoped stream");
+  await createSession(url);
+  await rootCreated;
+  assert.equal(scoped.history.filter(created(other)).length, 0);
+
+  const replay = openSse(t, url, "/api/event", { "last-event-id": "0" });
+  await replay.ready;
+  const replayed = await replay.wait(created(other), "other-directory session replayed to a global stream");
+  assert.equal(replayed.data?.sessionID, otherID);
+});
 
 test("V232-009: interruption emits a cancelled execution", async (t) => {
   const { url } = await startServer(t, resolve("test/fixtures/fake-omo.mjs"));

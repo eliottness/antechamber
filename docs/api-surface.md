@@ -168,7 +168,7 @@ invented resource IDs.
 |---|---|---:|---|
 | GET | `/event` | 200 | Directory-scoped v1 SSE; events keep their raw v1 shape. |
 | GET | `/global/event` | 200 | Global v1 SSE; broadcast event frames wrap events as `{directory, project, payload}`. |
-| GET | `/api/event` | 200 | Directory-scoped v2 SSE envelopes with `location` and `data`. |
+| GET | `/api/event` | 200 | v2 SSE envelopes with `location` and `data`. Without a directory selector the stream is global (OpenChamber 2.3.2 opens it that way), live and on `Last-Event-ID` replay; `?directory=` or `x-opencode-directory` scopes it. |
 | WebSocket | `/api/global/event/ws` | 101 | Global event stream; sends `ready`, then event frames with directory and payload; `lastEventId` replays retained events. |
 
 The v1 local `/event` stream is not wrapped and remains data-only. The global
@@ -306,7 +306,7 @@ V1 `/event` carries raw OpenCode v1 events scoped to the selected directory.
 V1 `/global/event` carries broadcast events in `{directory, project, payload}`
 envelopes; its initial `server.connected` frame is `{directory, payload}`.
 V2 `/api/event` carries `{id, created, type, location, data}`
-envelopes. These are distinct wire shapes; the global wrapper is not used on
+envelopes; it is global unless a directory selector scopes it. These are distinct wire shapes; the global wrapper is not used on
 the directory-scoped v1 stream.
 
 The adapter emits the supported v1 lifecycle, message/part, permission,

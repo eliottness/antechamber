@@ -243,7 +243,9 @@ export class AdapterServer {
       return;
     }
     if (method === "GET" && path === "/api/event") {
-      this.handleSSE(req, res, "v2", directory, false);
+      // OpenChamber 2.3.2 opens one unscoped /api/event as its global hub (captured);
+      // only an explicit directory selector scopes the stream.
+      this.handleSSE(req, res, "v2", directory, directoryQuery === null && headerDirectory === undefined);
       return;
     }
 
