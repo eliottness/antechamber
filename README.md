@@ -147,6 +147,13 @@ Restart OpenChamber, or `systemctl --user restart openchamber.service` for a
 managed service. Run `antechamber doctor` again. If the executable moved,
 rerun `antechamber setup`.
 
+OpenChamber 2.3.2 may announce a newer OpenCode release. antechamber reports
+OpenCode API 2.0.20, the minimum OpenChamber accepts, and OpenChamber offers
+no signal that keeps that check while hiding the notice. Dismiss it or turn off
+OpenCode update notifications in OpenChamber. Its Update action runs
+`opencode-antechamber upgrade`, which refuses; upgrade antechamber with the
+commands above.
+
 To roll back wiring, copy the backup printed by setup over the settings file:
 
 ```bash

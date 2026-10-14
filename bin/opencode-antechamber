@@ -22,6 +22,10 @@ fi
 case "${1:-}" in
   serve) shift; exec node "$CLI" serve "$@" ;;
   --version|-v) exec node "$CLI" --version ;;
+  upgrade)
+    echo "opencode-antechamber: OpenChamber cannot upgrade antechamber; run 'npm update -g antechamber' (or 'bun add -g antechamber') instead" >&2
+    exit 1
+    ;;
 esac
 echo "opencode-antechamber: unsupported command '${1:-}' (only 'serve' and '--version' are implemented)" >&2
 exit 1
