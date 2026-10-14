@@ -168,15 +168,40 @@ function directories(path: string): string[] {
   }
 }
 
-export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {
-  if (!taskId(id)) return undefined;
+function taskStores(): Set<string> {
   const agent = piAgentDir();
   const registry = jsonObject(join(agent, "rpc", "task-stores.json"));
-  const stores = new Set([
+  return new Set([
     ...Object.keys(record(registry?.stores) ? registry.stores : {}),
     ...directories(join(agent, "projects")).map((project) => join(project, "senpi-task")),
   ]);
-  for (const store of stores) {
+}
+
+/** Reverse lookup of a child session id, for tasks whose spawn never surfaced as a `task` tool call. */
+export function findTaskBySession(sessionId: string): { path: string; data: Record<string, unknown> } | undefined {
+  for (const store of taskStores()) {
+    let names: string[];
+    try {
+      names = readdirSync(join(store, "tasks"));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
+        continue;
+      throw error;
+    }
+    for (const name of names) {
+      const id = name.endsWith(".json") ? name.slice(0, -5) : "";
+      if (!taskId(id) || ocIdFor(id) !== sessionId) continue;
+      const path = join(store, "tasks", name);
+      const data = jsonObject(path);
+      if (data?.task_id === id && typeof data.parent_session_id === "string") return { path, data };
+    }
+  }
+  return undefined;
+}
+
+export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {
+  if (!taskId(id)) return undefined;
+  for (const store of taskStores()) {
     const path = join(store, "tasks", `${id}.json`);
     const data = jsonObject(path);
     if (data?.task_id === id && data.parent_session_id === parentPiId) return { path, data };
@@ -247,6 +272,7 @@ type ParseHistory = (session: ManagedSession, raw: string) => OCMessageWithParts
 export class SubagentBridge {
   private readonly children = new Map<string, Child>();
   private readonly calls = new Map<string, OCToolPart[]>();
+  private readonly removed = new Set<string>();
 
   constructor(
     private readonly store: SessionStore,
@@ -377,15 +403,54 @@ export class SubagentBridge {
     const known = this.children.get(id);
     if (known) return known.session;
     const entry = this.store.get(id);
-    if (!entry?.task || !entry.parentID) return undefined;
-    const parent: ManagedSession = {
+    if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
+    if (!entry.task || !entry.parentID) return undefined;
+    const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task);
+    child.session.info.title = entry.title ?? child.session.info.title;
+    return child.session;
+  }
+
+  /**
+   * Tasks spawned outside a `task` tool call (e.g. `agent()` inside an `eval`
+   * cell) never produce a card, so their session is built from the task record.
+   */
+  private adopt(id: string): ManagedSession | undefined {
+    const found = findTaskBySession(id);
+    if (!found) return undefined;
+    const parentPi = String(found.data.parent_session_id);
+    const parentID = ocIdFor(parentPi);
+    const entry = this.store.get(parentID);
+    const parent =
+      [...this.sessions.values()].find(
+        (s) => s.info.id === parentID || s.piSessionId === parentPi || s.restored?.piSessionId === parentPi,
+      ) ?? (entry ? this.detachedParent(parentID, entry.directory, entry) : undefined);
+    if (!parent) return undefined;
+    this.wire(parent);
+    const spec = record(found.data.spawn_spec) ? found.data.spawn_spec : {};
+    const name = found.data.name ?? found.data.description;
+    const child = this.create(parent, {
+      id: String(found.data.task_id),
+      parentPiId: parentPi,
+      input: {
+        ...(typeof name === "string" ? { description: name } : {}),
+        ...(typeof spec.prompt === "string" ? { prompt: spec.prompt } : {}),
+        ...(typeof found.data.agent_type === "string" ? { subagent_type: found.data.agent_type } : {}),
+      },
+      details: found.data,
+    });
+    this.refresh(child, false);
+    return child.session;
+  }
+
+  private detachedParent(id: string, directory: string, times: { created: number; updated: number }): ManagedSession {
+    return {
       info: {
-        id: entry.parentID,
-        projectID: entry.directory,
-        directory: entry.directory,
+        id,
+        projectID: directory,
+        directory,
         title: "",
         version: ADAPTER_VERSION,
-        time: { created: entry.created, updated: entry.updated },
+        time: { created: times.created, updated: times.updated },
       },
       pi: undefined,
       messages: undefined,
@@ -397,9 +462,6 @@ export class SubagentBridge {
       hasPendingInteraction: () => false,
       hasRunningChildren: () => false,
     };
-    const child = this.create(parent, entry.task);
-    child.session.info.title = entry.title ?? child.session.info.title;
-    return child.session;
   }
 
   restoreAll(): void {
@@ -663,6 +725,7 @@ export class SubagentBridge {
     this.closeWatchers(child);
     child.parts.clear();
     this.children.delete(id);
+    this.removed.add(id);
   }
 
   dispose(): void {

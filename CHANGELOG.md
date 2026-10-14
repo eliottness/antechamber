@@ -27,6 +27,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Sessions opened with a slash command (for example `/skill:plan Build the
   importer`) now get a generated title. OmO skips titling slash-led prompts, so
   the adapter passes the command's arguments as the native `sessionTitlePrompt`.
+- Sub-agent sessions spawned without a `task` tool call (for example `agent()`
+  inside an `eval` cell) now open from their OmO task record instead of
+  returning `session not found`, so their OmO Graph cards are clickable.
 
 ## [0.1.0] - 2026-10-14
 

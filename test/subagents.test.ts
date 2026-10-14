@@ -584,6 +584,17 @@ test("restart resolves archived children by id through real session and message 
   );
 });
 
+test("task spawned without a task tool call resolves from its record under the parent", (t) => {
+  const { manager, parent, store, state } = setup(t);
+  liveRecord(store, "st_eval", "completed", "spawned from eval");
+  put(join(store, "tasks", "st_orphan.json"), { task_id: "st_orphan", parent_session_id: "unknown-pi" });
+  const childID = ocIdFor("st_eval");
+  assert.equal(manager.get(childID)?.info.parentID, parent.info.id);
+  assert.match(texts(manager.messages(childID)), /spawned from eval/);
+  assert.equal(manager.get(ocIdFor("st_orphan")), undefined);
+  assert.equal(new SessionStore(state).get(childID)?.task?.id, "st_eval");
+});
+
 test("dormant parent rebuilds batch children and applies trailing wake results", (t) => {
   const { manager, parent, parentPath } = setup(t);
   const batch = fixture.samples[1];
