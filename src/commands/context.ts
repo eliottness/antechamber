@@ -49,7 +49,7 @@ export function createContext(overrides: Partial<CommandContext> = {}): CommandC
   };
 }
 
-export const packageCliPath = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
+const packageCliPath = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 
 /** Resolve executables without shell evaluation, respecting the supplied PATH. */
 export function resolveBinary(binary: string, ctx: CommandContext): string | undefined {

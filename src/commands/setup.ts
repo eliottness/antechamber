@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import {
   type CommandContext,
@@ -10,7 +11,7 @@ import {
   shellQuote,
 } from "./context.js";
 
-export interface SetupOptions extends SettingsOptions {
+interface SetupOptions extends SettingsOptions {
   readonly binary?: string;
   readonly dryRun?: boolean;
   readonly systemd?: string;
@@ -25,8 +26,14 @@ function systemdValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%");
 }
 
+function writeAtomically(path: string, content: string, ctx: CommandContext): void {
+  const temporary = join(dirname(path), `.antechamber-${randomUUID()}.tmp`);
+  ctx.fs.writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
+  ctx.fs.renameSync(temporary, path);
+}
+
 /** The bundled OmO Graph extension folder, when this installation has its built files. */
-export function omoGraphExtensionDir(ctx: CommandContext): string | undefined {
+function omoGraphExtensionDir(ctx: CommandContext): string | undefined {
   const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "omo-dag");
   const built = ["package.json", "panel/main.js", "service/main.js"].every((file) =>
     ctx.fs.existsSync(join(dir, file)),
@@ -99,8 +106,14 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
   const stamp = ctx.now().toISOString().replace(/\D/g, "").slice(0, 14);
   const backup = (path: string): void => {
     const target = `${path}.bak-antechamber-${stamp}`;
-    if (options.dryRun) report(`Would back up ${path} to ${target}`);
-    else {
+    if (options.dryRun) {
+      if (ctx.fs.existsSync(target)) {
+        throw Object.assign(new Error(`EEXIST: file already exists, copyfile '${path}' -> '${target}'`), {
+          code: "EEXIST",
+        });
+      }
+      report(`Would back up ${path} to ${target}`);
+    } else {
       ctx.fs.copyFileSync(path, target, ctx.fs.constants.COPYFILE_EXCL);
       report(`Backed up ${path} to ${target}`);
     }
@@ -119,7 +132,7 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
     if (existing) backup(settings);
     if (!options.dryRun) {
       ctx.fs.mkdirSync(dirname(settings), { recursive: true });
-      ctx.fs.writeFileSync(settings, updated, { mode: 0o600 });
+      writeAtomically(settings, updated, ctx);
       report(`Wrote ${settings}`);
     }
   } else report(`Already configured: ${settings} points at ${binary}`);
@@ -131,7 +144,7 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
       if (oldDropIn !== undefined) backup(dropIn);
       if (!options.dryRun) {
         ctx.fs.mkdirSync(dirname(dropIn), { recursive: true });
-        ctx.fs.writeFileSync(dropIn, dropInText, { mode: 0o600 });
+        writeAtomically(dropIn, dropInText, ctx);
         report(`Wrote ${dropIn}`);
       }
     }
