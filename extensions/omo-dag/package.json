@@ -1,0 +1,33 @@
+{
+  "name": "antechamber-omo-graph",
+  "version": "0.1.0",
+  "description": "OpenChamber extension: live, interactive graph of the OmO sub-agents behind the current session",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=1.22.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "omo-dag",
+        "name": "OmO Graph",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "page": {
+        "entry": "panel/index.html",
+        "title": "OmO Graph"
+      },
+      "capabilities": [
+        "sessions"
+      ],
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      }
+    }
+  }
+}

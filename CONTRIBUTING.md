@@ -17,10 +17,10 @@ Node.js 22+ is required. You don't need `pi` or `omo` installed to build, run
 
 | Command | What it does |
 |---|---|
-| `npm run build` | compile `src/` to `dist/` with `tsc` |
+| `npm run build` | compile `src/` to `dist/` with `tsc`, then bundle the OmO Graph extension (`extensions/omo-dag/`) with esbuild |
 | `npm run dev` | run the CLI from source with `tsx`, no build step |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | run the unit/integration test suite (`test/*.test.ts`) |
+| `npm run typecheck` | `tsc --noEmit` for the server, then for `extensions/omo-dag/` (DOM + Node config) |
+| `npm test` | run the unit/integration test suite (`test/*.test.ts` and `extensions/*/test/*.test.ts`) |
 | `npm run smoke` | end-to-end smoke test against a real `pi` process |
 | `npm run omo-smoke` | end-to-end smoke test against a real `omo` process |
 | `npm run probe` | dump raw pi/OmO RPC events for protocol inspection |
