@@ -397,8 +397,11 @@ async function completeFlow(
       if (!sameCallback(target, flow.authorizationUrl))
         return fail(400, "McpAuthError", `OmO is waiting for ${name} on its loopback callback; paste that redirect`);
       const delivered = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(MCP_READ_WAIT_MS) });
-      if (!delivered.ok)
+      if (!delivered.ok) {
+        // OmO ends the flow on a rejected callback; settle it so a retry cannot join the dead flow.
+        await flow.done.catch(() => undefined);
         return fail(400, "McpAuthError", `OmO rejected the authorization response for ${name}; start it again`);
+      }
       await flow.done;
     } else {
       await runMcpCommand(services.sessions, flow.s, flow.pi, name, `auth-complete ${name} ${redirect}`, {
