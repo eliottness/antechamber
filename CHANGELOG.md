@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OmO Graph: panning no longer gets stuck following the mouse after the button
+  is released outside the panel (or the pointer is cancelled, capture is lost
+  or the window loses focus); a move without the primary button held now ends
+  the drag.
+
 ## [0.2.2] - 2026-10-15
 
 ### Fixed

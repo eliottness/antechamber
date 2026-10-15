@@ -3,6 +3,7 @@ import { applyHostReady } from "@openchamber/sdk/ui";
 import type { GraphNode, TaskGraph } from "./graph.ts";
 import { CARD_H, CARD_W, layoutGraph, reach, type Layout } from "./layout.ts";
 import { compact, shortModel, statusLine } from "./format.ts";
+import { PanGesture } from "./pan.ts";
 import { GraphPoller, type PollView } from "./poller.ts";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -101,36 +102,37 @@ function zoomAt(factor: number, cx = ui.viewport.clientWidth / 2, cy = ui.viewpo
   applyView();
 }
 
-let drag: { x: number; y: number; vx: number; vy: number; moved: boolean } | undefined;
+const pan = new PanGesture();
 let suppressClick = false;
-ui.viewport.addEventListener("pointerdown", (event) => {
-  if (event.button !== 0) return;
-  drag = { x: event.clientX, y: event.clientY, vx: view.x, vy: view.y, moved: false };
-});
-window.addEventListener("pointermove", (event) => {
-  if (!drag) return;
-  const dx = event.clientX - drag.x;
-  const dy = event.clientY - drag.y;
-  if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-  if (!drag.moved) {
-    drag.moved = true;
-    ui.viewport.setPointerCapture?.(event.pointerId);
-    ui.app.classList.add("is-panning");
-  }
-  view.x = drag.vx + dx;
-  view.y = drag.vy + dy;
-  applyView();
-});
-window.addEventListener("pointerup", () => {
-  if (drag?.moved) {
+function endPan(pointerId?: number, click = false) {
+  if (!pan.active) return;
+  const moved = pan.end(pointerId);
+  if (pan.active) return;
+  if (moved && click) {
     suppressClick = true;
     setTimeout(() => {
       suppressClick = false;
     }, 0);
   }
-  drag = undefined;
   ui.app.classList.remove("is-panning");
+}
+ui.viewport.addEventListener("pointerdown", (event) => pan.down(event, view));
+window.addEventListener("pointermove", (event) => {
+  const step = pan.move(event);
+  if (step === "end") return endPan(event.pointerId);
+  if (!step) return;
+  if (step.started) {
+    ui.viewport.setPointerCapture?.(event.pointerId);
+    ui.app.classList.add("is-panning");
+  }
+  view.x = step.x;
+  view.y = step.y;
+  applyView();
 });
+window.addEventListener("pointerup", (event) => endPan(event.pointerId, true));
+window.addEventListener("pointercancel", (event) => endPan(event.pointerId));
+ui.viewport.addEventListener("lostpointercapture", (event) => endPan(event.pointerId));
+window.addEventListener("blur", () => endPan());
 ui.viewport.addEventListener(
   "wheel",
   (event) => {
