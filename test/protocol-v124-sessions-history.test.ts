@@ -184,6 +184,18 @@ test("V124-006: honors message list limit", { timeout: 10_000 }, async (t) => {
   assert.equal(messages.length, 1);
   assert.ok(isRecord(messages[0]));
   assert.equal(messages[0].info && isRecord(messages[0].info) ? messages[0].info.id : undefined, "msg-two");
+  const cursor = response.headers.get("x-next-cursor");
+  assert.equal(cursor, "msg-two");
+
+  const older = await fetch(
+    `${url}/session/${sessionID}/message?directory=${encodeURIComponent(directory)}&limit=1&before=${cursor}`,
+  );
+  const olderMessages: unknown = await older.json();
+  if (!Array.isArray(olderMessages)) throw new TypeError("expected a message array");
+  assert.equal(olderMessages.length, 1);
+  assert.ok(isRecord(olderMessages[0]) && isRecord(olderMessages[0].info));
+  assert.equal(olderMessages[0].info.id, "msg-one");
+  assert.equal(older.headers.get("x-next-cursor"), null);
 });
 
 test("V124-007: returns a v1 message by id", { timeout: 10_000 }, async (t) => {

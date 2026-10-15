@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Long sessions no longer open blank in OpenChamber. The v1 message list now
+  honors `before` and returns an `x-next-cursor` header, so the UI pages older
+  history instead of stopping at the newest 50 messages, which could all be
+  assistant replies with no user message to anchor them.
+
 ## [0.2.8] - 2026-10-15
 
 - fix(session): resend bare /<skill> commands as /skill:<name>

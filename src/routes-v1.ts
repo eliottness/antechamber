@@ -180,9 +180,17 @@ export async function handleV1(
         json(res, 200, await services.sessions.remove(sessionId));
         return;
       case "GET /message": {
-        const messages = services.sessions.messages(sessionId) ?? [];
+        let messages = services.sessions.messages(sessionId) ?? [];
+        const before = url.searchParams.get("before");
+        if (before) {
+          const index = messages.findIndex((message) => message.info.id === before);
+          if (index !== -1) messages = messages.slice(0, index);
+        }
         const limit = numberParam(url.searchParams.get("limit"));
-        json(res, 200, limit === undefined ? messages : limit === 0 ? [] : messages.slice(-limit));
+        const page = limit === undefined ? messages : limit === 0 ? [] : messages.slice(-limit);
+        // The UI pages older history with ?before=<cursor> until no cursor comes back.
+        if (page.length > 0 && page.length < messages.length) res.setHeader("x-next-cursor", page[0]!.info.id);
+        json(res, 200, page);
         return;
       }
       case "GET /children":
