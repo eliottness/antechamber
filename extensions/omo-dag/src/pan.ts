@@ -3,8 +3,9 @@ export type PanMove = { x: number; y: number; started: boolean };
 
 const THRESHOLD = 4;
 
-// Primary-button pan gesture. A missed pointerup (button released outside the sandboxed iframe, lost capture,
-// pointercancel, window blur) must not leave the gesture armed, so a move without the primary button ends it.
+// Primary-button pan gesture. A missed pointerup (button released outside the sandboxed iframe) must not leave the
+// gesture armed, so a move without the primary button ends it. Window blur and lost capture are not release
+// signals: the host can take focus or the browser drop capture while the button is still held.
 export class PanGesture {
   private drag: { id: number; x: number; y: number; vx: number; vy: number; moved: boolean } | undefined;
 
