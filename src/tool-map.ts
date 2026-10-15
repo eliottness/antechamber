@@ -106,6 +106,48 @@ export function resultText(content: unknown): string {
     .join("");
 }
 
+/** OmO (senpi-codemode) sends this hidden message when an eval cell that outlived the foreground window settles. */
+export const EVAL_NOTIFICATION_TYPE = "senpi-codemode:notification";
+
+export interface DetachedEvalResult {
+  cellId: string;
+  completed: boolean;
+  outcome: string;
+  output: string;
+}
+
+// One block per cell: header, bounded output (or "(no output)"), then a one-line kernel-state note.
+const DETACHED_CELL =
+  /<system-reminder>Detached eval cell (\S+) \([^)\n]*\) ([^\n]*)\.\n([\s\S]*?)<\/system-reminder>/g;
+
+/** The notification carries no structured details, so the cell id and output come from its text. */
+export function detachedEvalResults(content: string): DetachedEvalResult[] {
+  return [...content.matchAll(DETACHED_CELL)].map(([, cellId = "", outcome = "", body = ""]) => {
+    const lines = body.split("\n");
+    lines.pop();
+    const output = lines.join("\n");
+    return { cellId, completed: outcome === "completed", outcome, output: output === "(no output)" ? "" : output };
+  });
+}
+
+/** Replace a detached eval card's "detached and is running" result with what the cell finally produced. */
+export function applyDetachedEval(part: OCToolPart, result: DetachedEvalResult, now: number): boolean {
+  if (part.tool !== "eval" || part.state.status === "pending") return false;
+  const { input, metadata = {} } = part.state;
+  const time = { start: part.state.time.start, end: now };
+  const title = part.state.status === "error" ? "eval" : (part.state.title ?? "eval");
+  part.state = result.completed
+    ? { status: "completed", input, output: result.output, title, metadata, time }
+    : {
+        status: "error",
+        input,
+        error: [`Detached cell ${result.outcome}.`, result.output].filter(Boolean).join("\n"),
+        metadata,
+        time,
+      };
+  return true;
+}
+
 /** Only edit cards need patch metadata; write cards already preview input.content. */
 export function resultMetadata(tool: string, result: ToolResult): Record<string, unknown> {
   if (tool !== "edit" && tool !== "multiedit") return {};

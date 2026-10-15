@@ -19,7 +19,10 @@ import type { SessionStore } from "./session-store.js";
 import type { SubagentBridge } from "./subagents.js";
 import type { MonitorSessions } from "./monitor-sessions.js";
 import {
+  applyDetachedEval,
   applyProviderToolResults,
+  detachedEvalResults,
+  EVAL_NOTIFICATION_TYPE,
   finishProviderToolParts,
   mapTool,
   providerToolParts,
@@ -312,6 +315,7 @@ export class PiEventTranslator {
 
   onPiEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     this.services.subagents.wake(s, ev);
+    this.onEvalNotification(s, ev);
     if (envSetting("DEBUG")) {
       const ame = (ev.assistantMessageEvent as { type?: string } | undefined)?.type;
       debugLog(`[pi-event] ${String(ev.type)}${ame ? `/${ame}` : ""} ${JSON.stringify(ev).slice(0, 300)}`);
@@ -350,6 +354,21 @@ export class PiEventTranslator {
         break;
       default:
         break; // turn_start, queue_update — future milestones
+    }
+  }
+
+  /** A detached eval cell settled: finish the card that only said "detached and is running". */
+  private onEvalNotification(s: ManagedSession, ev: Record<string, unknown>): void {
+    if (ev.type !== "message_end") return;
+    const message = ev.message as { customType?: unknown; content?: PiFileMessage["content"] } | undefined;
+    if (message?.customType !== EVAL_NOTIFICATION_TYPE) return;
+    for (const result of detachedEvalResults(textOf(message.content))) {
+      for (const owner of s.messages ?? []) {
+        const part = owner.parts.find((p): p is OCToolPart => p.type === "tool" && p.callID === result.cellId);
+        if (part === undefined || !applyDetachedEval(part, result, Date.now())) continue;
+        this.emitPart(s, part);
+        this.services.emit(s.info.directory, { type: "message.updated", properties: { info: owner.info } });
+      }
     }
   }
 
@@ -462,6 +481,11 @@ export class PiEventTranslator {
           return;
         const part = typeof ev.toolCallId === "string" ? s.toolByCallId.get(ev.toolCallId) : undefined;
         if (part === undefined || part.state.status !== "running") return;
+        // eval streams its cell output tail; running cards render it from metadata.output, like bash.
+        if (part.tool === "eval" && ev.partialResult !== null && typeof ev.partialResult === "object") {
+          const output = resultText((ev.partialResult as { content?: unknown }).content);
+          part.state.metadata = { ...part.state.metadata, output };
+        }
         this.emitPart(s, part);
         return;
       }

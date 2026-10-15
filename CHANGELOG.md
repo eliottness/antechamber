@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OmO `eval` cards now show their output. A running cell streams its output
+  into the card, and a cell that detached after the foreground window is
+  finished with its final output (or marked as an error when it was cancelled
+  or killed) once OmO's completion notice arrives, live and after a reload.
+  Before, the card stopped at "detached and is running".
+
 ## [0.2.8] - 2026-10-15
 
 - fix(session): resend bare /<skill> commands as /skill:<name>

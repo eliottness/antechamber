@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCAssistantMessage, OCMessageWithParts, OCModelRef, OCPart, OCToolPart, OCUserMessage } from "./types.js";
 import {
+  applyDetachedEval,
   applyProviderToolResults,
+  detachedEvalResults,
+  EVAL_NOTIFICATION_TYPE,
   finishProviderToolParts,
   mapTool,
   providerToolParts,
@@ -512,6 +515,14 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
           }
         }
       }
+    }
+  }
+  for (const entry of entries) {
+    if (entry.type !== "custom_message" || entry.customType !== EVAL_NOTIFICATION_TYPE) continue;
+    const content = entry.content as PiFileMessage["content"];
+    for (const result of detachedEvalResults(textOf(content))) {
+      const part = toolParts.get(result.cellId)?.[0];
+      if (part !== undefined) applyDetachedEval(part, result, entryTime(entry));
     }
   }
   const admissions = new Map<string, PiFileEntry>();
