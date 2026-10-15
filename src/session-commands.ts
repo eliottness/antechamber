@@ -180,6 +180,23 @@ export function slashTitlePrompt(text: string): { sessionTitlePrompt?: string } 
   return match?.[1] !== undefined && !match[1].startsWith("/") ? { sessionTitlePrompt: match[1] } : {};
 }
 
+/**
+ * OpenCode clients invoke skills as `/<name>`, but OmO only knows them as `/skill:<name>` and rejects
+ * the bare form with `unknown_command`. Return the rewritten prompt when OmO suggests that exact skill.
+ */
+export function skillCommandText(
+  text: string,
+  failure: { errorCode?: string; errorData?: unknown },
+): string | undefined {
+  if (failure.errorCode !== "unknown_command" || !isRecord(failure.errorData)) return undefined;
+  const { command, suggestions } = failure.errorData;
+  if (typeof command !== "string" || !Array.isArray(suggestions) || !suggestions.includes(`skill:${command}`)) {
+    return undefined;
+  }
+  const match = /^\/(\S+)([\s\S]*)$/.exec(text);
+  return match?.[1] === command ? `/skill:${command}${match[2]}` : undefined;
+}
+
 function slashCommandPrompt(input: SlashCommandInput): string {
   return input.arguments === "" ? `/${input.command}` : `/${input.command} ${input.arguments}`;
 }

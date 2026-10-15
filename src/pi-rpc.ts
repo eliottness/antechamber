@@ -84,7 +84,13 @@ export type PiRpcResponse<T = unknown> = {
   readonly command: string;
 } & (
   | { readonly success: true; readonly data?: T; readonly error?: never }
-  | { readonly success: false; readonly error?: string; readonly data?: never }
+  | {
+      readonly success: false;
+      readonly error?: string;
+      readonly errorCode?: string;
+      readonly errorData?: unknown;
+      readonly data?: never;
+    }
 );
 
 interface PiRpcClientOptions {
@@ -283,6 +289,8 @@ export class PiRpcClient extends EventEmitter {
             command: msg.command,
             success: false,
             ...(msg.error !== undefined ? { error: msg.error } : {}),
+            ...(typeof msg.errorCode === "string" ? { errorCode: msg.errorCode } : {}),
+            ...(msg.errorData !== undefined ? { errorData: msg.errorData } : {}),
           };
       pending?.resolve(response);
       return;

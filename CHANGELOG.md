@@ -50,6 +50,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
   pointer capture, which can happen while the button is still held; the drag
   now ends only on release, cancel, or a move without the button held.
 
+### Fixed
+
+- Invoking a skill as `/<name>` (as OpenChamber offers it) no longer fails with
+  `Unknown command /<name>. Did you mean /skill:<name>?`. When OmO suggests the
+  matching skill, antechamber resends the prompt as `/skill:<name>`.
+
 ## [0.2.4] - 2026-10-15
 
 ### Added

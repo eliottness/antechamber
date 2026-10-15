@@ -37,7 +37,7 @@ import {
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
 import { sessionDiff } from "./session-diff.js";
-import { announceSessionNotice, slashTitlePrompt } from "./session-commands.js";
+import { announceSessionNotice, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
   ocIdFor,
   piSessionDir,
@@ -1155,14 +1155,23 @@ export class SessionManager {
       }
     };
     if (text.startsWith("/")) pi.onExtensionUI(onNotification);
-    const res = await pi
-      .command({
+    const send = (message: string) =>
+      pi.command({
         type: "prompt",
         ...native,
+        message,
         streamingBehavior: delivery === "queue" ? "followUp" : "steer",
         clientMessageId: userMsg.id,
         ...slashTitlePrompt(text),
-      })
+      });
+    const res = await (async () => {
+      const first = await send(native.message);
+      // OmO rejects unknown commands before admission, so the same clientMessageId can be resent.
+      const skill = first.success ? undefined : skillCommandText(native.message, first);
+      if (skill === undefined) return first;
+      input.text = skill;
+      return send(skill);
+    })()
       .catch((error: unknown) => {
         rejectInput();
         throw error;
