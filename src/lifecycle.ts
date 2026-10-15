@@ -69,6 +69,10 @@ export class SessionLifecycle {
     this.used.set(s, this.clock.now());
   }
 
+  lastUsed(s: ManagedSession): number {
+    return this.used.get(s) ?? 0;
+  }
+
   private idle(s: ManagedSession): boolean {
     return (
       !this.active.has(s) &&

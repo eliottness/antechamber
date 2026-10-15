@@ -200,6 +200,7 @@ export type OCEvent =
   | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string } }
   | { type: "session.diff"; properties: { sessionID: string; diff: import("./session-diff.js").SessionFileDiff[] } }
   | { type: "server.connected"; properties: Record<string, unknown> }
+  | { type: "mcp.tools.changed"; properties: { server: string } }
   | { type: "session.created"; properties: { info: OCSession } }
   | { type: "session.updated"; properties: { info: OCSession } }
   | {

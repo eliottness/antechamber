@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { errorBody, json } from "./http.js";
 import { miscRoute } from "./misc-routes.js";
+import { mcpRoute } from "./mcp.js";
 import { getAgentName } from "./agent-name.js";
 import { nativePromptInput, parsePromptParts } from "./prompt-parts.js";
 import { RequestBodyError } from "./http.js";
@@ -93,6 +94,12 @@ export async function handleV1(
   directory: string,
 ): Promise<void> {
   if (await handleV1GlobalRoute(services, res, path, method)) return;
+
+  const mcp = await mcpRoute(services, method, path, directory, () => services.body(req));
+  if (mcp !== undefined) {
+    json(res, mcp.status, mcp.body);
+    return;
+  }
 
   // --- sessions ---
   const misc = await miscRoute(method, path, url, directory);
@@ -442,10 +449,6 @@ export async function handleV1(
   }
   if (path === "/formatter" && method === "GET") {
     json(res, 200, []);
-    return;
-  }
-  if (path === "/mcp" && method === "GET") {
-    json(res, 200, {});
     return;
   }
   if (path === "/command" && method === "GET") {

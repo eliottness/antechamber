@@ -14,6 +14,19 @@ and this project uses [Semantic Versioning](https://semver.org/).
   sidebar dot while the watch runs, and their transcript shows the watched
   command, filter, event count and how the watch ended. A session with a live
   watch is no longer evicted as idle, which used to stop the watch.
+- MCP servers configured in OmO now appear in OpenChamber's MCP status, and the
+  Authorize button for a server that needs sign-in runs OmO's native
+  `/mcp auth` flow in the running session. Status and authorization use the
+  most recently used live session in the directory. The flow never adds a
+  message to the conversation, and it never revives a dormant session.
+- Completing an MCP sign-in with a pasted code or redirect URL (OpenChamber's
+  callback page or paste box) now works through `/mcp/{name}/auth/callback`.
+  The code goes to OmO's waiting loopback listener, or to
+  `/mcp auth-complete` when OmO parked the flow.
+- OpenChamber 2.x now lists OmO MCP servers (`GET /api/mcp`) and can sign in
+  through `mcp_*` integrations. These run OmO's headless `/mcp auth-start` and
+  `/mcp auth-complete` with a paste-the-code step. A completed sign-in emits
+  `mcp.status.changed`.
 
 ## [0.2.4] - 2026-10-15
 
