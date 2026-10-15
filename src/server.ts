@@ -13,6 +13,7 @@ import { SSE, type SSESubscriber } from "./sse.js";
 import { handleV1 } from "./routes-v1.js";
 import { handleV2 } from "./routes-v2.js";
 import type { RouteServices } from "./route-services.js";
+import { type SelfUpdateResult, selfUpdate } from "./self-update.js";
 
 export { isLoopbackHost, serverPassword } from "./http.js";
 
@@ -21,6 +22,8 @@ interface AdapterServerOptions {
   host: string;
   /** Fallback directory when requests carry no ?directory= param. */
   defaultDirectory: string;
+  /** Replaces the npm self-update behind POST /global/upgrade (tests). */
+  selfUpdate?: () => Promise<SelfUpdateResult>;
 }
 
 export class AdapterServer {
@@ -256,6 +259,7 @@ export class AdapterServer {
       body: (request) => this.http.body(request),
       catalog: () => this.catalog(),
       broadcast: (dir, event) => this.broadcast(dir, event),
+      selfUpdate: this.options.selfUpdate ?? (() => selfUpdate()),
     };
     if (path === "/api" || path.startsWith("/api/")) {
       await handleV2(services, req, res, url, path, method, directory);

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultStateDir, envSetting } from "../config.js";
 
 export interface CommandContext {
   readonly fs: typeof fs;
@@ -100,6 +101,31 @@ export function readSettings(path: string, ctx: CommandContext): Record<string, 
 
 export function shellQuote(value: string): string {
   return /^[\w./:@=-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** OpenChamber launcher written by `setup --auto-update`, kept beside the session registry. */
+export function autoUpdateLauncherPath(ctx: CommandContext): string {
+  return resolve(
+    ctx.cwd,
+    envSetting("STATE_DIR", ctx.env) ?? defaultStateDir(ctx.home, ctx.fs.existsSync),
+    "opencode-antechamber",
+  );
+}
+
+export function autoUpdateLauncherText(binary: string): string {
+  return [
+    "#!/bin/sh",
+    "# Written by `antechamber setup --auto-update`; rerun `antechamber setup` without it to stop auto-updates.",
+    "ANTECHAMBER_AUTO_UPDATE=1",
+    "export ANTECHAMBER_AUTO_UPDATE",
+    `exec '${binary.replaceAll("'", "'\\''")}' "$@"`,
+    "",
+  ].join("\n");
+}
+
+export function autoUpdateLauncherTarget(text: string): string | undefined {
+  const match = /^exec '((?:[^']|'\\'')*)' "\$@"$/m.exec(text);
+  return match?.[1]?.replaceAll("'\\''", "'");
 }
 
 export function isPackageBinary(binary: string, ctx: CommandContext): boolean {

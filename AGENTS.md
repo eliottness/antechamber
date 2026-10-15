@@ -18,7 +18,7 @@ antechamber/
 ├── src/       # adapter runtime, flat by concern -> src/AGENTS.md
 ├── test/      # hermetic node:test suite + fake-agent fixtures -> test/AGENTS.md
 ├── contrib/   # live-agent smokes/probes, cost tokens, not in CI -> contrib/AGENTS.md
-├── bin/       # opencode-antechamber: OpenChamber launcher shim (serve, --version only); opencode-pi = deprecated alias
+├── bin/       # opencode-antechamber: OpenChamber launcher shim (serve, --version, upgrade); opencode-pi = deprecated alias
 ├── extensions/omo-dag/  # OmO Graph OpenChamber extension: sandboxed panel + read-only service -> its README.md
 └── docs/      # architecture, api-surface (route contract), configuration (env), backends/omo.md
 ```

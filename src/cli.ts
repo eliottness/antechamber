@@ -26,6 +26,7 @@ try {
         systemd: { type: "boolean" },
         "pi-binary": { type: "string" },
         restart: { type: "boolean" },
+        "auto-update": { type: "boolean" },
         json: { type: "boolean" },
       },
     });
@@ -46,7 +47,12 @@ try {
         ...(values.systemd ? { systemd: positionals[1] ?? "openchamber.service" } : {}),
         dryRun: values["dry-run"] ?? false,
         restart: values.restart ?? false,
+        autoUpdate: values["auto-update"] ?? false,
       });
+    } else if (command === "upgrade") {
+      if (positionals.length > 1) throw new Error("Unexpected upgrade argument");
+      const { upgrade } = await import("./commands/upgrade.js");
+      await upgrade();
     } else if (command === "doctor") {
       const { doctor, formatDoctor } = await import("./commands/doctor.js");
       const report = doctor({

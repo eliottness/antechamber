@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
+import { installMethod, npmBinaryFor } from "../self-update.js";
 import {
+  autoUpdateLauncherPath,
+  autoUpdateLauncherText,
   type CommandContext,
   createContext,
   isPackageBinary,
@@ -17,6 +20,7 @@ interface SetupOptions extends SettingsOptions {
   readonly systemd?: string;
   readonly piBinary?: string;
   readonly restart?: boolean;
+  readonly autoUpdate?: boolean;
   /** User-unit root, overridable without touching the real systemd configuration. */
   readonly systemdDir?: string;
 }
@@ -63,8 +67,26 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
   if (binary === ctx.cliPath && !ctx.fs.readFileSync(binary, "utf8").startsWith("#!/usr/bin/env node\n")) {
     throw new Error(`Package CLI ${binary} is missing its node shebang; run npm run build`);
   }
-  const updated = `${JSON.stringify({ ...data, opencodeBinary: binary }, null, 2)}\n`;
-  const changed = data.opencodeBinary !== binary;
+  let launcher: string | undefined;
+  let launcherText: string | undefined;
+  let oldLauncher: string | undefined;
+  if (options.autoUpdate) {
+    installMethod(
+      {
+        packageRoot: resolve(dirname(ctx.cliPath), ".."),
+        env: ctx.env,
+        home: ctx.home,
+        realpath: (path) => ctx.fs.realpathSync(path),
+      },
+      () => ctx.exec(npmBinaryFor(), ["root", "-g"]),
+    );
+    launcher = autoUpdateLauncherPath(ctx);
+    launcherText = autoUpdateLauncherText(binary);
+    if (ctx.fs.existsSync(launcher)) oldLauncher = ctx.fs.readFileSync(launcher, "utf8");
+  }
+  const configured = launcher ?? binary;
+  const updated = `${JSON.stringify({ ...data, opencodeBinary: configured }, null, 2)}\n`;
+  const changed = data.opencodeBinary !== configured;
 
   let dropIn: string | undefined;
   let dropInText: string | undefined;
@@ -125,17 +147,28 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
       report(`Made ${binary} executable`);
     }
   }
+  if (launcher !== undefined && launcherText !== undefined) {
+    if (oldLauncher === launcherText && (ctx.fs.statSync(launcher).mode & 0o111) !== 0)
+      report(`Already configured: ${launcher}`);
+    else if (options.dryRun) report(`Would write auto-update launcher ${launcher} for ${binary}`);
+    else {
+      ctx.fs.mkdirSync(dirname(launcher), { recursive: true });
+      writeAtomically(launcher, launcherText, ctx);
+      ctx.fs.chmodSync(launcher, 0o755);
+      report(`Wrote auto-update launcher ${launcher} for ${binary}`);
+    }
+  }
   if (changed) {
     report(`${options.dryRun ? "Would update" : "Updating"} ${settings}`);
     report(`- opencodeBinary: ${JSON.stringify(data.opencodeBinary ?? null)}`);
-    report(`+ opencodeBinary: ${JSON.stringify(binary)}`);
+    report(`+ opencodeBinary: ${JSON.stringify(configured)}`);
     if (existing) backup(settings);
     if (!options.dryRun) {
       ctx.fs.mkdirSync(dirname(settings), { recursive: true });
       writeAtomically(settings, updated, ctx);
       report(`Wrote ${settings}`);
     }
-  } else report(`Already configured: ${settings} points at ${binary}`);
+  } else report(`Already configured: ${settings} points at ${configured}`);
 
   if (dropIn !== undefined && dropInText !== undefined) {
     if (oldDropIn === dropInText) report(`Already configured: ${dropIn}`);

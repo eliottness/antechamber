@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- feat(cli): `antechamber setup --auto-update` points OpenChamber at a launcher that installs the latest release in the background on every start; it is now the recommended install path
+- feat(cli): `antechamber upgrade` installs the latest release with the package manager that owns the global install, so OpenChamber 2.3.2's Update button now upgrades antechamber
+- feat(api): `POST /global/upgrade` upgrades antechamber itself instead of returning `UnsupportedError`
+- feat(config): `ANTECHAMBER_AUTO_UPDATE=1` enables the post-start background update
+
 ## [0.2.3] - 2026-10-15
 
 ### Fixed

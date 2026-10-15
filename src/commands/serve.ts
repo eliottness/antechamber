@@ -1,4 +1,5 @@
 import { envSetting } from "../config.js";
+import { selfUpdate } from "../self-update.js";
 import { AdapterServer, isLoopbackHost, serverPassword } from "../server.js";
 
 interface ServeOptions {
@@ -40,5 +41,17 @@ export async function serve(options: ServeOptions): Promise<void> {
   else {
     console.log(`antechamber listening on ${server.url}`);
     console.log(`default directory: ${directory}`);
+  }
+  // After the listening line: OpenChamber's startup timeout must not wait on the registry.
+  if (envSetting("AUTO_UPDATE") === "1") void autoUpdate();
+}
+
+async function autoUpdate(): Promise<void> {
+  try {
+    const result = await selfUpdate();
+    if (result.updated)
+      console.error(`antechamber: auto-update installed ${result.to} (running ${result.from}); it starts next time`);
+  } catch (error) {
+    console.error(`antechamber: auto-update skipped: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
