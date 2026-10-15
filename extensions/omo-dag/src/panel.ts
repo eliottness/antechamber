@@ -131,6 +131,8 @@ window.addEventListener("pointermove", (event) => {
 });
 window.addEventListener("pointerup", (event) => endPan(event.pointerId, true));
 window.addEventListener("pointercancel", (event) => endPan(event.pointerId));
+// A native drag (of selected text, say) cancels the pointer and swallows the release, so the canvas allows none.
+ui.viewport.addEventListener("dragstart", (event) => event.preventDefault());
 ui.viewport.addEventListener(
   "wheel",
   (event) => {

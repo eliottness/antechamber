@@ -52,7 +52,7 @@
       #settings button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; }
       #settings #btn-save { background: var(--accent); color: var(--oc-primary-fg, #001); border-color: transparent; }
 
-      #viewport { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none;
+      #viewport { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
         background-image: radial-gradient(color-mix(in srgb, var(--muted) 22%, transparent) 1px, transparent 1px);
         background-size: 18px 18px; }
       .is-panning #viewport { cursor: grabbing; }
@@ -109,6 +109,7 @@
       @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 60%, transparent); } 50% { box-shadow: 0 0 0 4px transparent; } }
 
       #empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 6px; padding: 24px; color: var(--muted); }
+      #empty { -webkit-user-select: text; user-select: text; cursor: auto; }
       #empty strong { color: var(--fg); font-size: 14px; }
       #empty p { margin: 0; max-width: 34ch; font-size: 12px; }
 

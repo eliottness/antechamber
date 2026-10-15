@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OmO Graph: panning no longer selects the wave labels, so pressing near the
+  graph can no longer start a native text drag. That drag cancelled the pan
+  after a few pixels, and before 0.2.3 it left the graph following the mouse
+  with the button released.
+
 ## [0.2.6] - 2026-10-15
 
 - fix(omo-graph): stop ending the pan on blur and lost capture
