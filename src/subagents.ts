@@ -168,15 +168,52 @@ function directories(path: string): string[] {
   }
 }
 
-export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {
-  if (!taskId(id)) return undefined;
+function taskStores(): Set<string> {
   const agent = piAgentDir();
   const registry = jsonObject(join(agent, "rpc", "task-stores.json"));
-  const stores = new Set([
+  return new Set([
     ...Object.keys(record(registry?.stores) ? registry.stores : {}),
     ...directories(join(agent, "projects")).map((project) => join(project, "senpi-task")),
   ]);
-  for (const store of stores) {
+}
+
+function taskFiles(): { id: string; path: string }[] {
+  const files: { id: string; path: string }[] = [];
+  for (const store of taskStores()) {
+    let names: string[];
+    try {
+      names = readdirSync(join(store, "tasks"));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
+        continue;
+      throw error;
+    }
+    for (const name of names) {
+      const id = name.endsWith(".json") ? name.slice(0, -5) : "";
+      if (taskId(id)) files.push({ id, path: join(store, "tasks", name) });
+    }
+  }
+  return files;
+}
+
+function childRecord(id: string, path: string): Record<string, unknown> | undefined {
+  const data = jsonObject(path);
+  return data?.task_id === id && typeof data.parent_session_id === "string" ? data : undefined;
+}
+
+/** Reverse lookup of a child session id, for tasks whose spawn never surfaced as a `task` tool call. */
+export function findTaskBySession(sessionId: string): { path: string; data: Record<string, unknown> } | undefined {
+  for (const { id, path } of taskFiles()) {
+    if (ocIdFor(id) !== sessionId) continue;
+    const data = childRecord(id, path);
+    if (data) return { path, data };
+  }
+  return undefined;
+}
+
+export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {
+  if (!taskId(id)) return undefined;
+  for (const store of taskStores()) {
     const path = join(store, "tasks", `${id}.json`);
     const data = jsonObject(path);
     if (data?.task_id === id && data.parent_session_id === parentPiId) return { path, data };
@@ -255,6 +292,9 @@ type ParseHistory = (session: ManagedSession, raw: string) => OCMessageWithParts
 export class SubagentBridge {
   private readonly children = new Map<string, Child>();
   private readonly calls = new Map<string, OCToolPart[]>();
+  private readonly removed = new Set<string>();
+  /** Parent pi session of each task record already read; a record's parent never changes. */
+  private readonly taskParents = new Map<string, string>();
 
   constructor(
     private readonly store: SessionStore,
@@ -298,7 +338,11 @@ export class SubagentBridge {
     const message = record(event.message) ? event.message : event;
     if (message.customType !== "omo-senpi:wake") return;
     for (const data of taskCompletions(message.details)) {
-      const child = this.children.get(ocIdFor(String(data.task_id)));
+      const id = ocIdFor(String(data.task_id));
+      // A registry-only child (after a restart) or a task with no card (spawned from
+      // `eval`) is not loaded yet; restore() covers both.
+      if (!this.children.has(id)) this.restore(id);
+      const child = this.children.get(id);
       if (child?.session.info.parentID !== parent.info.id) continue;
       child.task.details = { ...child.task.details, ...data };
       if (terminal(data.status)) child.task.terminalAt = Date.now();
@@ -374,18 +418,76 @@ export class SubagentBridge {
     const known = this.children.get(id);
     if (known) return known.session;
     const entry = this.store.get(id);
-    if (!entry?.task || !entry.parentID) return undefined;
-    const parent = this.managedSession({
-      id: entry.parentID,
-      projectID: entry.directory,
-      directory: entry.directory,
-      title: "",
-      version: ADAPTER_VERSION,
-      time: { created: entry.created, updated: entry.updated },
-    });
-    const child = this.create(parent, entry.task);
+    if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
+    if (!entry.task || !entry.parentID) return undefined;
+    const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task);
     child.session.info.title = entry.title ?? child.session.info.title;
     return child.session;
+  }
+
+  /**
+   * Tasks spawned outside a `task` tool call (e.g. `agent()` inside an `eval`
+   * cell) never produce a card, so their session is built from the task record.
+   */
+  private adopt(
+    id: string,
+    found: { path: string; data: Record<string, unknown> } | undefined = findTaskBySession(id),
+  ): ManagedSession | undefined {
+    if (!found) return undefined;
+    const parentPi = String(found.data.parent_session_id);
+    const parent = this.parentFor(parentPi);
+    if (!parent) return undefined;
+    this.wire(parent);
+    const spec = record(found.data.spawn_spec) ? found.data.spawn_spec : {};
+    const name = found.data.name ?? found.data.description;
+    const child = this.create(parent, {
+      id: String(found.data.task_id),
+      parentPiId: parentPi,
+      input: {
+        ...(typeof name === "string" ? { description: name } : {}),
+        ...(typeof spec.prompt === "string" ? { prompt: spec.prompt } : {}),
+        ...(typeof found.data.agent_type === "string" ? { subagent_type: found.data.agent_type } : {}),
+      },
+      details: found.data,
+    });
+    this.refresh(child, false);
+    return child.session;
+  }
+
+  /**
+   * Root sessions are keyed by the md5 of their pi session id, but a nested child
+   * is keyed by its task id, so its pi session id is matched through the registry.
+   */
+  private parentFor(parentPi: string, childByPi = this.childIdsByPi()): ManagedSession | undefined {
+    const rootID = ocIdFor(parentPi);
+    const loaded = [...this.sessions.values()].find(
+      (s) => s.info.id === rootID || s.piSessionId === parentPi || s.restored?.piSessionId === parentPi,
+    );
+    if (loaded) return loaded;
+    const id = this.store.get(rootID) ? rootID : childByPi.get(parentPi);
+    if (id === undefined) return undefined;
+    const entry = this.store.get(id);
+    return this.sessions.get(id) ?? (entry ? this.detachedParent(id, entry.directory, entry) : undefined);
+  }
+
+  private childIdsByPi(): Map<string, string> {
+    const byPi = new Map<string, string>();
+    for (const id of this.store.childIds()) {
+      const piSessionId = this.store.get(id)?.piSessionId;
+      if (piSessionId) byPi.set(piSessionId, id);
+    }
+    return byPi;
+  }
+
+  private detachedParent(id: string, directory: string, times: { created: number; updated: number }): ManagedSession {
+    return this.managedSession({
+      id,
+      projectID: directory,
+      directory,
+      title: "",
+      version: ADAPTER_VERSION,
+      time: { created: times.created, updated: times.updated },
+    });
   }
 
   private managedSession(info: OCSession): ManagedSession {
@@ -405,6 +507,20 @@ export class SubagentBridge {
 
   restoreAll(): void {
     for (const id of this.store.childIds()) this.restore(id);
+    const childByPi = this.childIdsByPi();
+    for (const { id, path } of taskFiles()) {
+      const sessionId = ocIdFor(id);
+      if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
+      let parentPi = this.taskParents.get(id);
+      if (parentPi === undefined) {
+        const parent = childRecord(id, path)?.parent_session_id;
+        if (typeof parent !== "string") continue;
+        this.taskParents.set(id, (parentPi = parent));
+      }
+      if (!this.parentFor(parentPi, childByPi)) continue;
+      const data = childRecord(id, path);
+      if (data) this.adopt(sessionId, { path, data });
+    }
   }
 
   owns(id: string): boolean {
@@ -685,6 +801,7 @@ export class SubagentBridge {
     this.closeWatchers(child);
     child.parts.clear();
     this.children.delete(id);
+    this.removed.add(id);
   }
 
   dispose(): void {

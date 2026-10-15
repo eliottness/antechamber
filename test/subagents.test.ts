@@ -584,6 +584,68 @@ test("restart resolves archived children by id through real session and message 
   );
 });
 
+test("task spawned without a task tool call resolves from its record under the parent", (t) => {
+  const { manager, parent, store, state } = setup(t);
+  liveRecord(store, "st_eval", "completed", "spawned from eval");
+  put(join(store, "tasks", "st_orphan.json"), { task_id: "st_orphan", parent_session_id: "unknown-pi" });
+  const childID = ocIdFor("st_eval");
+  assert.equal(manager.get(childID)?.info.parentID, parent.info.id);
+  assert.match(texts(manager.messages(childID)), /spawned from eval/);
+  assert.equal(manager.get(ocIdFor("st_orphan")), undefined);
+  assert.equal(new SessionStore(state).get(childID)?.task?.id, "st_eval");
+});
+
+test("task spawned without a task tool call is listed and announced before any direct lookup", (t) => {
+  const { manager, parent, store, directory, events } = setup(t);
+  liveRecord(store, "st_listed", "completed", "listed child");
+  const listedID = ocIdFor("st_listed");
+  assert.equal(manager.list(directory).find((session) => session.id === listedID)?.parentID, parent.info.id);
+  liveRecord(store, "st_woken", "completed", "woken child");
+  const wokenID = ocIdFor("st_woken");
+  manager["onPiEvent"](parent, {
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "omo-senpi:wake",
+      details: [{ customType: "senpi-task.completion", details: [{ task_id: "st_woken", status: "completed" }] }],
+    },
+  });
+  assert.ok(events.some((event) => event.type === "session.created" && event.properties.info.id === wokenID));
+});
+
+test("after a restart a wake reaches a registry-only child and nested eval tasks find their parent", async (t) => {
+  const { manager, store, state, directory } = setup(t);
+  liveRecord(store, "st_outer", "running", "outer child");
+  const outerID = ocIdFor("st_outer");
+  assert.ok(manager.get(outerID));
+  await manager.disposeAll();
+  const events: OCEvent[] = [];
+  const restarted = new SessionManager(
+    (_directory, event) => events.push(structuredClone(event) as OCEvent),
+    new SessionStore(state),
+    directory,
+  );
+  t.after(() => restarted.disposeAll());
+  const parent = restarted.get(ocIdFor("parent-pi"));
+  assert.ok(parent);
+  restarted["onPiEvent"](parent, {
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "omo-senpi:wake",
+      details: [{ customType: "senpi-task.completion", details: [{ task_id: "st_outer", status: "completed" }] }],
+    },
+  });
+  assert.equal(restarted.subagents["children"].get(outerID)?.task.details.status, "completed");
+  // The outer child's transcript header carries pi session id "child-pi".
+  put(join(store, "tasks", "st_inner.json"), {
+    task_id: "st_inner",
+    parent_session_id: "child-pi",
+    status: "completed",
+  });
+  assert.equal(restarted.list(directory).find((session) => session.id === ocIdFor("st_inner"))?.parentID, outerID);
+});
+
 test("dormant parent rebuilds batch children and applies trailing wake results", (t) => {
   const { manager, parent, parentPath } = setup(t);
   const batch = fixture.samples[1];

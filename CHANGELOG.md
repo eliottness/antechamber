@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Sub-agent sessions spawned without a `task` tool call (for example `agent()`
+  inside an `eval` cell) now open from their OmO task record instead of
+  returning `session not found`, and appear in the session list as soon as
+  they exist or complete, so their OmO Graph cards are clickable.
+
 ## [0.2.1] - 2026-10-15
 
 ### Fixed
