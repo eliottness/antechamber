@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-15
+
 ### Added
 
 - feat(cli): `antechamber setup --auto-update` points OpenChamber at a launcher that installs the latest release in the background on every start; it is now the recommended install path
