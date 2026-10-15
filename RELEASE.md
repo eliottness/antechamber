@@ -75,13 +75,14 @@ so keep that asset name stable.
 
 - **Pushing to `main` from CI.** The workflow pushes the release commit and the
   tag to `main`. With no branch protection, the default `GITHUB_TOKEN` is
-  enough (the workflow requests `contents: write`). If `main` is protected
-  (required PRs or status checks), either let GitHub Actions bypass the rule
-  (a ruleset bypass for the "GitHub Actions" app, or a deploy key), or store
-  a fine-grained PAT with `contents: write` on this repository as the
-  `RELEASE_TOKEN` secret. When `RELEASE_TOKEN` is set, the workflow checks out
-  and pushes with it. CI then also runs on the release commit, and the release
-  job skips it.
+  enough (the workflow requests `contents: write`). `main` is protected by a
+  ruleset that requires PRs and lets only deploy keys and admins bypass it, so
+  the workflow checks out and pushes with a write deploy key whose private half
+  is the `RELEASE_DEPLOY_KEY` secret. To rotate it, add a new deploy key with
+  write access under Settings -> Deploy keys, replace the secret, and delete
+  the old key. A fine-grained PAT with `contents: write` stored as
+  `RELEASE_TOKEN` also works when no deploy key is set. With either, CI also
+  runs on the release commit, and the release job skips it.
 - **npm authentication.**
   - *Trusted publishing (preferred).* On npmjs.com, open the `antechamber`
     package settings and add a trusted publisher: GitHub Actions, repository
