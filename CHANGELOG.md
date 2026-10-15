@@ -14,6 +14,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
   returning `session not found`, and appear in the session list as soon as
   they exist or complete, so their OmO Graph cards are clickable.
 
+### Changed
+
+- ci(release): every push to `main` now ships a patch release automatically; CI bumps the package and OmO Graph extension versions (now kept equal), rolls the CHANGELOG, tags, publishes to npm and attaches the extension zip to the GitHub release. The release guide moved to `RELEASE.md`
+
 ## [0.2.1] - 2026-10-15
 
 ### Fixed

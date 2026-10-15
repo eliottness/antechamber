@@ -20,7 +20,7 @@ antechamber/
 ├── contrib/   # live-agent smokes/probes, cost tokens, not in CI -> contrib/AGENTS.md
 ├── bin/       # opencode-antechamber: OpenChamber launcher shim (serve, --version only); opencode-pi = deprecated alias
 ├── extensions/omo-dag/  # OmO Graph OpenChamber extension: sandboxed panel + read-only service -> its README.md
-└── docs/      # architecture, api-surface (route contract), configuration (env), backends/omo.md, releasing
+└── docs/      # architecture, api-surface (route contract), configuration (env), backends/omo.md
 ```
 Published package = `dist/` + `bin/` shims + the built OmO Graph extension; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
 
@@ -31,7 +31,7 @@ Published package = `dist/` + `bin/` shims + the built OmO Graph extension; the 
 | Env vars and defaults | `docs/configuration.md` | update in the same change as any env var |
 | Why fork/revert/shutdown work as they do | `docs/architecture.md` | evidence-backed OmO protocol notes |
 | OmO deployment, systemd, teardown | `docs/backends/omo.md` | |
-| Release flow | `docs/releasing.md`, `.github/workflows/release.yml` | tag `vX.Y.Z` must equal package version |
+| Release flow | `RELEASE.md`, `.github/workflows/release.yml`, `scripts/release.ts` | every push to main ships a patch; never hand-bump patch versions |
 | Per-module responsibility table | `docs/development.md` | source and smoke paths |
 
 ## CODE MAP

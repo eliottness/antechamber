@@ -83,8 +83,8 @@ list, the `--only` selector, and how to add a new check module.
 
 ## Releases
 
-Maintainers cut releases by pushing a `vX.Y.Z` tag; see
-[docs/releasing.md](docs/releasing.md). Add user-visible changes to the
+Every commit merged to `main` is released automatically as a new patch version;
+see [RELEASE.md](RELEASE.md). Do not bump versions or push tags yourself. Add user-visible changes to the
 `[Unreleased]` section of `CHANGELOG.md` in the same PR.
 
 ## Pull request checklist

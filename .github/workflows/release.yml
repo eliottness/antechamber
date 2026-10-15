@@ -1,29 +1,65 @@
 name: Release
 
+# Every push to main ships a patch release: bump the versions, commit
+# "chore(release): vX.Y.Z" and tag vX.Y.Z back onto main, publish to npm, and
+# create the GitHub release with the OmO Graph extension zip. See RELEASE.md.
 on:
   push:
-    tags: ["v*.*.*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
 
+# Queue releases instead of racing them; never cancel one halfway through.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
+    # The release commit itself is not released again (it only reaches this
+    # workflow when RELEASE_TOKEN is a PAT; GITHUB_TOKEN pushes trigger nothing).
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Release the current tip of main, not the triggering SHA, so a queued
+          # run picks up everything merged while the previous one was running.
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
           cache: npm
           registry-url: https://registry.npmjs.org
-      - name: Tag must match package.json version
+      - name: Decide what to release
+        id: plan
         run: |
-          version="$(node -p 'require("./package.json").version')"
-          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match package.json $version"; exit 1; }
+          if tag="$(git describe --tags --exact-match --match 'v*.*.*' HEAD 2>/dev/null)"; then
+            # main is already a release commit: finish that release if a step failed.
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm ci
+      - run: npm run check
+      - name: Bump versions and roll the CHANGELOG
+        if: steps.plan.outputs.bump == 'true'
+        run: |
+          version="$(npx tsx scripts/release.ts)"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-      - name: CHANGELOG must have a section for this version
+      - name: Tag must match package.json and the extension
+        run: |
+          for file in package.json extensions/omo-dag/package.json; do
+            actual="$(node -p "require('./$file').version")"
+            test "$actual" = "$VERSION" || { echo "$file is at $actual, expected $VERSION"; exit 1; }
+          done
+      - name: Extract release notes
         run: |
           awk -v v="$VERSION" '
             index($0, "## [" v "]") == 1 { on = 1; next }
@@ -31,20 +67,38 @@ jobs:
             on { print }
           ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           test -s "$RUNNER_TEMP/notes.md" || { echo "CHANGELOG.md has no '## [$VERSION]' section"; exit 1; }
-      - run: npm ci
-      - run: npm run check
       - run: npm run build
+      # Pushed before publishing: if main moved during the run the atomic push
+      # fails and nothing is published; the queued run for the newer push
+      # releases everything.
+      - name: Commit, tag and push
+        if: steps.plan.outputs.bump == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v$VERSION"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push --atomic origin HEAD:main "v$VERSION"
       # Trusted publishing (OIDC) is used when configured on npmjs.com; an
-      # NPM_TOKEN repository secret works as a fallback (needed for the very
-      # first publish, before the package exists on the registry).
+      # NPM_TOKEN repository secret works as a fallback.
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: |
+          if [ "$(npm view "antechamber@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "antechamber@$VERSION is already on npm"
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Installable from OpenChamber by URL: .../releases/latest/download/antechamber-omo-graph.zip
       - name: Package the OmO Graph extension
         run: npm run pack:extension -- "$RUNNER_TEMP/antechamber-omo-graph.zip"
       - name: Create GitHub release
-        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/antechamber-omo-graph.zip" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            gh release upload "v$VERSION" "$RUNNER_TEMP/antechamber-omo-graph.zip" --clobber
+          else
+            gh release create "v$VERSION" "$RUNNER_TEMP/antechamber-omo-graph.zip" --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

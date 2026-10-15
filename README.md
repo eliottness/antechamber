@@ -293,9 +293,10 @@ The smoke scripts (`npm run smoke`, `npm run omo-smoke`, `npm run probe`,
 process end to end and cost model tokens; they are not part of `npm test`
 and are not run in CI. See [docs/development.md](docs/development.md).
 
-Releases are cut by pushing a `vX.Y.Z` tag; CI then runs the checks,
-publishes to npm with provenance and creates the GitHub release from the
-CHANGELOG. See [docs/releasing.md](docs/releasing.md).
+Every commit on `main` is released as a new patch version: CI runs the checks,
+bumps the package and extension versions, tags, publishes to npm with
+provenance and creates the GitHub release from the CHANGELOG. See
+[RELEASE.md](RELEASE.md).
 
 ## Docs
 
@@ -304,7 +305,7 @@ CHANGELOG. See [docs/releasing.md](docs/releasing.md).
 - [docs/configuration.md](docs/configuration.md) - full environment variable reference
 - [docs/development.md](docs/development.md) - source layout, testing, smoke scripts
 - [docs/backends/omo.md](docs/backends/omo.md) - OmO backend details (agent name, task hosts, transcripts)
-- [docs/releasing.md](docs/releasing.md) - versioning, tag-driven npm and GitHub releases
+- [RELEASE.md](RELEASE.md) - automatic patch releases to npm and GitHub on every push to `main`
 
 - [extensions/omo-dag/README.md](extensions/omo-dag/README.md) - the OmO Graph OpenChamber extension ([design](extensions/omo-dag/docs/DESIGN.md))
 
