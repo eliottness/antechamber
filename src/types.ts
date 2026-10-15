@@ -14,6 +14,15 @@ export interface OCSession {
   projectID: string;
   directory: string;
   parentID?: string;
+  parentMessageID?: string;
+  agent?: string;
+  model?: { id: string; providerID: string; variant?: string };
+  metadata?: Record<string, unknown>;
+  outcome?: "succeeded" | "failed" | "interrupted";
+  slug?: string;
+  path?: string;
+  summary?: { additions: number; deletions: number; files: number };
+  tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } };
   title: string;
   version: string;
   revert?: { messageID: string };
@@ -22,6 +31,7 @@ export interface OCSession {
   time: {
     created: number;
     updated: number;
+    idle?: number;
     compacting?: number;
     /** Epoch ms — presence marks the session archived (SDK v2 session.update). */
     archived?: number;
@@ -35,6 +45,10 @@ export interface OCUserMessage {
   time: { created: number };
   agent: string;
   model: OCModelRef;
+  /** No-reply context admitted without a turn (v2 lists it as `type: "synthetic"`). */
+  synthetic?: boolean;
+  /** Client metadata sent with the prompt (OpenChamber 2.x). */
+  metadata?: Record<string, unknown>;
 }
 
 export interface OCAssistantMessage {
@@ -139,7 +153,19 @@ export interface OCCompactionPart {
   auto: boolean;
 }
 
-export type OCPart = OCTextPart | OCReasoningPart | OCToolPart | OCCompactionPart;
+export type OCPromptPart = (
+  | { type: "text"; text: string; synthetic?: boolean }
+  | { type: "file"; mime: string; url: string; filename?: string }
+  | { type: "agent"; name: string; source?: { value: string; start: number; end: number } }
+) & { id?: string };
+
+export type OCInputPart = OCPromptPart & { id: string; sessionID: string; messageID: string };
+export type OCPart =
+  | OCTextPart
+  | OCReasoningPart
+  | OCToolPart
+  | OCCompactionPart
+  | Exclude<OCInputPart, { type: "text" }>;
 
 export interface OCMessageWithParts {
   info: OCMessage;
@@ -157,7 +183,18 @@ export type OCEvent =
       properties: {
         sessionID: string;
         inboxID: string;
-        item: { type: "user"; delivery: "steer" | "queue"; payload: { text: string } };
+        item:
+          | {
+              type: "user";
+              delivery: "steer" | "queue";
+              payload: {
+                text: string;
+                files?: Array<Record<string, unknown>>;
+                agents?: Array<Record<string, unknown>>;
+                metadata?: Record<string, unknown>;
+              };
+            }
+          | { type: "synthetic"; payload: { text: string; metadata?: Record<string, unknown> } };
       };
     }
   | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string } }
@@ -165,6 +202,47 @@ export type OCEvent =
   | { type: "server.connected"; properties: Record<string, unknown> }
   | { type: "session.created"; properties: { info: OCSession } }
   | { type: "session.updated"; properties: { info: OCSession } }
+  | {
+      type: "session.revert.staged";
+      properties: { sessionID: string; revert: { messageID: string } };
+    }
+  | { type: "session.revert.cleared"; properties: { sessionID: string } }
+  | { type: "session.revert.committed"; properties: { sessionID: string; to: string } }
+  | {
+      type: "session.compaction.started";
+      properties: { sessionID: string; reason: string; inputID: string };
+    }
+  | {
+      type: "session.compaction.ended";
+      properties: { sessionID: string; reason: string; inputID: string; text: string; recent: string };
+    }
+  | {
+      type: "session.compaction.failed";
+      properties: {
+        sessionID: string;
+        reason: string;
+        inputID: string;
+        error: { name: string; data: { message: string } };
+      };
+    }
+  | {
+      type: "session.shell.started" | "session.shell.ended";
+      properties: {
+        sessionID: string;
+        shell: {
+          id: string;
+          command: string;
+          cwd: string;
+          shell: string;
+          file: string;
+          status: "running" | "exited" | "timeout" | "killed";
+          exit?: number;
+          metadata: Record<string, unknown>;
+          time: { started: number; completed?: number };
+        };
+        output?: { output: string; cursor: number; size: number; truncated: boolean };
+      };
+    }
   | { type: "session.deleted"; properties: { info: OCSession } }
   | { type: "session.status"; properties: { sessionID: string; status: OCSessionStatus } }
   | { type: "session.idle"; properties: { sessionID: string } }
@@ -172,6 +250,10 @@ export type OCEvent =
   | { type: "message.updated"; properties: { info: OCMessage } }
   | { type: "message.removed"; properties: { sessionID: string; messageID: string } }
   | { type: "message.part.updated"; properties: { part: OCPart; delta?: string } }
+  | {
+      type: "message.part.delta";
+      properties: { sessionID: string; messageID: string; partID: string; field: "text"; delta: string };
+    }
   | {
       type: "permission.asked";
       properties: {
@@ -228,12 +310,14 @@ export interface OCProject {
   id: string;
   worktree: string;
   vcs?: "git";
-  time: { created: number; initialized?: number };
+  time: { created: number; updated?: number; initialized?: number };
+  sandboxes?: string[];
 }
 
 /** Incoming prompt body for POST /session/{id}/message and /prompt_async */
 export interface OCPromptBody {
   messageID?: string;
+  delivery?: "steer" | "queue";
   model?: OCModelRef;
   agent?: string;
   noReply?: boolean;

@@ -19,7 +19,7 @@ Node.js 22+ is required. You don't need `pi` or `omo` installed to build, run
 |---|---|
 | `npm run build` | compile `src/` to `dist/` with `tsc`, then bundle the OmO Graph extension (`extensions/omo-dag/`) with esbuild |
 | `npm run dev` | run the CLI from source with `tsx`, no build step |
-| `npm run typecheck` | `tsc --noEmit` for the server, then for `extensions/omo-dag/` (DOM + Node config) |
+| `npm run typecheck` | `tsc -p tsconfig.check.json && tsc -p extensions/omo-dag/tsconfig.json` |
 | `npm test` | run the unit/integration test suite (`test/*.test.ts` and `extensions/*/test/*.test.ts`) |
 | `npm run smoke` | end-to-end smoke test against a real `pi` process |
 | `npm run omo-smoke` | end-to-end smoke test against a real `omo` process |
@@ -78,7 +78,7 @@ ANTECHAMBER_PI_BINARY=pi npm run smoke
 ```
 
 They make real model calls and will cost tokens on whatever provider your
-agent is configured with. See `contrib/smoke/README.md` for the full check
+agent is configured with. See `contrib/omo/smoke/README.md` for the full check
 list, the `--only` selector, and how to add a new check module.
 
 ## Releases

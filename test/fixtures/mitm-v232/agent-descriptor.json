@@ -1,0 +1,37 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/api/agent",
+    "headers": {
+      "accept": "application/json",
+      "x-opencode-directory": "[directory]"
+    }
+  },
+  "response": {
+    "location": {
+      "directory": "/tmp/[redacted]"
+    },
+    "data": [
+      {
+        "id": "build",
+        "name": "Build",
+        "request": {
+          "settings": {},
+          "headers": {},
+          "body": {}
+        },
+        "description": "The default agent.",
+        "mode": "primary",
+        "hidden": false,
+        "permissions": [
+          {
+            "action": "*",
+            "resource": "*",
+            "effect": "allow"
+          }
+        ],
+        "system": "You are a coding agent."
+      }
+    ]
+  }
+}

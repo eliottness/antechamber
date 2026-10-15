@@ -39,7 +39,7 @@ interface OCv2Model {
   variants?: Record<string, Record<string, unknown>>;
 }
 
-export interface OCv2Provider {
+interface OCv2Provider {
   id: string;
   name: string;
   source: "config";
@@ -104,7 +104,7 @@ function toOCModel(m: PiModelInfo): OCv2Model {
 }
 
 export async function loadCatalog(directory: string): Promise<Catalog> {
-  const pi = new PiRpcClient({ cwd: directory });
+  const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
   try {
     const [modelsRes, firstState] = await Promise.all([
       pi.command<{ models: PiModelInfo[] }>({ type: "get_available_models" }),

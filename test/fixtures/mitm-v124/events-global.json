@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/global/event",
+    "query": "",
+    "headers": {
+      "accept": "text/event-stream"
+    },
+    "body": ""
+  },
+  "event": {
+    "event": "message",
+    "body": {
+      "directory": "/workspace",
+      "project": "global",
+      "payload": {
+        "id": "evt_redacted",
+        "type": "session.created",
+        "properties": {
+          "sessionID": "ses_redacted",
+          "info": {
+            "id": "ses_redacted"
+          }
+        }
+      }
+    }
+  }
+}

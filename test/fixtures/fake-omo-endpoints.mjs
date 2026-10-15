@@ -44,7 +44,7 @@ function reply(command, success, data, error) {
   });
 }
 
-function recordMessage(role, text) {
+function recordMessage(role, text, plain = false) {
   const entry = {
     type: "message",
     id: randomUUID(),
@@ -52,7 +52,8 @@ function recordMessage(role, text) {
     timestamp: timestamp++,
     message: {
       role,
-      content: [{ type: "text", text }],
+      // pi also stores plain-string content (extensions, append_user_message).
+      content: plain ? text : [{ type: "text", text }],
       provider: "fake",
       model: "fake-model",
     },
@@ -119,7 +120,7 @@ input.on("line", (line) => {
         reply(command, true, {});
         return;
       }
-      recordMessage("user", text);
+      recordMessage("user", text, text.startsWith("plain-content:"));
       const assistant = recordMessage("assistant", `reply: ${text}`);
       send({ type: "agent_start" });
       send({ type: "message_start", message: assistant });
@@ -193,6 +194,28 @@ input.on("line", (line) => {
     case "set_model":
       reply(command, true, { provider: command.provider, id: command.modelId });
       return;
+    case "send_custom_message": {
+      // Idle OmO with triggerTurn:false appends the message to the conversation without a turn.
+      if (command.triggerTurn !== false) {
+        reply(command, false, undefined, "fixture only admits context without a turn");
+        return;
+      }
+      const entry = {
+        type: "custom_message",
+        id: randomUUID(),
+        parentId: leaf,
+        timestamp: timestamp++,
+        customType: command.customType,
+        content: command.content,
+        display: command.display,
+        details: command.details,
+      };
+      leaf = entry.id;
+      entries.push(entry);
+      appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+      reply(command, true, {});
+      return;
+    }
     default:
       reply(command, true, {});
   }

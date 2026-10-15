@@ -25,6 +25,8 @@ sessions on OmO.
 - **Pan and zoom.** Drag the background, and scroll or pinch to zoom. `0`
   fits the graph; the target button centres on the current or first running
   agent.
+- Very large runs are sent within a bounded response size. When tasks are
+  omitted to fit that limit, the panel shows the omitted-node count.
 
 The panel docks in the right rail. The same page is also available full
 screen from the sidebar's Extension pages menu.

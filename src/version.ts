@@ -14,4 +14,4 @@ export const ADAPTER_VERSION = manifest.version;
 
 // OpenChamber parses --version as an OpenCode version and requires major 2.
 // This API contract version must not follow the npm package version.
-export const OPENCODE_API_VERSION = "2.0.18";
+export const OPENCODE_API_VERSION = "2.0.20";

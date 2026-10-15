@@ -1,7 +1,7 @@
 import { envSetting } from "../config.js";
 import { AdapterServer, isLoopbackHost, serverPassword } from "../server.js";
 
-export interface ServeOptions {
+interface ServeOptions {
   readonly port: number;
   readonly host: string;
   readonly directory: string;

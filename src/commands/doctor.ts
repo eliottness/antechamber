@@ -13,13 +13,13 @@ import {
   settingsPath,
 } from "./context.js";
 
-export interface DoctorCheck {
+interface DoctorCheck {
   readonly name: string;
   readonly status: "PASS" | "WARN" | "FAIL" | "INFO";
   readonly message: string;
 }
 
-export interface DoctorReport {
+interface DoctorReport {
   readonly checks: readonly DoctorCheck[];
   readonly exitCode: 0 | 1;
 }

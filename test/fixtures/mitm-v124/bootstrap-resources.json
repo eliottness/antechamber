@@ -1,0 +1,85 @@
+{
+  "requests": {
+    "globalConfig": {
+      "method": "GET",
+      "path": "/global/config",
+      "query": "",
+      "headers": {
+        "accept": "*/*"
+      },
+      "body": ""
+    },
+    "config": {
+      "method": "GET",
+      "path": "/config",
+      "query": "directory=%2Fworkspace",
+      "headers": {
+        "accept": "*/*"
+      },
+      "body": ""
+    },
+    "agent": {
+      "method": "GET",
+      "path": "/agent",
+      "query": "",
+      "headers": {
+        "accept": "*/*"
+      },
+      "body": ""
+    },
+    "command": {
+      "method": "GET",
+      "path": "/command",
+      "query": "",
+      "headers": {
+        "accept": "*/*"
+      },
+      "body": ""
+    }
+  },
+  "responses": {
+    "globalConfig": {
+      "$schema": "https://[host]/[REDACTED]",
+      "plugin": [],
+      "model": "anthropic/claude-haiku-4-5"
+    },
+    "config": {
+      "$schema": "https://[host]/[REDACTED]",
+      "command": {},
+      "plugin": ["file://[REDACTED]"],
+      "model": "anthropic/claude-haiku-4-5",
+      "username": "[REDACTED]",
+      "mode": {},
+      "agent": {}
+    },
+    "agent": [
+      {
+        "name": "build",
+        "description": "The default agent.",
+        "mode": "primary",
+        "native": true,
+        "permission": [
+          {
+            "permission": "*",
+            "pattern": "*",
+            "action": "allow"
+          }
+        ],
+        "prompt": "Use the available tools.",
+        "temperature": 0,
+        "hidden": false,
+        "options": {}
+      }
+    ],
+    "command": [
+      {
+        "name": "init",
+        "description": "guided setup",
+        "source": "command",
+        "template": "Create repository instructions.",
+        "hints": [],
+        "subtask": false
+      }
+    ]
+  }
+}

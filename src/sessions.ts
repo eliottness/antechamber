@@ -5,6 +5,7 @@
 
 import { id, PiEventTranslator, syncSessionCost } from "./pi-event-translation.js";
 import { parsePiSessionFile, parsePiSessionText } from "./session-history.js";
+import { CONTEXT_MESSAGE_TYPE, nativePromptInput, v2PromptAttachments } from "./prompt-parts.js";
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -18,7 +19,8 @@ import { stopSessionHosts } from "./session-hosts.js";
 import { setThinkingLevel, type ModelSelection, type ThinkingState } from "./thinking-levels.js";
 import { SessionLifecycle, type LifecycleOptions } from "./lifecycle.js";
 import { ApprovalBridge, extensionUiRequestFrom, type PendingPermission, type PendingQuestion } from "./approvals.js";
-import { getAgentName } from "./agent-name.js";
+import { getAgentName, getExposedAgentNames } from "./agent-name.js";
+import { RequestBodyError } from "./http.js";
 import type { TodoBridge, Todo, TodoUpdated } from "./todo-bridge.js";
 import {
   bindMessageEntries,
@@ -41,7 +43,6 @@ import {
   piSessionsRootMtime,
   scanAllPiSessions,
   scanPiSessions,
-  SessionPersistenceError,
   SessionStore,
   type ScannedSession,
   readSessionTitle,
@@ -53,6 +54,7 @@ import type {
   OCMessageWithParts,
   OCModelRef,
   OCPart,
+  OCPromptPart,
   OCSession,
   OCSessionStatus,
   OCToolPart,
@@ -62,6 +64,9 @@ import type {
 import { ADAPTER_VERSION } from "./version.js";
 export { ADAPTER_VERSION } from "./version.js";
 const SESSION_SCAN_CACHE_TTL_MS = 5_000;
+const PI_FILE_RESOLVE_ATTEMPTS = 10;
+const PI_FILE_RESOLVE_RETRY_MS = 200;
+const SESSION_TITLE_MAX_CHARS = 60;
 
 interface StreamingState {
   message: OCAssistantMessage;
@@ -70,6 +75,7 @@ interface StreamingState {
 }
 
 export interface ManagedSession extends ThinkingState {
+  interruptRequested?: boolean;
   titleSource?: TitleSource;
   activeUserMessageID?: string;
   inputs?: Map<string, { text: string; delivery: "steer" | "queue"; accepted: boolean; delivered: boolean }>;
@@ -89,6 +95,7 @@ export interface ManagedSession extends ThinkingState {
   streaming: StreamingState | undefined;
   /** A manual compaction started while idle; its end returns the session to idle. */
   compactingFromIdle?: boolean;
+  compactionID?: string;
   /** Cancels the adapter-owned user bash waiter and its OmO execution. */
   cancelShell?: (interrupted?: boolean) => void;
   /**
@@ -170,11 +177,25 @@ export class SessionManager {
     });
   }
 
-  async create(directory: string, title?: string, parentID?: string): Promise<OCSession> {
-    return this.lifecycle.run(() => this.createLive(directory, title, parentID));
+  async create(
+    directory: string,
+    title?: string,
+    parentID?: string,
+    options: { id?: string; agent?: string; model?: ModelSelection; metadata?: Record<string, unknown> } = {},
+  ): Promise<OCSession> {
+    if (options.agent !== undefined && !getExposedAgentNames().includes(options.agent))
+      throw new RequestBodyError(400, `unknown agent: ${options.agent}`);
+    return this.lifecycle.run(() => this.createLive(directory, title, parentID, options));
   }
 
-  private async createLive(directory: string, title?: string, parentID?: string): Promise<OCSession> {
+  private async createLive(
+    directory: string,
+    title?: string,
+    parentID?: string,
+    options: { id?: string; agent?: string; model?: ModelSelection; metadata?: Record<string, unknown> } = {},
+  ): Promise<OCSession> {
+    if (options.id !== undefined && (options.id === "" || this.get(options.id) !== undefined))
+      throw new RequestBodyError(400, "session id must be nonempty and unused");
     await this.lifecycle.makeRoom();
     const pi = new PiRpcClient({ cwd: directory, clock: this.lifecycle.clock });
     const state = await pi.command<PiState>({ type: "get_state" }).catch(async (error: unknown) => {
@@ -193,12 +214,18 @@ export class SessionManager {
       typeof state.data.sessionId === "string" && state.data.sessionId !== "" ? state.data.sessionId : undefined;
     if (piSessionId !== undefined) this.createdSessions.set(piSessionId, directory);
     const info: OCSession = {
-      id: piSessionId !== undefined ? ocIdFor(piSessionId) : id("ses"),
+      id: options.id ?? (piSessionId !== undefined ? ocIdFor(piSessionId) : id("ses")),
       projectID: directory,
       directory,
       title: title?.trim() || "New session",
       version: ADAPTER_VERSION,
       time: { created: now, updated: now },
+      agent: options.agent ?? getAgentName(),
+      slug: piSessionId ?? id("session"),
+      path: "",
+      summary: { additions: 0, deletions: 0, files: 0 },
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
       ...(parentID !== undefined ? { parentID } : {}),
     };
 
@@ -217,43 +244,64 @@ export class SessionManager {
       ...(piSessionId !== undefined ? { piSessionId } : {}),
       ...(state.data.thinkingLevel !== undefined ? { thinkingLevel: state.data.thinkingLevel } : {}),
     };
-    managed.approvals = this.approvalsFor(managed);
-    this.sessions.set(info.id, managed);
-    this.subagents.wire(managed);
-    this.lifecycle.touch(managed);
-    this.wirePi(managed, pi);
+    let published = false;
+    try {
+      managed.approvals = this.approvalsFor(managed);
+      this.sessions.set(info.id, managed);
+      published = true;
+      this.subagents.wire(managed);
+      this.lifecycle.touch(managed);
+      this.wirePi(managed, pi);
 
-    this.emit(directory, { type: "session.created", properties: { info } });
-    // Announce pi's real model *after* session.created, so the client already
-    // knows the session when the switch marker lands in its transcript.
-    this.applyPiModel(managed, state.data.model?.provider, state.data.model?.id);
+      if (options.model !== undefined) await this.setModel(info.id, options.model);
+      this.emit(directory, { type: "session.created", properties: { info } });
+      // Announce pi's real model *after* session.created, so the client already
+      // knows the session when the switch marker lands in its transcript.
+      if (options.model === undefined) this.applyPiModel(managed, state.data.model?.provider, state.data.model?.id);
 
-    // Bind pi's session file so the session survives adapter restarts. pi
-    // reports the path directly; fall back to a background scan for older pi
-    // versions, and re-bind after the first prompt (pi persists lazily).
-    if (typeof state.data.sessionFile === "string" && state.data.sessionFile !== "") {
-      managed.piPath = state.data.sessionFile;
-      this.persistMeta(managed);
-    } else if (piSessionId !== undefined) {
-      void this.resolvePiFile(directory, piSessionId)
-        .then((piPath) => {
-          if (piPath !== undefined && managed.piPath === undefined) {
+      // Bind pi's session file so the session survives adapter restarts. pi
+      // reports the path directly; fall back to a background scan for older pi
+      // versions, and re-bind after the first prompt (pi persists lazily).
+      if (typeof state.data.sessionFile === "string" && state.data.sessionFile !== "") {
+        managed.piPath = state.data.sessionFile;
+        this.persistMeta(managed);
+      } else if (piSessionId !== undefined) {
+        void this.resolvePiFile(directory, piSessionId)
+          .then((piPath) => {
+            if (this.sessions.get(info.id) !== managed || piPath === undefined || managed.piPath !== undefined) return;
             managed.piPath = piPath;
             this.persistMeta(managed);
-          }
-        })
-        .catch((error: unknown) => this.reportPersistenceError(managed, error));
-    }
+          })
+          .catch((error: unknown) => {
+            if (this.sessions.get(info.id) === managed) this.reportPersistenceError(managed, error);
+          });
+      }
 
-    if (managed.titleSource === "user") {
-      const renamed = await pi.command({ type: "set_session_name", name: info.title });
-      if (!renamed.success) throw new Error(renamed.error ?? "session rename rejected");
-    } else {
-      this.applyNativeTitle(managed, state.data.sessionName);
+      if (managed.titleSource === "user") {
+        const renamed = await pi.command({ type: "set_session_name", name: info.title });
+        if (!renamed.success) throw new Error(renamed.error ?? "session rename rejected");
+      } else {
+        this.applyNativeTitle(managed, state.data.sessionName);
+      }
+      const reconciled = await pi.command<PiState>({ type: "get_state" });
+      if (reconciled.success) this.applyNativeTitle(managed, reconciled.data?.sessionName);
+      return info;
+    } catch (error) {
+      if (published) await this.rollbackCreate(managed, piSessionId);
+      else await pi.dispose();
+      throw error;
     }
-    const reconciled = await pi.command<PiState>({ type: "get_state" });
-    if (reconciled.success) this.applyNativeTitle(managed, reconciled.data?.sessionName);
-    return info;
+  }
+
+  private async rollbackCreate(managed: ManagedSession, piSessionId: string | undefined): Promise<void> {
+    this.sessions.delete(managed.info.id);
+    if (piSessionId !== undefined) this.createdSessions.delete(piSessionId);
+    managed.unwirePi?.();
+    const pi = managed.pi;
+    managed.pi = undefined;
+    if (pi !== undefined) await pi.dispose();
+    this.store.remove(managed.info.id);
+    this.emit(managed.info.directory, { type: "session.deleted", properties: { info: managed.info } });
   }
 
   private applyNativeTitle(s: ManagedSession, value: unknown): void {
@@ -295,12 +343,15 @@ export class SessionManager {
     };
     const onExit = (code: number | null): void => {
       if (s.pi !== pi) return;
-      s.approvals?.finishTurn();
+      this.events.finishInterruptedRun(s, {
+        name: "UnknownError",
+        data: { message: `pi process exited (code=${code})` },
+      });
+      delete s.interruptRequested;
       this.subagents.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
         .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
-      this.events.setStatus(s, { type: "idle" });
       this.emit(s.info.directory, {
         type: "session.error",
         properties: {
@@ -308,6 +359,7 @@ export class SessionManager {
           error: { name: "UnknownError", data: { message: `pi process exited (code=${code})` } },
         },
       });
+      this.events.setStatus(s, { type: "idle" });
     };
     pi.onEvent(onEvent);
     pi.onExtensionUI(onExtensionUI);
@@ -324,7 +376,7 @@ export class SessionManager {
   private async resolvePiFile(directory: string, piSessionId: string): Promise<string | undefined> {
     const dir = piSessionDir(directory);
     const suffix = `_${piSessionId}.jsonl`;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < PI_FILE_RESOLVE_ATTEMPTS; attempt++) {
       try {
         for (const name of readdirSync(dir)) {
           if (name.endsWith(suffix)) return join(dir, name);
@@ -332,7 +384,7 @@ export class SessionManager {
       } catch {
         /* session dir may not exist until pi writes the first entry */
       }
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, PI_FILE_RESOLVE_RETRY_MS));
     }
     return undefined;
   }
@@ -387,8 +439,8 @@ export class SessionManager {
     if (piPath !== undefined) {
       try {
         unlinkSync(piPath);
-      } catch {
-        /* file already gone — deleting the registry entry is enough */
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
     }
     this.store.remove(sessionId);
@@ -401,25 +453,36 @@ export class SessionManager {
    * (SDK v2 session.update); `title` is only touched when actually sent,
    * otherwise an archive-only PATCH would blank the title.
    */
-  update(
+  async update(
     sessionId: string,
-    patch: { title?: string | undefined; archived?: number | undefined },
-  ): OCSession | undefined {
+    patch: {
+      title?: string | undefined;
+      archived?: number | undefined;
+      metadata?: Record<string, unknown> | undefined;
+      agent?: string | undefined;
+    },
+  ): Promise<OCSession | undefined> {
     const s = this.get(sessionId);
     if (!s) return undefined;
+    if (patch.agent !== undefined && !getExposedAgentNames().includes(patch.agent))
+      throw new RequestBodyError(400, `unknown agent: ${patch.agent}`);
     if (typeof patch.title === "string" && patch.title.trim() !== "") {
-      s.info.title = patch.title.trim().replace(/\s+/g, " ");
+      const title = patch.title.trim().replace(/\s+/g, " ");
+      if (s.pi !== undefined) {
+        const renamed = await s.pi.command({ type: "set_session_name", name: title });
+        if (!renamed.success) throw new Error(renamed.error ?? "session rename rejected");
+      }
+      s.info.title = title;
       s.titleSource = "user";
     }
+    if (patch.metadata !== undefined) s.info.metadata = patch.metadata;
+    if (patch.agent !== undefined) s.info.agent = patch.agent;
     if (patch.archived !== undefined) {
       if (patch.archived > 0) s.info.time.archived = patch.archived;
       else delete s.info.time.archived; // 0 = unarchive
     }
     s.info.time.updated = Date.now();
     this.persistMeta(s);
-    if (typeof patch.title === "string" && patch.title !== "" && s.pi !== undefined) {
-      void s.pi.command({ type: "set_session_name", name: s.info.title }).catch(() => undefined);
-    }
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     return s.info;
   }
@@ -457,6 +520,22 @@ export class SessionManager {
       return await next;
     } finally {
       if (this.operations.get(s.info.id) === settled) this.operations.delete(s.info.id);
+    }
+  }
+
+  /** Cancellation releases only the caller; the native action keeps its queue lease. */
+  private async waitForOperation<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return pending;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    try {
+      return await Promise.race([pending, aborted]);
+    } finally {
+      if (onAbort) signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -515,33 +594,40 @@ export class SessionManager {
   }
 
   async fork(sessionId: string, messageID?: string): Promise<OCSession> {
-    return this.treeSession(sessionId, async (s, pi) => {
-      const tree = await this.syncTree(s, true);
-      const state = await forkConversation(s, pi, tree, messageID);
-      this.createdSessions.set(state.sessionId, s.info.directory);
-      const now = Date.now();
-      const child = this.adopt({
-        piSessionId: state.sessionId,
-        piPath: state.sessionFile,
-        directory: s.info.directory,
-        title: `${s.info.title} (fork)`,
-        created: now,
-        updated: now,
-      });
-      child.pi = pi;
-      child.piPath = state.sessionFile;
-      child.piSessionId = state.sessionId;
-      delete child.restored;
-      child.model = s.model;
-      const childTree = await getEntries(pi);
-      child.tree.leafId = childTree.leafId;
-      this.ensureMessages(child);
-      this.wirePi(child, pi);
-      this.lifecycle.touch(child);
-      this.persistMeta(child);
-      this.emit(child.info.directory, { type: "session.created", properties: { info: child.info } });
-      return child.info;
-    });
+    // Admission must see either the parent or child owner throughout the transfer.
+    return this.treeSession(sessionId, (s, pi) =>
+      this.lifecycle.run(async () => {
+        const tree = await this.syncTree(s, true);
+        const state = await forkConversation(s, pi, tree, messageID);
+        this.createdSessions.set(state.sessionId, s.info.directory);
+        const now = Date.now();
+        const child = this.adopt({
+          piSessionId: state.sessionId,
+          piPath: state.sessionFile,
+          directory: s.info.directory,
+          title: `${s.info.title} (fork)`,
+          created: now,
+          updated: now,
+        });
+        child.pi = pi;
+        child.piPath = state.sessionFile;
+        child.piSessionId = state.sessionId;
+        delete child.restored;
+        child.model = s.model;
+        child.info.parentID = s.info.id;
+        if (messageID !== undefined) child.info.parentMessageID = messageID;
+        child.info.agent = s.info.agent ?? getAgentName();
+        if (s.info.metadata !== undefined) child.info.metadata = structuredClone(s.info.metadata);
+        const childTree = await getEntries(pi);
+        child.tree.leafId = childTree.leafId;
+        this.ensureMessages(child);
+        this.wirePi(child, pi);
+        this.lifecycle.touch(child);
+        this.persistMeta(child);
+        this.emit(child.info.directory, { type: "session.created", properties: { info: child.info } });
+        return child.info;
+      }),
+    );
   }
 
   async revert(sessionId: string, messageID: string): Promise<OCSession> {
@@ -551,6 +637,10 @@ export class SessionManager {
       if (!(await revertConversation(s, pi, tree, messageID))) return s.info;
       this.persistMeta(s);
       this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+      this.emit(s.info.directory, {
+        type: "session.revert.staged",
+        properties: { sessionID: s.info.id, revert: { messageID } },
+      });
       return s.info;
     });
   }
@@ -561,6 +651,7 @@ export class SessionManager {
       if (!(await unrevertConversation(s, pi))) return s.info;
       this.persistMeta(s);
       this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+      this.emit(s.info.directory, { type: "session.revert.cleared", properties: { sessionID: s.info.id } });
       return s.info;
     });
   }
@@ -568,7 +659,10 @@ export class SessionManager {
   async reloadMessages(sessionId: string, signal?: AbortSignal): Promise<OCMessageWithParts[] | undefined> {
     const s = this.get(sessionId);
     if (!s) return undefined;
-    return this.operation(s, () => this.reloadMessagesLive(s, signal));
+    return this.waitForOperation(
+      this.operation(s, () => this.reloadMessagesLive(s, signal)),
+      signal,
+    );
   }
 
   /** Called only within the conversation operation queue, including RPC refreshes. */
@@ -578,13 +672,13 @@ export class SessionManager {
     if (!s.pi) await this.revive(s);
     const pi = s.pi;
     if (!pi) throw new SessionTreeError("Session cannot be resumed");
-    const tree = await getEntries(pi, signal);
+    const tree = await getEntries(pi);
     signal?.throwIfAborted();
     bindMessageEntries(s, tree);
     // Compact/bash and extension slash commands can append without agent_end.
     // Binding follows new descendants, never a stale ancestor of the selection.
     if (s.tree.revert && s.tree.leafId !== undefined && tree.leafId !== s.tree.leafId)
-      await navigate(pi, s.tree.leafId, signal);
+      await navigate(pi, s.tree.leafId);
     signal?.throwIfAborted();
     const previous = s.messages ?? [];
     const messages = this.refreshMessageCache(s);
@@ -601,7 +695,7 @@ export class SessionManager {
       this.emit(s.info.directory, { type: "message.updated", properties: { info: message.info } });
       for (const part of message.parts) this.events.emitPart(s, part);
     }
-    this.update(sessionId, {});
+    await this.update(sessionId, {});
     return messages;
   }
 
@@ -618,10 +712,48 @@ export class SessionManager {
     return s.todoBridge?.todos ?? [];
   }
 
-  async diff(sessionId: string) {
+  async commitRevert(sessionId: string): Promise<void> {
+    await this.treeSession(sessionId, async (s, pi) => {
+      await this.commitRevertLive(s, pi);
+      return s.info;
+    });
+  }
+
+  private async commitRevertLive(s: ManagedSession, pi: PiRpcClient): Promise<void> {
+    const revert = s.tree.revert;
+    if (revert === undefined) return;
+    const boundary = s.messages?.findIndex((message) => message.info.id === revert.messageID) ?? -1;
+    if (boundary >= 0) {
+      for (const message of s.messages?.splice(boundary) ?? []) {
+        this.emit(s.info.directory, {
+          type: "message.removed",
+          properties: { sessionID: s.info.id, messageID: message.info.id },
+        });
+      }
+    }
+    delete s.tree.revert;
+    delete s.info.revert;
+    bindMessageEntries(s, await getEntries(pi));
+    this.persistMeta(s);
+    this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+    this.emit(s.info.directory, {
+      type: "session.revert.committed",
+      properties: { sessionID: s.info.id, to: revert.messageID },
+    });
+  }
+
+  async diff(
+    sessionId: string,
+    options: { from?: string | undefined; to?: string | undefined; context?: number | undefined } = {},
+  ) {
     const s = this.get(sessionId);
     if (s === undefined) throw new Error(`unknown session: ${sessionId}`);
-    return sessionDiff(s.info.directory, this.ensureMessages(s));
+    const messages = this.ensureMessages(s);
+    const start = options.from === undefined ? 0 : messages.findIndex((message) => message.info.id === options.from);
+    const end =
+      options.to === undefined ? messages.length : messages.findIndex((message) => message.info.id === options.to);
+    if (start < 0 || end < 0 || start > end) throw new RequestBodyError(400, "invalid diff message range");
+    return sessionDiff(s.info.directory, messages.slice(start, end), options.context);
   }
 
   private emitDiff(s: ManagedSession): void {
@@ -651,8 +783,14 @@ export class SessionManager {
     const s = this.get(sessionId);
     if (!s) return false;
     if (s.pi !== undefined) {
-      const response = await s.pi.command({ type: "abort" });
-      if (!response.success) throw new Error(response.error ?? "pi abort failed");
+      if (s.status.type !== "idle") s.interruptRequested = true;
+      try {
+        const response = await s.pi.command({ type: "abort" });
+        if (!response.success) throw new Error(response.error ?? "pi abort failed");
+      } catch (error) {
+        delete s.interruptRequested;
+        throw error;
+      }
     }
     s.cancelShell?.();
     s.approvals?.cancelAll();
@@ -706,8 +844,7 @@ export class SessionManager {
       s.info.id,
       (event) => this.emit(s.info.directory, event as OCEvent),
       (response) => s.pi?.respondExtensionUI(response),
-      () =>
-        s.streaming?.message.id ?? [...(s.messages ?? [])].reverse().find((m) => m.info.role === "assistant")?.info.id,
+      () => s.streaming?.message.id ?? s.messages?.findLast((m) => m.info.role === "assistant")?.info.id,
       async (response) => {
         if (!s.pi) return false;
         const reply = await s.pi.command({ ...response, type: "extension_ui_response" });
@@ -732,24 +869,13 @@ export class SessionManager {
       if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
       this.lifecycle.touch(s);
       const timeout = command.type === "compact" ? COMPACT_RPC_TIMEOUT_MS : RPC_COMMAND_TIMEOUT_MS;
-      const response = await pi.command<T>(command, timeout, signal, onDispatch);
+      signal?.throwIfAborted();
+      const response = await pi.command<T>(command, timeout, undefined, onDispatch);
       if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash"))
         await this.reloadMessagesLive(s, signal);
       return response;
     });
-    if (!signal) return pending;
-    // Cancel the caller's wait without releasing the conversation queue. The
-    // queued action checks the signal before dispatch when its predecessor ends.
-    let onAbort: (() => void) | undefined;
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(signal.reason);
-      signal.addEventListener("abort", onAbort, { once: true });
-    });
-    try {
-      return await Promise.race([pending, aborted]);
-    } finally {
-      if (onAbort) signal.removeEventListener("abort", onAbort);
-    }
+    return this.waitForOperation(pending, signal);
   }
 
   /**
@@ -816,6 +942,7 @@ export class SessionManager {
     if (previous !== undefined && previous.providerID === provider && previous.modelID === modelId) return false;
     const model: OCModelRef = { providerID: provider, modelID: modelId };
     s.model = model;
+    s.info.model = { id: modelId, providerID: provider, variant: s.thinkingLevel ?? "default" };
     this.persistMeta(s);
     this.emit(s.info.directory, {
       type: "model.changed",
@@ -831,20 +958,15 @@ export class SessionManager {
     noReply = false,
     messageID?: string,
     delivery: "steer" | "queue" = "steer",
+    parts?: readonly OCPromptPart[],
+    metadata?: Record<string, unknown>,
   ): Promise<void> {
     const s = this.get(sessionId);
     if (!s) throw new Error(`unknown session: ${sessionId}`);
-    return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID, delivery));
+    return this.operation(s, () => this.promptLive(s, text, model, noReply, messageID, delivery, parts, metadata));
   }
 
-  private async promptLive(
-    s: ManagedSession,
-    text: string,
-    model?: ModelSelection,
-    noReply = false,
-    messageID?: string,
-    delivery: "steer" | "queue" = "steer",
-  ): Promise<void> {
+  private async preparePrompt(s: ManagedSession, model: ModelSelection | undefined): Promise<PiRpcClient> {
     const sessionId = s.info.id;
     if (s.pi === undefined) await this.revive(s);
     const pi = s.pi;
@@ -852,42 +974,38 @@ export class SessionManager {
     this.lifecycle.touch(s);
     this.ensureMessages(s);
 
-    if (s.tree.revert) {
-      const boundary = s.messages?.findIndex((message) => message.info.id === s.tree.revert?.messageID) ?? -1;
-      if (boundary >= 0) {
-        for (const message of s.messages?.splice(boundary) ?? []) {
-          this.emit(s.info.directory, {
-            type: "message.removed",
-            properties: { sessionID: s.info.id, messageID: message.info.id },
-          });
-        }
-      }
-      delete s.tree.revert;
-      delete s.info.revert;
-      bindMessageEntries(s, await getEntries(pi));
-      this.persistMeta(s);
-      this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
-    }
+    await this.commitRevertLive(s, pi);
 
-    // Same funnel as POST /api/session/{id}/model. Failing loudly matters: the
-    // previous code swallowed pi's refusal and then reported the *requested*
-    // model as though the switch had happened.
     if (model !== undefined) {
       try {
         // This prompt already owns the operation queue; do not enqueue recursively.
         await this.setModelLive(s, model);
-      } catch (err) {
+      } catch (error) {
         this.emit(s.info.directory, {
           type: "session.error",
           properties: {
             sessionID: s.info.id,
-            error: { name: "UnknownError", data: { message: err instanceof Error ? err.message : String(err) } },
+            error: {
+              name: "UnknownError",
+              data: { message: error instanceof Error ? error.message : String(error) },
+            },
           },
         });
-        throw err;
+        throw error;
       }
     }
+    return pi;
+  }
 
+  private publishPrompt(
+    s: ManagedSession,
+    text: string,
+    model: ModelSelection | undefined,
+    messageID: string | undefined,
+    inputParts?: readonly OCPromptPart[],
+    metadata?: Record<string, unknown>,
+    context = false,
+  ): OCUserMessage {
     // OpenChamber sends a client-generated messageID with its optimistic
     // insert; the server MUST reuse it so the echoed message.part.updated /
     // message.updated events reconcile the optimistic entry in place instead
@@ -899,12 +1017,21 @@ export class SessionManager {
       time: { created: Date.now() },
       agent: getAgentName(),
       model: s.model ?? model ?? { providerID: "unknown", modelID: "unknown" },
+      ...(context ? { synthetic: true } : {}),
+      ...(metadata !== undefined ? { metadata } : {}),
     };
-    const parts: OCPart[] = [{ id: id("prt"), sessionID: s.info.id, messageID: userMsg.id, type: "text", text }];
+    if (metadata !== undefined) (s.tree.promptMetadata ??= {})[userMsg.id] = metadata;
+    const parts: OCPart[] = (inputParts ?? [{ type: "text", text }]).map((part) => ({
+      ...part,
+      id: part.id ?? id("prt"),
+      sessionID: s.info.id,
+      messageID: userMsg.id,
+    }));
+    if (inputParts?.some((part) => part.type !== "text")) (s.tree.promptParts ??= {})[userMsg.id] = [...inputParts];
     s.messages?.push({ info: userMsg, parts });
     s.info.time.updated = Date.now();
-    if (s.info.title === "New session" && s.titleSource !== "user" && s.titleSource !== "native") {
-      s.info.title = text.trim().replace(/\s+/g, " ").slice(0, 60) || "New session";
+    if (!context && s.info.title === "New session" && s.titleSource !== "user" && s.titleSource !== "native") {
+      s.info.title = text.trim().replace(/\s+/g, " ").slice(0, SESSION_TITLE_MAX_CHARS) || "New session";
       s.titleSource = "fallback";
     }
     this.persistMeta(s);
@@ -913,19 +1040,90 @@ export class SessionManager {
     // Echo the user text part: the reducer replaces the client's sessionID-less
     // optimistic part (same type, new id) in place — without this echo a page
     // fetch merges the optimistic part back in and the text shows twice.
-    for (const p of parts) this.events.emitPart(s, p);
+    for (const part of parts) this.events.emitPart(s, part);
+    return userMsg;
+  }
 
-    if (noReply) return; // register-only semantics: record the message, do not run the agent
+  private async promptLive(
+    s: ManagedSession,
+    text: string,
+    model?: ModelSelection,
+    noReply = false,
+    messageID?: string,
+    delivery: "steer" | "queue" = "steer",
+    parts?: readonly OCPromptPart[],
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    const pi = await this.preparePrompt(s, model);
+    const native = nativePromptInput(text, parts ?? []);
+    const userMsg = this.publishPrompt(s, text, model, messageID, parts, metadata, noReply);
 
+    if (noReply) {
+      await this.admitContext(s, pi, userMsg, native.message);
+      return;
+    }
+
+    if (!(await this.dispatchPrompt(s, pi, userMsg, text, delivery, native, parts ?? []))) return;
+    await this.bindPromptState(s);
+  }
+
+  /**
+   * No-reply context (v2 synthetic, v1 noReply) joins the native conversation without a turn:
+   * OmO appends it now when idle, or after the running turn, so the next prompt carries it.
+   */
+  private async admitContext(s: ManagedSession, pi: PiRpcClient, userMsg: OCUserMessage, text: string): Promise<void> {
+    const res = await pi.command({
+      type: "send_custom_message",
+      customType: CONTEXT_MESSAGE_TYPE,
+      content: [{ type: "text", text }],
+      display: true,
+      details: { messageID: userMsg.id },
+      triggerTurn: false,
+    });
+    if (!res.success) {
+      if (s.tree.promptParts) delete s.tree.promptParts[userMsg.id];
+      if (s.tree.promptMetadata) delete s.tree.promptMetadata[userMsg.id];
+      s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
+      this.emit(s.info.directory, {
+        type: "message.removed",
+        properties: { sessionID: s.info.id, messageID: userMsg.id },
+      });
+      throw new Error(res.error ?? "context admission rejected");
+    }
+    // Bind the appended entry and persist the new leaf before announcing delivery, or a restart
+    // restores the old branch without the context.
+    await this.bindPromptState(s);
+    this.emit(s.info.directory, {
+      type: "session.inbox.enqueued",
+      properties: {
+        sessionID: s.info.id,
+        inboxID: userMsg.id,
+        item: { type: "synthetic", payload: { text, ...(userMsg.metadata ? { metadata: userMsg.metadata } : {}) } },
+      },
+    });
+    this.events.deliverInput(s, userMsg.id);
+  }
+
+  private async dispatchPrompt(
+    s: ManagedSession,
+    pi: PiRpcClient,
+    userMsg: OCUserMessage,
+    text: string,
+    delivery: "steer" | "queue",
+    native: ReturnType<typeof nativePromptInput>,
+    parts: readonly OCPromptPart[],
+  ): Promise<boolean> {
     const wasIdle = s.status.type === "idle";
     if (wasIdle) {
       s.toolByCallId = new Map();
       this.events.setStatus(s, { type: "busy" });
     }
-    const input = { text, delivery, accepted: false, delivered: false };
+    const input = { text: native.message, delivery, accepted: false, delivered: false };
     (s.inputs ??= new Map()).set(userMsg.id, input);
     const rejectInput = (): void => {
       s.inputs?.delete(userMsg.id);
+      if (s.tree.promptParts) delete s.tree.promptParts[userMsg.id];
+      if (s.tree.promptMetadata) delete s.tree.promptMetadata[userMsg.id];
       s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
       this.emit(s.info.directory, {
         type: "message.removed",
@@ -942,7 +1140,7 @@ export class SessionManager {
     const res = await pi
       .command({
         type: "prompt",
-        message: text,
+        ...native,
         streamingBehavior: delivery === "queue" ? "followUp" : "steer",
         clientMessageId: userMsg.id,
         ...slashTitlePrompt(text),
@@ -963,12 +1161,24 @@ export class SessionManager {
           error: { name: "UnknownError", data: { message: res.error ?? "prompt rejected" } },
         },
       });
-      return;
+      return false;
     }
     input.accepted = true;
     this.emit(s.info.directory, {
       type: "session.inbox.enqueued",
-      properties: { sessionID: s.info.id, inboxID: userMsg.id, item: { type: "user", delivery, payload: { text } } },
+      properties: {
+        sessionID: s.info.id,
+        inboxID: userMsg.id,
+        item: {
+          type: "user",
+          delivery,
+          payload: {
+            text,
+            ...v2PromptAttachments(parts),
+            ...(userMsg.metadata ? { metadata: userMsg.metadata } : {}),
+          },
+        },
+      },
     });
     if (input.delivered) this.events.deliverInput(s, userMsg.id);
     // Extension commands can finish without starting an agent turn.
@@ -978,9 +1188,13 @@ export class SessionManager {
       "disposition" in res.data &&
       res.data.disposition === "handled"
     ) {
+      if (!input.delivered) this.events.deliverInput(s, userMsg.id);
       if (wasIdle) this.events.setStatus(s, { type: "idle" });
     }
+    return true;
+  }
 
+  private async bindPromptState(s: ManagedSession): Promise<void> {
     // First message makes pi write the session file — bind it now so the
     // session (and its current title) survives an adapter restart.
     if (s.piPath === undefined && s.piSessionId !== undefined) {
@@ -1150,7 +1364,7 @@ export class SessionManager {
   }
 
   private adopt(sc: ScannedSession): ManagedSession {
-    const ocId = ocIdFor(sc.piSessionId);
+    const ocId = this.store.idFor(sc.piSessionId) ?? ocIdFor(sc.piSessionId);
     const reg = this.store.get(ocId);
     const titleSource =
       reg?.titleSource ??
@@ -1161,6 +1375,19 @@ export class SessionManager {
       projectID: sc.directory,
       directory: sc.directory,
       title: useRegistry ? (reg?.title ?? sc.title) : sc.title,
+      agent: reg?.agent ?? getAgentName(),
+      slug: sc.piSessionId,
+      path: "",
+      summary: { additions: 0, deletions: 0, files: 0 },
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      ...(reg?.metadata !== undefined ? { metadata: reg.metadata } : {}),
+      ...(reg?.parentID !== undefined ? { parentID: reg.parentID } : {}),
+      ...(reg?.parentMessageID !== undefined ? { parentMessageID: reg.parentMessageID } : {}),
+      ...(reg?.model !== undefined
+        ? {
+            model: { id: reg.model.modelID, providerID: reg.model.providerID, variant: reg.model.variant ?? "default" },
+          }
+        : {}),
       ...(reg?.tree?.revert ? { revert: { messageID: reg.tree.revert.messageID } } : {}),
       version: ADAPTER_VERSION,
       time: {
@@ -1217,6 +1444,10 @@ export class SessionManager {
 
   /** Registry write for adapter-owned metadata (title override, pi path). */
   private persistMeta(s: ManagedSession): void {
+    for (const message of s.messages ?? []) {
+      if (s.localMessageIds?.has(message.info.id)) continue;
+      (s.tree.messageParts ??= {})[message.info.id] = message.parts.map((part) => part.id);
+    }
     const piPath = s.piPath ?? s.restored?.piPath;
     const piSessionId = s.piSessionId ?? s.restored?.piSessionId;
     if (piPath === undefined || piSessionId === undefined) return;
@@ -1230,6 +1461,10 @@ export class SessionManager {
       ...(s.info.title !== "New session" ? { title: s.info.title } : {}),
       ...(s.titleSource !== undefined ? { titleSource: s.titleSource } : {}),
       ...(s.info.time.archived !== undefined ? { archived: s.info.time.archived } : {}),
+      ...(s.info.metadata !== undefined ? { metadata: s.info.metadata } : {}),
+      ...(s.info.agent !== undefined ? { agent: s.info.agent } : {}),
+      ...(s.info.parentID !== undefined ? { parentID: s.info.parentID } : {}),
+      ...(s.info.parentMessageID !== undefined ? { parentMessageID: s.info.parentMessageID } : {}),
       ...(s.model !== undefined ? { model: { providerID: s.model.providerID, modelID: s.model.modelID } } : {}),
       created: s.info.time.created,
       updated: s.info.time.updated,
@@ -1238,10 +1473,11 @@ export class SessionManager {
 
   /** Async event callbacks cannot reject an HTTP operation; report save failures through SSE. */
   private reportPersistenceError(s: ManagedSession, error: unknown): void {
-    if (!(error instanceof SessionPersistenceError)) throw error;
+    const name = error instanceof Error ? error.name : "UnknownError";
+    const message = error instanceof Error ? error.message : String(error);
     this.emit(s.info.directory, {
       type: "session.error",
-      properties: { sessionID: s.info.id, error: { name: error.name, data: { message: error.message } } },
+      properties: { sessionID: s.info.id, error: { name, data: { message } } },
     });
   }
 

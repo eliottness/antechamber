@@ -55,15 +55,15 @@ another executable (see [docs/configuration.md](docs/configuration.md)).
 
 | OpenChamber | API | Status |
 |---|---|---|
-| >= 2.0.4 | v2 (`@opencode-ai/sdk/v2`) | primary target; antechamber advertises `opencode v2.0.18` on `--version` |
+| >= 2.0.4 | v2 (`@opencode-ai/sdk/v2`) | primary target; antechamber advertises `opencode v2.0.20` on `--version` |
 | 1.24.x | v1 | supported |
 | other versions | - | not tested |
 
 OpenChamber changes which OpenCode API calls it makes between releases. If a
 feature breaks on a newer OpenChamber, run `npm run smoke` to see which check
 failed, then open an issue with the output. See
-[docs/api-surface.md](docs/api-surface.md) for the exact endpoints antechamber
-implements.
+[docs/api-surface.md](docs/api-surface.md) for the maintained route, response,
+and event-stream inventory.
 
 ## Quick start
 
@@ -75,10 +75,6 @@ npm i -g antechamber
 antechamber doctor
 antechamber setup
 ```
-
-The first npm publication (0.1.0) is part of the
-[release process](docs/releasing.md). If it is not on the registry yet, use
-[From source](#from-source) below.
 
 `setup` updates OpenChamber's `opencodeBinary`, preserves all other settings,
 and backs up an existing settings file before changing it. Restart OpenChamber
@@ -137,7 +133,7 @@ antechamber serve --hostname 127.0.0.1 --port 4096
 | `antechamber serve` | OpenCode-compatible server; `--hostname`/`--host`, `--port`, `--directory`. Bare `antechamber` also starts the server. |
 | `antechamber setup` | Configure OpenChamber; `--settings <file>`, `--profile <dir>`, `--binary <path>`, `--dry-run`, `--systemd [unit]`, `--pi-binary <path>`, `--restart`. |
 | `antechamber doctor` | Read-only Node, backend, agent/state directories, teardown, OpenChamber and auth checks; `--json`, `--settings <file>`, `--profile <dir>`. Exits 1 on any FAIL; warnings do not fail. |
-| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.0.18` for OpenChamber. |
+| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.0.20` for OpenChamber. |
 | `antechamber help` | Usage and options; also `--help`/`-h`. |
 
 ## Upgrade, uninstall and rollback
@@ -150,6 +146,13 @@ npm update -g antechamber
 Restart OpenChamber, or `systemctl --user restart openchamber.service` for a
 managed service. Run `antechamber doctor` again. If the executable moved,
 rerun `antechamber setup`.
+
+OpenChamber 2.3.2 may announce a newer OpenCode release. antechamber reports
+OpenCode API 2.0.20, the minimum OpenChamber accepts, and OpenChamber offers
+no signal that keeps that check while hiding the notice. Dismiss it or turn off
+OpenCode update notifications in OpenChamber. Its Update action runs
+`opencode-antechamber upgrade`, which refuses; upgrade antechamber with the
+commands above.
 
 To roll back wiring, copy the backup printed by setup over the settings file:
 
@@ -218,9 +221,11 @@ extension, and refuses it as an invalid manifest. Details:
 
 ## Configuration
 
-All settings are environment variables prefixed `ANTECHAMBER_`. The
-deprecated `OCPI_` prefix is still accepted as a fallback for existing
-deployments. Full reference, defaults, and units: [docs/configuration.md](docs/configuration.md).
+Connector settings use the `ANTECHAMBER_` prefix; the deprecated `OCPI_`
+prefix is still accepted as a fallback. RPC capability passthrough also reads
+`OMO_RPC_CLIENT_CAPABILITIES` and `SENPI_RPC_CLIENT_CAPABILITIES` directly.
+Full reference, defaults, and units:
+[docs/configuration.md](docs/configuration.md).
 
 | Variable | Purpose |
 |---|---|
@@ -231,6 +236,7 @@ deployments. Full reference, defaults, and units: [docs/configuration.md](docs/c
 | `ANTECHAMBER_IDLE_TIMEOUT_MS` | idle session reap timeout |
 | `ANTECHAMBER_MAX_LIVE` | cap on concurrent live agent processes |
 | `ANTECHAMBER_DEBUG` / `ANTECHAMBER_DEBUG_LOG` | request/event debug logging |
+| `OMO_RPC_CLIENT_CAPABILITIES` / `SENPI_RPC_CLIENT_CAPABILITIES` | inherited RPC capabilities merged for the agent process |
 
 ## Security
 
@@ -244,8 +250,11 @@ Hardening controls (full reference in [docs/configuration.md](docs/configuration
 - Optional HTTP Basic auth, matching OpenCode's own contract:
   `OPENCODE_SERVER_PASSWORD` (plus `OPENCODE_SERVER_USERNAME`, default
   `opencode`).
-- Without a password, requests carrying a non-loopback browser `Origin` are
-  rejected unless listed in `ANTECHAMBER_ALLOWED_ORIGINS`.
+- Without a password, browser origins are limited to the adapter's own origin,
+  HTTP(S) loopback origins (including a different loopback port), and origins
+  listed in `ANTECHAMBER_ALLOWED_ORIGINS`; other origins get `403`. With a
+  password, other origins may make authenticated requests but receive no CORS
+  headers unless explicitly allowed.
 - Binding to a non-loopback host requires a password, `ANTECHAMBER_ALLOW_INSECURE=1`,
   or the `--insecure-no-auth` flag.
 - Request bodies are capped by `ANTECHAMBER_MAX_BODY_BYTES` (default 10 MiB);
@@ -268,7 +277,8 @@ of crashing; antechamber never falls back to signalling numeric PIDs. macOS is u
   level, not the model level.
 - Some OpenCode routes have no pi/OmO equivalent and are stubbed or return
   `400`/`501` (OAuth-based provider auth, MCP connect/disconnect, session
-  share). See [docs/api-surface.md](docs/api-surface.md) for the exact list.
+  share). See [docs/api-surface.md](docs/api-surface.md) for the maintained
+  route and unsupported-response inventory.
 
 ## Development
 

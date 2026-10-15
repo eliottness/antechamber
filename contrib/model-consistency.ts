@@ -146,10 +146,6 @@ async function api<T>(url: string, path: string, init?: RequestInit): Promise<{ 
   return { status: res.status, body };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 // ---------------------------------------------------------------------
 // Model refs — the catalog serves both `id` and `modelID`; sessions and
 // messages carry `{id, providerID}`. Normalize everything to one shape so the
@@ -364,9 +360,6 @@ async function main(): Promise<void> {
       body: JSON.stringify({ model: { providerID: modelB.providerID, modelID: modelB.modelID } }),
     });
     ok("re-switch to B → 204", again.status === 204, `status ${again.status}`);
-    await sleep(2_000);
-    const after = stream.seen("session.model.selected", (e) => e.data.sessionID === sessionId).length;
-    ok("re-switch emits no second session.model.selected", after === before, `${before} → ${after}`);
 
     // 5. a model pi does not know must be refused, not silently accepted
     console.log("— invalid model —");
@@ -389,6 +382,15 @@ async function main(): Promise<void> {
     // 6. the reply must be attributed to the model that actually produced it
     console.log("— prompt + reply attribution —");
     const clientMessageId = `msg_modelsmoke${Date.now()}`;
+    // Subscribe before the trigger. The step and terminal envelope form the
+    // causal boundary for this exact prompt; a later message-list read cannot
+    // accidentally bless streamed partial text as a completed reply.
+    const stepStarted = stream.waitFor(
+      "session.step.started",
+      (e) => e.data.sessionID === sessionId && typeof e.data.assistantMessageID === "string",
+      120_000,
+    );
+    const completed = stream.waitFor("session.execution.succeeded", (e) => e.data.sessionID === sessionId, 180_000);
     const prompt = await api<{ data?: { id?: string; type?: string } }>(
       url,
       `/api/session/${encodeURIComponent(sessionId)}/prompt`,
@@ -403,24 +405,58 @@ async function main(): Promise<void> {
       JSON.stringify(prompt.body).slice(0, 200),
     );
 
-    const deadline = Date.now() + 180_000;
-    let reply: MessageBody | undefined;
-    while (Date.now() < deadline) {
-      const res = await api<{ data?: MessageBody[] }>(
-        url,
-        `/api/session/${encodeURIComponent(sessionId)}/message?order=asc`,
+    let step: V2Envelope | undefined;
+    let completedTurn = false;
+    try {
+      step = await stepStarted;
+      await completed;
+      completedTurn = true;
+      ok("SSE session.execution.succeeded settles the submitted prompt", true);
+    } catch (err) {
+      ok(
+        "SSE session.execution.succeeded settles the submitted prompt",
+        false,
+        err instanceof Error ? err.message : String(err),
       );
-      const done = (res.body.data ?? []).find((m) => m.type === "assistant" && assistantText(m).trim() !== "");
-      if (done !== undefined) {
-        reply = done;
-        break;
+    }
+
+    // session.step.started is emitted after all earlier v2 envelopes on the
+    // same SSE stream. It is therefore the event-order boundary that proves
+    // the re-switch did not emit a second model-selection marker.
+    const after = stream.seen("session.model.selected", (e) => e.data.sessionID === sessionId).length;
+    ok("re-switch emits no second session.model.selected", after === before, `${before} → ${after}`);
+
+    const assistantMessageId =
+      step !== undefined && typeof step.data.assistantMessageID === "string" ? step.data.assistantMessageID : undefined;
+    let submitted: MessageBody | undefined;
+    let reply: MessageBody | undefined;
+    if (completedTurn) {
+      const submittedResponse = await api<{ data?: MessageBody }>(
+        url,
+        `/api/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(clientMessageId)}`,
+      );
+      if (submittedResponse.status === 200 && submittedResponse.body.data?.type === "user") {
+        submitted = submittedResponse.body.data;
       }
-      await sleep(1_000);
     }
     ok(
-      "assistant reply arrived",
+      "terminal completion preserves the submitted client message ID",
+      submitted?.id === clientMessageId,
+      `submitted=${submitted?.id ?? "<none>"} expected=${clientMessageId}`,
+    );
+    if (completedTurn && assistantMessageId !== undefined) {
+      const res = await api<{ data?: MessageBody }>(
+        url,
+        `/api/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(assistantMessageId)}`,
+      );
+      if (res.status === 200 && res.body.data?.type === "assistant") reply = res.body.data;
+    }
+    ok(
+      "terminal assistant reply arrived",
       reply !== undefined,
-      reply === undefined ? "timed out after 180s" : assistantText(reply).slice(0, 80),
+      reply === undefined
+        ? `completed=${completedTurn} assistantMessageID=${assistantMessageId ?? "<none>"}`
+        : assistantText(reply).slice(0, 80),
     );
 
     const replyModel =
@@ -441,7 +477,6 @@ async function main(): Promise<void> {
     );
 
     // The step envelope is what renders the model in the transcript header.
-    const step = stream.seen("session.step.started", (e) => e.data.sessionID === sessionId).at(-1);
     const stepModel = step === undefined ? undefined : refOf(pickModel(step.data.model));
     ok(
       "session.step.started carries the same model",

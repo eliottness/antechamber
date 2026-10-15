@@ -28,6 +28,14 @@ does that in ~2 ms with an mtime cache and returns one JSON document.
 2. **Connector registry**: `<stateDir>/sessions.json`, mapping OpenChamber
    session ids to OmO session ids and titles.
 
+Task discovery reads regular `.json` files and skips directories and symlinks.
+The service resolves configured root spellings before using them as cache
+keys; its recency-updated task-store cache holds at most 32 root sets. Graph
+responses are capped at 240,000 serialized characters. If the full graph
+exceeds that bound, the service keeps the root and a valid task prefix, removes
+edges to omitted tasks, and returns `truncated.omittedNodes`; the panel
+validates that field and displays the count.
+
 The connector names sub-agent sessions `ses_<md5(task_id)>` and root sessions
 `ses_<md5(piSessionId)>` (`ocIdFor` in `src/session-store.ts`). The graph
 uses the same function, so a node's `sessionId` is exactly the id
@@ -59,7 +67,8 @@ uses the same function, so a node's `sessionId` is exactly the id
 
 ## Layout (`src/layout.ts`)
 
-Columns are fixed-width; within a column, cards stack in the order of their
+Columns are fixed-width, and panel CSS dimensions come from the same card-size
+constants used by the layout. Within a column, cards stack in the order of their
 parents' rows, then by creation time, so a fan-out stays next to the card
 that launched it. The orchestrator is centred on its direct children. Edges
 leave a card's right side and enter the left side as horizontal cubic

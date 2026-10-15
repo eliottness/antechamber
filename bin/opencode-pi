@@ -1,3 +1,13 @@
 #!/bin/sh
 # Deprecated name kept for existing OpenChamber settings; use opencode-antechamber.
-exec "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/opencode-antechamber" "$@"
+SCRIPT_PATH=$0
+while [ -h "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+  LINK="$(readlink "$SCRIPT_PATH")"
+  case "$LINK" in
+    /*) SCRIPT_PATH=$LINK ;;
+    *) SCRIPT_PATH="$SCRIPT_DIR/$LINK" ;;
+  esac
+done
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+exec "$SCRIPT_DIR/opencode-antechamber" "$@"

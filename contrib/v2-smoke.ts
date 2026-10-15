@@ -12,7 +12,7 @@
  * real agent run. Point it at another binary with ANTECHAMBER_PI_BINARY.
  */
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AdapterServer } from "../src/server.js";
@@ -130,10 +130,6 @@ async function api<T>(url: string, path: string, init?: RequestInit): Promise<{ 
   return { status: res.status, body };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 /** Joined text of an assistant message's v2 `content` blocks. */
 function assistantText(m: { content?: Array<{ type?: string; text?: string }> }): string {
   return (m.content ?? [])
@@ -142,9 +138,21 @@ function assistantText(m: { content?: Array<{ type?: string; text?: string }> })
     .join("");
 }
 
+let teardown: (() => Promise<void>) | undefined;
+
+async function runTeardown(): Promise<void> {
+  const current = teardown;
+  teardown = undefined;
+  await current?.().catch((error: unknown) => console.error("v2 smoke teardown failed:", error));
+}
+
 async function main(): Promise<void> {
   console.log(`workspace: ${WORKSPACE}`);
   const server = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: WORKSPACE });
+  teardown = async () => {
+    await server.stop();
+    rmSync(WORKSPACE, { recursive: true, force: true });
+  };
   await server.start();
   const url = server.url;
   console.log(`adapter: ${url}`);
@@ -304,6 +312,7 @@ async function main(): Promise<void> {
   );
 
   const sid = (e: V2Envelope) => e.data.sessionID === sessionId;
+  let completedTurn = false;
   try {
     await sse.waitFor("session.execution.started", sid, 15_000);
     ok("SSE session.execution.started", true);
@@ -323,6 +332,7 @@ async function main(): Promise<void> {
     ok("SSE session.step.ended", true);
     await sse.waitFor("session.execution.succeeded", sid, 30_000);
     ok("SSE session.execution.succeeded", true);
+    completedTurn = true;
   } catch (err) {
     ok("SSE streaming event sequence", false, err instanceof Error ? err.message : String(err));
   } finally {
@@ -331,9 +341,8 @@ async function main(): Promise<void> {
 
   // 4. assistant reply landed in the message list
   console.log("— assistant reply in message list —");
-  const deadline = Date.now() + 90_000;
   let answer = "";
-  while (Date.now() < deadline) {
+  if (completedTurn) {
     const res = await api<{ data?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }>(
       url,
       `/api/session/${encodeURIComponent(sessionId)}/message?order=asc`,
@@ -343,10 +352,12 @@ async function main(): Promise<void> {
       .filter((m) => m.type === "assistant")
       .map((m) => assistantText(m))
       .join("\n");
-    if (answer.includes("V2-SMOKE-OK")) break;
-    await sleep(1_000);
   }
-  ok("assistant message contains V2-SMOKE-OK", answer.includes("V2-SMOKE-OK"), answer.slice(0, 160));
+  ok(
+    "terminal assistant message contains V2-SMOKE-OK",
+    completedTurn && answer.includes("V2-SMOKE-OK"),
+    completedTurn ? answer.slice(0, 160) : "session.execution.succeeded was not observed",
+  );
 
   // 5. remaining minimum-viable routes
   console.log("— remaining routes —");
@@ -394,13 +405,14 @@ async function main(): Promise<void> {
   const gone = await api<unknown>(url, `/api/session/${encodeURIComponent(sessionId)}`);
   ok("deleted session returns 404", gone.status === 404);
 
-  await server.stop();
+  await runTeardown();
 
   console.log(`\n${checks - failures}/${checks} checks passed`);
   if (failures > 0) process.exitCode = 1;
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  await runTeardown();
   process.exitCode = 1;
 });

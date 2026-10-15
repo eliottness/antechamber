@@ -26,7 +26,7 @@ import {
   resultText,
 } from "./tool-map.js";
 import { TodoBridge, type TodoUpdated } from "./todo-bridge.js";
-import { recordTurn } from "./session-tree.js";
+import { readSessionTree, recordTurn } from "./session-tree.js";
 import { touchedFiles } from "./session-diff.js";
 import { getAgentName } from "./agent-name.js";
 import { debugLog } from "./misc-routes.js";
@@ -77,12 +77,14 @@ export function piStopReason(
   }
 }
 
-export function textOf(content: Array<Record<string, unknown>> | undefined): string {
+export function textOf(content: string | Array<Record<string, unknown>> | undefined): string {
+  // pi allows plain-string message content (extensions, append_user_message).
+  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.map((b) => (b?.type === "text" && typeof b.text === "string" ? b.text : "")).join("");
 }
 
-export function newPart(kind: "text" | "reasoning", sessionID: string, messageID: string): OCPart {
+function newPart(kind: "text" | "reasoning", sessionID: string, messageID: string): OCPart {
   const base = {
     id: id("prt"),
     sessionID,
@@ -95,7 +97,7 @@ export function newPart(kind: "text" | "reasoning", sessionID: string, messageID
     : ({ ...base, type: "reasoning" } satisfies OCReasoningPart);
 }
 
-export function applyUsage(msg: OCAssistantMessage, usage: PiUsage | undefined): void {
+function applyUsage(msg: OCAssistantMessage, usage: PiUsage | undefined): void {
   if (!usage) return;
   msg.tokens = {
     input: usage.input ?? 0,
@@ -114,7 +116,17 @@ export function applyUsage(msg: OCAssistantMessage, usage: PiUsage | undefined):
 export function syncSessionCost(s: ManagedSession): boolean {
   if (s.messages === undefined) return false;
   let cost = 0;
-  for (const message of s.messages) if (message.info.role === "assistant") cost += message.info.cost;
+  const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+  for (const message of s.messages)
+    if (message.info.role === "assistant") {
+      cost += message.info.cost;
+      tokens.input += message.info.tokens.input;
+      tokens.output += message.info.tokens.output;
+      tokens.reasoning += message.info.tokens.reasoning;
+      tokens.cache.read += message.info.tokens.cache.read;
+      tokens.cache.write += message.info.tokens.cache.write;
+    }
+  s.info.tokens = tokens;
   if ((s.info.cost ?? 0) === cost) return false; // absent means zero; avoid no-op updates
   s.info.cost = cost;
   return true;
@@ -123,9 +135,8 @@ export function syncSessionCost(s: ManagedSession): boolean {
 /**
  * An OmO compaction as OpenCode shows one: a user turn holding a `compaction`
  * part (OpenChamber renders it as `/compact`) answered by a `summary` message.
- * IDs derive from the compaction's first kept entry, which the live
- * `compaction_end` result and the persisted entry share, so a history reload
- * reconciles with the live messages instead of duplicating them.
+ * IDs derive from the native compaction entry, not its retained boundary:
+ * multiple compactions can retain the same entry.
  */
 export function compactionMessages(
   s: ManagedSession,
@@ -189,6 +200,35 @@ interface PiEventServices {
 export class PiEventTranslator {
   constructor(private services: PiEventServices) {}
 
+  /** Close dead-runtime UI state before an error or idle event can reach the client. */
+  finishInterruptedRun(s: ManagedSession, error: NonNullable<OCAssistantMessage["error"]>): void {
+    const now = Date.now();
+    s.approvals?.finishTurn();
+    for (const part of s.streaming?.parts.values() ?? []) {
+      if (part.type === "tool") s.toolByCallId.set(part.callID, part);
+      else if (
+        (part.type === "text" || part.type === "reasoning") &&
+        part.time !== undefined &&
+        part.time.end === undefined
+      ) {
+        part.time.end = now;
+        this.emitPart(s, part);
+      }
+    }
+    this.finalizeDanglingTools(s);
+    this.services.subagents.finishCalls(s.info.id);
+    if (s.streaming !== undefined) {
+      const message = s.streaming.message;
+      message.finish = "error";
+      message.error = error;
+      message.time.completed = now;
+      this.services.emit(s.info.directory, { type: "message.updated", properties: { info: message } });
+      this.finishStreaming(s);
+    }
+    delete s.compactingFromIdle;
+    delete s.info.time.compacting;
+  }
+
   setStatus(s: ManagedSession, status: OCSessionStatus): void {
     s.status = status;
     this.services.emit(s.info.directory, {
@@ -196,6 +236,14 @@ export class PiEventTranslator {
       properties: { sessionID: s.info.id, status },
     });
     if (status.type === "idle") {
+      s.info.time.idle = Date.now();
+      const last = s.messages?.findLast((message) => message.info.role === "assistant");
+      s.info.outcome =
+        s.interruptRequested || (last?.info.role === "assistant" && last.info.error?.name === "MessageAbortedError")
+          ? "interrupted"
+          : last?.info.role === "assistant" && last.info.finish === "error"
+            ? "failed"
+            : "succeeded";
       this.services.emit(s.info.directory, { type: "session.idle", properties: { sessionID: s.info.id } });
     }
   }
@@ -262,27 +310,59 @@ export class PiEventTranslator {
 
   onPiEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     this.services.subagents.wake(s, ev);
-    const dir = s.info.directory;
     if (envSetting("DEBUG")) {
       const ame = (ev.assistantMessageEvent as { type?: string } | undefined)?.type;
       debugLog(`[pi-event] ${String(ev.type)}${ame ? `/${ame}` : ""} ${JSON.stringify(ev).slice(0, 300)}`);
     }
     switch (ev.type) {
-      case "entry_appended": {
-        s.todoBridge ??= new TodoBridge(s.info.id);
-        const event = s.todoBridge.entry(ev.entry, (part) => this.emitPart(s, part));
-        if (event !== undefined) this.services.emit(dir, event);
+      case "entry_appended":
+        this.onTodoEntry(s, ev);
         break;
-      }
       case "session_info_changed":
         this.services.applyNativeTitle(s, ev.name);
         break;
       case "agent_start":
-        this.setStatus(s, { type: "busy" });
+      case "agent_idle":
+      case "agent_end":
+      case "auto_retry_start":
+      case "turn_end":
+      case "extension_error":
+        this.onLifecycleEvent(s, ev);
         break;
+      case "tool_execution_start":
+      case "tool_execution_update":
+      case "tool_execution_end":
+        this.onToolEvent(s, ev);
+        break;
+      case "message_start":
+      case "message_update":
+      case "message_end":
+        this.onMessageEvent(s, ev);
+        break;
+      case "compaction_start":
+      case "compaction_end":
+        this.onCompactionEvent(s, ev);
+        break;
+      default:
+        break; // turn_start, queue_update — future milestones
+    }
+  }
 
-      case "agent_end": {
-        if (ev.willRetry === true) break; // auto-retry keeps the session busy
+  private onTodoEntry(s: ManagedSession, ev: Record<string, unknown>): void {
+    s.todoBridge ??= new TodoBridge(s.info.id);
+    const event = s.todoBridge.entry(ev.entry, (part) => this.emitPart(s, part));
+    if (event !== undefined) this.services.emit(s.info.directory, event);
+  }
+
+  private onLifecycleEvent(s: ManagedSession, ev: Record<string, unknown>): void {
+    switch (ev.type) {
+      case "agent_start":
+        this.setStatus(s, { type: "busy" });
+        return;
+      case "agent_end":
+        if (ev.willRetry === true) return; // auto-retry keeps the session busy
+        if (s.interruptRequested)
+          this.finishInterruptedRun(s, { name: "MessageAbortedError", data: { message: "Cancelled" } });
         s.approvals?.finishTurn();
         this.finalizeDanglingTools(s);
         this.services.subagents.finishCalls(s.info.id);
@@ -290,36 +370,67 @@ export class PiEventTranslator {
         this.services.emitDiff(s);
         s.info.time.updated = Date.now();
         this.services.persistMeta(s);
-        this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
+        this.services.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
         if (s.piPath !== undefined) this.services.store.update(s.info.id, { updated: Date.now() });
         recordTurn(s);
         this.services.persistMeta(s);
-        break;
-      }
-
+        return;
       case "agent_idle":
         // agent_end closes one run, not the session: OmO may still retry or
         // start a deferred continuation. Only agent_idle settles that work.
+        if (s.interruptRequested) {
+          this.finishInterruptedRun(s, { name: "MessageAbortedError", data: { message: "Cancelled" } });
+          this.services.emit(s.info.directory, {
+            type: "session.error",
+            properties: {
+              sessionID: s.info.id,
+              error: { name: "MessageAbortedError", data: { message: "Cancelled" } },
+            },
+          });
+          delete s.interruptRequested;
+        }
         this.setStatus(s, { type: "idle" });
-        break;
-
+        return;
       case "turn_end": {
         s.approvals?.finishTurn();
         // pi delivers tool results here, matched back to parts by toolCallId.
         const results = ev.toolResults as Array<Record<string, unknown>> | undefined;
         if (Array.isArray(results)) this.applyToolResults(s, results);
         this.services.emitDiff(s);
-        break;
+        return;
       }
+      case "auto_retry_start":
+        this.setStatus(s, {
+          type: "retry",
+          attempt: Number(ev.attempt ?? 1),
+          message: String(ev.errorMessage ?? "retrying"),
+          next: Date.now() + Number(ev.delayMs ?? 0),
+        });
+        return;
+      case "extension_error":
+        this.services.emit(s.info.directory, {
+          type: "session.error",
+          properties: {
+            sessionID: s.info.id,
+            error: { name: "UnknownError", data: { message: String(ev.error ?? "pi extension error") } },
+          },
+        });
+        return;
+      default:
+        return;
+    }
+  }
 
+  private onToolEvent(s: ManagedSession, ev: Record<string, unknown>): void {
+    switch (ev.type) {
       case "tool_execution_start": {
         if (typeof ev.toolCallId === "string" && typeof ev.toolName === "string") {
           s.approvals?.noteToolStart(ev.toolCallId, ev.toolName, ev.args);
         }
-        if (ev.toolName === "task") break; // Expanded when the argument stream closes.
+        if (ev.toolName === "task") return; // Expanded when the argument stream closes.
         const callID = typeof ev.toolCallId === "string" ? ev.toolCallId : undefined;
         const part = callID !== undefined ? s.toolByCallId.get(callID) : undefined;
-        if (part === undefined) break;
+        if (part === undefined) return;
         const name = typeof ev.toolName === "string" ? ev.toolName : part.tool;
         const mapped = mapTool(name, name === "todo" ? part.state.input : ev.args);
         part.tool = mapped.tool;
@@ -331,9 +442,8 @@ export class PiEventTranslator {
           time: { start: part.state.status !== "pending" ? part.state.time.start : Date.now() },
         };
         this.emitPart(s, part);
-        break;
+        return;
       }
-
       case "tool_execution_update": {
         if (
           typeof ev.toolCallId === "string" &&
@@ -344,31 +454,36 @@ export class PiEventTranslator {
             false,
           )
         )
-          break;
+          return;
         const part = typeof ev.toolCallId === "string" ? s.toolByCallId.get(ev.toolCallId) : undefined;
-        if (part === undefined || part.state.status !== "running") break;
+        if (part === undefined || part.state.status !== "running") return;
         this.emitPart(s, part);
-        break;
+        return;
       }
-
       case "tool_execution_end": {
         if (typeof ev.toolCallId === "string") s.approvals?.noteToolEnd(ev.toolCallId);
         const result = ev.result !== null && typeof ev.result === "object" ? ev.result : {};
         this.applyToolResults(s, [{ ...result, toolCallId: ev.toolCallId, isError: ev.isError }]);
-        break;
+        return;
       }
+      default:
+        return;
+    }
+  }
 
+  private onMessageEvent(s: ManagedSession, ev: Record<string, unknown>): void {
+    switch (ev.type) {
       case "message_start": {
-        if (this.reconcileUser(s, ev)) break;
+        if (this.reconcileUser(s, ev)) return;
         const msg = ev.message as
           | { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown }
           | undefined;
-        if (msg?.role !== "assistant") break; // user message already recorded at prompt()
+        if (msg?.role !== "assistant") return; // user message already recorded at prompt()
         // pi stamps the assistant message with the model really serving it.
         // Trust that over our snapshot, which goes stale whenever pi switches on
         // its own side (subagent routing, an in-session /model, a resumed file).
         this.services.applyPiModel(s, msg.provider, piModelId(msg.responseModel, msg.model));
-        const parent = [...(s.messages ?? [])].reverse().find((m) => m.info.role === "user");
+        const parent = s.messages?.findLast((m) => m.info.role === "user");
         const assistant: OCAssistantMessage = {
           id: id("msg"),
           sessionID: s.info.id,
@@ -387,16 +502,14 @@ export class PiEventTranslator {
         };
         s.streaming = { message: assistant, parts: new Map() };
         s.messages?.push({ info: assistant, parts: [] });
-        this.services.emit(dir, { type: "message.updated", properties: { info: assistant } });
-        break;
+        this.services.emit(s.info.directory, { type: "message.updated", properties: { info: assistant } });
+        return;
       }
-
       case "message_update":
         this.onMessageUpdate(s, ev);
-        break;
-
+        return;
       case "message_end": {
-        if (this.reconcileUser(s, ev)) break;
+        if (this.reconcileUser(s, ev)) return;
         const ended = ev.message as
           | {
               role?: string;
@@ -408,89 +521,117 @@ export class PiEventTranslator {
               responseModel?: unknown;
             }
           | undefined;
-        if (ended?.role === "assistant" && s.streaming) {
-          this.onProviderTools(s, ev.message);
-          if (ended.stopReason === "aborted" || ended.stopReason === "error") {
-            for (const part of finishProviderToolParts(
-              s.toolByCallId.values(),
-              Date.now(),
-              ended.stopReason === "aborted" ? "Cancelled" : "No result",
-            ))
-              this.emitPart(s, part);
-          }
-          // Last chance to correct attribution: some providers only reveal the
-          // concrete model once the stream has closed.
-          if (
-            this.services.applyPiModel(s, ended.provider, piModelId(ended.responseModel, ended.model)) &&
-            s.model !== undefined
-          ) {
-            s.streaming.message.providerID = s.model.providerID;
-            s.streaming.message.modelID = s.model.modelID;
-          }
-          applyUsage(s.streaming.message, ended.usage);
-          Object.assign(s.streaming.message, piStopReason(ended.stopReason, ended.errorMessage));
-          s.streaming.message.time.completed = Date.now();
-          this.services.emit(dir, { type: "message.updated", properties: { info: s.streaming.message } });
-          this.finishStreaming(s);
-          if (syncSessionCost(s)) this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
+        if (ended?.role !== "assistant" || !s.streaming) return;
+        this.onProviderTools(s, ev.message);
+        if (ended.stopReason === "aborted" || ended.stopReason === "error") {
+          for (const part of finishProviderToolParts(
+            s.toolByCallId.values(),
+            Date.now(),
+            ended.stopReason === "aborted" ? "Cancelled" : "No result",
+          ))
+            this.emitPart(s, part);
         }
-        break;
+        // Last chance to correct attribution: some providers only reveal the
+        // concrete model once the stream has closed.
+        if (
+          this.services.applyPiModel(s, ended.provider, piModelId(ended.responseModel, ended.model)) &&
+          s.model !== undefined
+        ) {
+          s.streaming.message.providerID = s.model.providerID;
+          s.streaming.message.modelID = s.model.modelID;
+        }
+        applyUsage(s.streaming.message, ended.usage);
+        Object.assign(s.streaming.message, piStopReason(ended.stopReason, ended.errorMessage));
+        s.streaming.message.time.completed = Date.now();
+        this.services.emit(s.info.directory, { type: "message.updated", properties: { info: s.streaming.message } });
+        this.finishStreaming(s);
+        if (syncSessionCost(s))
+          this.services.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+        return;
       }
+      default:
+        return;
+    }
+  }
 
-      case "auto_retry_start":
-        this.setStatus(s, {
-          type: "retry",
-          attempt: Number(ev.attempt ?? 1),
-          message: String(ev.errorMessage ?? "retrying"),
-          next: Date.now() + Number(ev.delayMs ?? 0),
-        });
-        break;
-
-      case "extension_error":
-        this.services.emit(dir, {
-          type: "session.error",
+  private onCompactionEvent(s: ManagedSession, ev: Record<string, unknown>): void {
+    switch (ev.type) {
+      case "compaction_start":
+        s.compactionID = id("compaction");
+        this.services.emit(s.info.directory, {
+          type: "session.compaction.started",
           properties: {
             sessionID: s.info.id,
-            error: { name: "UnknownError", data: { message: String(ev.error ?? "pi extension error") } },
+            inputID: s.compactionID,
+            reason: typeof ev.reason === "string" ? ev.reason : "manual",
           },
         });
-        break;
-
-      case "compaction_start": {
         s.info.time.compacting = Date.now();
-        this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
+        this.services.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
         // A manual /compact runs no agent turn, so nothing else marks the session busy.
         if (s.status.type === "idle") {
           s.compactingFromIdle = true;
           this.setStatus(s, { type: "busy" });
         }
-        break;
-      }
-
+        return;
       case "compaction_end": {
         delete s.info.time.compacting;
         const result = ev.result as { summary?: unknown; firstKeptEntryId?: unknown } | undefined;
+        const inputID = s.compactionID ?? id("compaction");
+        delete s.compactionID;
+        this.services.emit(
+          s.info.directory,
+          ev.aborted === true || typeof result?.summary !== "string"
+            ? {
+                type: "session.compaction.failed",
+                properties: {
+                  sessionID: s.info.id,
+                  inputID,
+                  reason: typeof ev.reason === "string" ? ev.reason : "manual",
+                  error: {
+                    name: "CompactionError",
+                    data: { message: ev.aborted === true ? "Compaction cancelled" : "Compaction failed" },
+                  },
+                },
+              }
+            : {
+                type: "session.compaction.ended",
+                properties: {
+                  sessionID: s.info.id,
+                  inputID,
+                  reason: typeof ev.reason === "string" ? ev.reason : "manual",
+                  text: result.summary,
+                  recent: "",
+                },
+              },
+        );
         if (ev.aborted !== true && typeof result?.summary === "string" && typeof result.firstKeptEntryId === "string") {
           const messages = this.services.ensureMessages(s);
-          for (const message of compactionMessages(s, result.firstKeptEntryId, result.summary, Date.now(), s.model)) {
+          let key: string | undefined;
+          // compaction_end follows persistence, but its result omits the entry ID.
+          if (s.piPath !== undefined) {
+            for (const entry of readSessionTree(s.piPath).entries) {
+              if (entry.type === "compaction") key = entry.id;
+            }
+          }
+          for (const message of compactionMessages(s, key ?? id("compaction"), result.summary, Date.now(), s.model)) {
             if (messages.some((item) => item.info.id === message.info.id)) continue;
             // Keep a hidden redo branch after the new turn, as appendMessage does.
             const boundary = messages.findIndex((item) => item.info.id === s.tree.revert?.messageID);
             messages.splice(boundary < 0 ? messages.length : boundary, 0, message);
-            this.services.emit(dir, { type: "message.updated", properties: { info: message.info } });
+            this.services.emit(s.info.directory, { type: "message.updated", properties: { info: message.info } });
             for (const part of message.parts) this.emitPart(s, part);
           }
         }
-        this.services.emit(dir, { type: "session.updated", properties: { info: s.info } });
+        this.services.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
         if (s.compactingFromIdle) {
           delete s.compactingFromIdle;
           this.setStatus(s, { type: "idle" });
         }
-        break;
+        return;
       }
-
       default:
-        break; // turn_start, queue_update — future milestones
+        return;
     }
   }
 
@@ -543,7 +684,19 @@ export class PiEventTranslator {
 
     if (ame.type === `${wire}_delta` && typeof ame.delta === "string") {
       textPart.text += ame.delta;
-      this.emitPart(s, textPart, ame.delta);
+      this.services.emit(dir, {
+        type: "message.part.delta",
+        properties: {
+          sessionID: s.info.id,
+          messageID: textPart.messageID,
+          partID: textPart.id,
+          field: "text",
+          delta: ame.delta,
+        },
+      });
+      // Append before publishing the authoritative snapshot. Sending another
+      // append delta on the snapshot would duplicate text in streaming clients.
+      this.emitPart(s, textPart);
     } else if (ame.type === `${wire}_end`) {
       if (typeof ame.content === "string") textPart.text = ame.content;
       if (textPart.time) textPart.time.end = Date.now();

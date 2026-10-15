@@ -16,20 +16,20 @@ One line per module in `src/`:
 | `pidfd.ts` | Shared bounded Python/Linux pidfd capability probe for doctor and session-host teardown |
 | `server.ts` | `AdapterServer` composition root: service wiring, request dispatch, start/stop/url |
 | `http.ts` | Shared HTTP body reader, JSON/error responses, authentication, origin checks, and CORS |
-| `sse.ts` | SSE subscriber registry, v1/v2 framing, heartbeat, backpressure, and teardown |
+| `sse.ts` | SSE subscriber registry, v1/v2 framing, bounded replay, heartbeat, backpressure, and teardown |
 | `route-services.ts` | Shared route service contract, model parsing, async prompt admission, and compatibility version |
 | `routes-v1.ts` | OpenCode v1 HTTP routes, receiving session, catalog, body-reader, and event services |
 | `routes-v2.ts` | OpenCode v2 `/api/*` HTTP routes and route-specific response adapters |
 | `v2.ts` | OpenCode v2 API translation layer (session/message shapes, v2 event translator) |
 | `sessions.ts` | `SessionManager`: registry, persistence, lifecycle, prompt/abort/fork/revert orchestration |
-| `session-history.ts` | Reconstructs OpenCode messages, parts, and pending inputs from pi JSONL history |
+| `session-history.ts` | Reconstructs OpenCode messages, stable parts, and pending inputs from pi JSONL history |
 | `pi-event-translation.ts` | Shared pi message/part helpers and live event translation with explicit manager services |
-| `session-store.ts` | Session registry persistence (directory mapping, archived state, message-ID mapping) |
+| `session-store.ts` | Session registry persistence (directory, ancestry, metadata, model, tree, and part-ID mappings) |
 | `session-tree.ts` | Agent session-tree parsing (JSONL entries, fork/revert navigation) |
 | `session-hosts.ts` | Linux pidfd-based teardown of detached OmO task-host processes antechamber owns |
 | `session-commands.ts` | Slash commands, shell execution, compaction, share (unsupported) |
 | `session-diff.ts` | `GET /session/:id/diff` unified-patch computation |
-| `pi-rpc.ts` | Low-level pi/OmO RPC subprocess management: spawn, JSONL framing, request/response correlation |
+| `pi-rpc.ts` | Low-level pi/OmO RPC subprocess management: spawn, JSONL framing, capability passthrough, request correlation |
 | `approvals.ts` | Permission/question bridging through the agent's extension-UI protocol |
 | `question-forms.ts` | Converts pending native questions into v2 forms and parses form replies |
 | `subagents.ts` | Subagent/task card tracking and child-transcript resolution |
@@ -84,15 +84,15 @@ real model calls, so they cost tokens and are not run in CI:
 | Script | Command | What it checks |
 |---|---|---|
 | `contrib/smoke.ts` | `npm run smoke` | End-to-end smoke against a real `pi` process: bootstrap probes, a full tool round, abort, rename, delete |
-| `contrib/omo-smoke.ts` | `npm run omo-smoke` | End-to-end smoke against a real `omo` process, including OmO-specific features (fork/revert/unrevert, subagents, approvals, shell, compaction). Runs in an isolated HOME and private state directory; see `contrib/smoke/README.md`. |
+| `contrib/omo/omo-smoke.ts` | `npm run omo-smoke` | End-to-end smoke against a real `omo` process, including OmO-specific features (fork/revert/unrevert, subagents, approvals, shell, compaction). Runs in an isolated HOME and private state directory; see `contrib/omo/smoke/README.md`. |
 | `contrib/probe.ts` | `npm run probe` | Dumps raw pi/OmO RPC events to a JSONL file for protocol inspection |
 | `contrib/model-consistency.ts` | `npm run model-smoke` | Checks that model selection/resolution stays consistent across requests |
 | `contrib/v2-smoke.ts` | `npm run v2-smoke` | Checks the OpenCode v2 API surface specifically |
 
-`contrib/smoke/` holds the shared smoke-test harness (`core.ts`, `context.ts`,
-and the `checks/` modules loaded by `contrib/omo-smoke.ts`); see
-`contrib/smoke/README.md` for how checks are structured, the `--only`
-selector, and how to add a new check module.
+`contrib/omo/smoke/` holds the shared smoke-test harness (`core.ts`,
+`context.ts`, and the `checks/` modules loaded by
+`contrib/omo/omo-smoke.ts`); see `contrib/omo/smoke/README.md` for how checks
+are structured, the `--only` selector, and how to add a new check module.
 
 OmO-specific maintainer tooling (deployment scripts, version-pin tracking,
 and similar operational material that isn't part of the general smoke suite)

@@ -83,19 +83,27 @@ test("OpenCode password takes precedence and username can be overridden", async 
   }
 });
 
+test("passwordless same-origin loopback origin is echoed rather than wildcarded", async (t) => {
+  const { server } = await start(t);
+  const response = await fetch(server.url + "/global/health", { headers: { Origin: server.url } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("access-control-allow-origin"), server.url);
+  assert.equal(response.headers.get("vary"), "Origin");
+});
+
 for (const origin of [
   "http://localhost:5173",
   "https://127.0.0.1:9999",
   "http://[::1]:3000",
   "http://localhost:80",
   "https://127.0.0.1:443",
+  "http://127.9.8.7:5173",
 ]) {
-  test(`loopback origin ${origin} is echoed rather than wildcarded`, async (t) => {
+  test(`OpenCode-parity rule accepts passwordless cross-port loopback origin ${origin}`, async (t) => {
     const { server } = await start(t);
     const response = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("access-control-allow-origin"), origin);
-    assert.equal(response.headers.get("vary"), "Origin");
   });
 }
 
@@ -106,6 +114,7 @@ for (const origin of [
   "http://localhost/path",
   "file://localhost",
   "http://evil@localhost",
+  "http://127.0.0.256",
 ]) {
   test(`untrusted origin ${origin} is rejected`, async (t) => {
     const { server } = await start(t);
@@ -114,6 +123,22 @@ for (const origin of [
     assert.equal(response.headers.get("access-control-allow-origin"), null);
   });
 }
+
+test("OpenCode-parity rule accepts a passwordless POST /api/session from another loopback port", async (t) => {
+  setting(t, "ANTECHAMBER_PI_BINARY", new URL("./fixtures/turn-omo.mjs", import.meta.url).pathname);
+  const { server, directory } = await start(t);
+  setting(t, "PI_CODING_AGENT_DIR", join(directory, "agent"));
+  const origin = "http://127.0.0.1:5173";
+  const response = await fetch(server.url + "/api/session", {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("access-control-allow-origin"), origin);
+  const body = (await response.json()) as { data: { id: string } };
+  assert.equal(typeof body.data.id, "string");
+});
 
 for (const origin of ["http://192.168.1.50:4096", "tauri://localhost"]) {
   test(`with a password, proxied origin ${origin} is served without CORS headers`, async (t) => {
@@ -204,7 +229,9 @@ test("empty and exact-limit object bodies remain valid", async (t) => {
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "2");
   const { server } = await start(t);
   for (const body of ["", "{}"]) {
-    assert.equal((await fetch(server.url + "/api/project/example", { method: "PATCH", body })).status, 200);
+    const response = await fetch(server.url + "/api/project/example", { method: "PATCH", body });
+    assert.equal(response.status, 400);
+    assert.equal((await errorOf(response)).name, "UnsupportedError");
   }
 });
 
@@ -245,7 +272,7 @@ test("SSE caps all protocol subscriptions and releases disconnected slots", { ti
 
 for (const path of ["/event", "/api/event"]) {
   test(`SSE ${path} drops a blocked subscriber beyond the pending byte cap`, async (t) => {
-    const { server } = await start(t);
+    const { server, directory } = await start(t);
     const response = await fetch(server.url + path);
     assert.equal(response.status, 200);
     const res = [...server["sseClients"].keys()][0];
@@ -254,11 +281,11 @@ for (const path of ["/event", "/api/event"]) {
     res.cork();
     const closed = once(res, "close");
     for (let i = 0; i < 12 && !res.destroyed; i++) {
-      server["broadcast"]("", {
-        type: "session.error",
+      server["broadcast"](directory, {
+        type: "model.changed",
         properties: {
           sessionID: "missing",
-          error: { name: "TestError", data: { message: "x".repeat(1024 * 1024) } },
+          model: { providerID: "test", modelID: "x".repeat(1024 * 1024) },
         },
       });
     }

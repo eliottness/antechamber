@@ -5,6 +5,8 @@ import { promisify } from "node:util";
 import type { OCMessageWithParts, OCPart } from "./types.js";
 
 const exec = promisify(execFile);
+const GIT_EXEC_TIMEOUT_MS = 5_000;
+const GIT_EXEC_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 /** Include both the legacy content and the current SDK's patch contracts. */
 export interface SessionFileDiff {
@@ -34,7 +36,11 @@ export function touchedFiles(parts: readonly OCPart[]): string[] {
 }
 
 async function git(directory: string, args: string[]): Promise<string> {
-  const result = await exec("git", args, { cwd: directory, timeout: 5000, maxBuffer: 16 * 1024 * 1024 });
+  const result = await exec("git", args, {
+    cwd: directory,
+    timeout: GIT_EXEC_TIMEOUT_MS,
+    maxBuffer: GIT_EXEC_MAX_BUFFER_BYTES,
+  });
   return result.stdout;
 }
 
@@ -67,6 +73,7 @@ async function confinedFile(directory: string, path: string): Promise<string | u
 export async function sessionDiff(
   directory: string,
   messages: readonly OCMessageWithParts[],
+  context = 3,
 ): Promise<SessionFileDiff[]> {
   let gitRoot: string | undefined;
   try {
@@ -115,6 +122,7 @@ export async function sessionDiff(
           "HEAD",
           "--no-ext-diff",
           "--no-color",
+          `--unified=${Math.floor(context)}`,
           "--src-prefix=a/",
           "--dst-prefix=b/",
           "--",
@@ -128,6 +136,7 @@ export async function sessionDiff(
             "--no-index",
             "--no-ext-diff",
             "--no-color",
+            `--unified=${Math.floor(context)}`,
             "--src-prefix=a/",
             "--dst-prefix=b/",
             "--",

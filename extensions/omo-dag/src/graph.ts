@@ -82,6 +82,10 @@ export interface GraphColumn {
   running: number;
 }
 
+export interface GraphTruncation {
+  omittedNodes: number;
+}
+
 export interface TaskGraph {
   status: "ok" | "unknown-session";
   rootId: string;
@@ -91,6 +95,7 @@ export interface TaskGraph {
   edges: GraphEdge[];
   columns: GraphColumn[];
   models: number;
+  truncated?: GraphTruncation;
 }
 
 const TEXT_FIELDS = [

@@ -21,7 +21,7 @@ export type ApprovalEvent =
         formAnswer?: Record<string, string | string[]>;
       };
     };
-export type PermissionReply = "once" | "always" | "reject";
+type PermissionReply = "once" | "always" | "reject";
 export type PendingPermission = PermissionRequest;
 export type PendingQuestion = QuestionRequest & {
   questionIDs?: string[];
@@ -57,6 +57,8 @@ type Pending = {
   timer?: ReturnType<typeof setTimeout>;
   replying?: boolean;
 } & ({ kind: "permission"; card: PermissionRequest } | { kind: "question"; card: PendingQuestion });
+
+const MAX_SETTLED_STRUCTURED_QUESTIONS = 256;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -244,7 +246,7 @@ export class ApprovalBridge {
         p.request.method === "question" &&
         (p.request.id === ev.id || (typeof ev.requestId === "string" && p.request.requestId === ev.requestId)),
     );
-    if (ev.type === "question_resolved" && typeof ev.requestId === "string") this.settled.add(ev.requestId);
+    if (ev.type === "question_resolved" && typeof ev.requestId === "string") this.rememberSettled(ev.requestId);
     if (!p || p.kind !== "question") return;
     if (ev.type === "question_updated") {
       if (typeof ev.deadlineAtMs === "number") p.request.deadlineAtMs = ev.deadlineAtMs;
@@ -253,7 +255,7 @@ export class ApprovalBridge {
       p.card.metadata = { ...p.card.metadata, deadlineAtMs: p.request.deadlineAtMs, draft: p.request.draft };
       return;
     }
-    this.settled.add(p.request.requestId ?? "");
+    this.rememberSettled(p.request.requestId);
     if (ev.outcome !== "answered" && ev.outcome !== "comment-submitted") {
       this.remove(p, true);
       return;
@@ -330,40 +332,48 @@ export class ApprovalBridge {
     const request = extensionUiRequestFrom(ev);
     if (!request) return;
     if (request.method === "question") {
-      if (this.settled.has(request.requestId ?? "")) return;
-      const publicID = `que_${createHash("sha256")
-        .update(JSON.stringify([context.sessionID, request.requestId]))
-        .digest("hex")
-        .slice(0, 32)}`;
-      const existing = this.pending.get(publicID);
-      if (existing) {
-        existing.request = request;
-        if (existing.kind === "question")
-          existing.card.metadata = {
-            requestId: request.requestId,
-            waitForAnswer: request.waitForAnswer,
-            deadlineAtMs: request.deadlineAtMs,
-            draft: request.draft,
-          };
-        return;
-      }
-      const card: PendingQuestion = {
-        id: publicID,
-        sessionID: context.sessionID,
-        questions: (request.questions ?? []).map(({ id: _id, ...q }) => q),
-        questionIDs: (request.questions ?? []).map((q) => q.id),
-        metadata: {
+      this.askStructuredQuestion(context, request);
+      return;
+    }
+    this.askLegacyDialog(context, request);
+  }
+
+  private askStructuredQuestion(context: Context, request: UIRequest): void {
+    if (this.settled.has(request.requestId ?? "")) return;
+    const publicID = `que_${createHash("sha256")
+      .update(JSON.stringify([context.sessionID, request.requestId]))
+      .digest("hex")
+      .slice(0, 32)}`;
+    const existing = this.pending.get(publicID);
+    if (existing) {
+      existing.request = request;
+      if (existing.kind === "question")
+        existing.card.metadata = {
           requestId: request.requestId,
           waitForAnswer: request.waitForAnswer,
           deadlineAtMs: request.deadlineAtMs,
           draft: request.draft,
-        },
-        tool: { messageID: context.messageID, callID: request.requestId ?? "" },
-      };
-      this.pending.set(publicID, { kind: "question", card, context, request });
-      this.emit(context.directory, { type: "question.asked", properties: card });
+        };
       return;
     }
+    const card: PendingQuestion = {
+      id: publicID,
+      sessionID: context.sessionID,
+      questions: (request.questions ?? []).map(({ id: _id, ...q }) => q),
+      questionIDs: (request.questions ?? []).map((q) => q.id),
+      metadata: {
+        requestId: request.requestId,
+        waitForAnswer: request.waitForAnswer,
+        deadlineAtMs: request.deadlineAtMs,
+        draft: request.draft,
+      },
+      tool: { messageID: context.messageID, callID: request.requestId ?? "" },
+    };
+    this.pending.set(publicID, { kind: "question", card, context, request });
+    this.emit(context.directory, { type: "question.asked", properties: card });
+  }
+
+  private askLegacyDialog(context: Context, request: UIRequest): void {
     if (this.pending.has(request.id)) return;
     const calls = this.questionCalls.get(context.sessionID);
     const matched =
@@ -541,6 +551,15 @@ export class ApprovalBridge {
     }
   }
 
+  private rememberSettled(requestID: string | undefined): void {
+    if (!requestID) return;
+    this.settled.delete(requestID);
+    this.settled.add(requestID);
+    if (this.settled.size <= MAX_SETTLED_STRUCTURED_QUESTIONS) return;
+    const oldest = this.settled.values().next().value;
+    if (oldest !== undefined) this.settled.delete(oldest);
+  }
+
   private follow(p: Pending, value: string, kind: "permission" | "question"): void {
     const callID = p.request.toolCallId;
     if (callID === undefined) return;
@@ -571,7 +590,7 @@ export class ApprovalBridge {
     for (const p of this.pending.values()) {
       if (p.context.sessionID !== sessionID || (callID !== undefined && p.request.toolCallId !== callID)) continue;
       if (p.request.method === "question" && !cancel) continue;
-      if (cancel && p.request.requestId) this.settled.add(p.request.requestId);
+      if (cancel) this.rememberSettled(p.request.requestId);
       if (cancel) p.context.send({ type: "extension_ui_response", id: p.request.id, cancelled: true });
       this.remove(p, true);
     }

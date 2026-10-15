@@ -7,6 +7,61 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Sub-agent sessions spawned without a `task` tool call (for example `agent()`
+  inside an `eval` cell) now open from their OmO task record instead of
+  returning `session not found`, and appear in the session list as soon as
+  they exist or complete, so their OmO Graph cards are clickable.
+
+## [0.2.1] - 2026-10-15
+
+### Fixed
+
+- fix(extension): save OmO Graph data paths without form submission, which OpenChamber's iframe sandbox blocks
+- fix(session): accept OmO messages stored as plain-string content when titling, binding and restoring sessions instead of crashing
+- fix(api): answer OpenChamber's location eviction (`DELETE /api/debug/location`) with OpenCode's empty 204
+- fix(api): answer the v2 routes OpenChamber 2.3.2 calls instead of a generic 404/501. Plugin list and check return an empty inventory, `/api/experimental/generate` returns OpenCode's typed 503, and plugin update, credential update/activate, integration connections and session generate/background/move return `UnsupportedError`
+- fix(api): stop faking mutations. `POST /api/credential` and `PATCH /api/project/{projectID}` return `UnsupportedError` instead of keeping an in-memory credential or echoing an unsaved project
+- fix(api): reject missing or empty prompt and synthetic-context input with a typed 400 before anything reaches OmO
+- fix(vcs): back `/api/vcs/status`, `/api/vcs/diff`, `/api/vcs/branch` and `/api/vcs/base` with read-only git instead of fixed empty data
+- fix(cli): refuse `opencode-antechamber upgrade` with the antechamber upgrade command, and document OpenChamber 2.3.2's OpenCode update notice
+
+### Changed
+
+- refactor: use `findLast` for last-match scans
+- docs(api): unknown routes return 404 on both APIs; only unknown subpaths of an existing v2 session return 501
+
+## [0.2.0] - 2026-10-14
+
+### Added
+
+- feat(api): add v2 credential, integration, file-search, VCS, and synthetic-context routes
+- feat(events): replay retained SSE events and expose v2 shell, compaction, and execution terminals
+
+### Fixed
+
+- fix(session): preserve rich prompt parts, metadata, ancestry, and part identities across reloads
+- fix(runtime): retain operation ordering after caller cancellation and finalize interrupted tool cards
+- fix(rpc): close failed transports and reject responses correlated to the wrong command
+- fix(http): allow passwordless loopback origins across ports while retaining explicit origin checks
+- fix(security): validate registry records and write registry state with private permissions
+- fix(cli): advertise OpenCode API compatibility as 2.0.20
+- fix(api): return OpenCode 2.x bootstrap shapes for `/api/config`, `/api/shell`, `/api/websearch/provider` and `GET /api/mcp` so OpenChamber 2.3.2 can initialize workspaces
+- fix(api): answer v2 synthetic context admission with the admitted record and return the bare interrupt flag, so OpenChamber 2.3.2 can send prompts and stop turns
+- fix(extension): bound graph responses and display omitted-node counts
+- fix(api): carry v2 prompt attachments, agent mentions and metadata into OmO's input, admission events and message history, and answer skill references with OpenCode's tagged not-found error
+- fix(session): admit synthetic context and v1 `noReply` messages into OmO's conversation without a turn, keep them after restarts even when no prompt follows, and stop context from titling sessions
+- fix(events): keep an unscoped v2 `/api/event` stream global, as OpenChamber 2.3.2 subscribes
+- fix(rpc): after the agent exits during shutdown, kill only re-identified members of its process group
+
+### Changed
+
+- docs(api): document route statuses, response envelopes, stream framing, and unsupported capabilities
+- docs(maintainers): correct smoke paths, typecheck commands, and release guidance
+
+## [0.1.1] - 2026-10-14
+
 ### Added
 
 - Sessions now report `cost` (USD) from OmO's per-message usage, live and from
@@ -27,10 +82,6 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Sessions opened with a slash command (for example `/skill:plan Build the
   importer`) now get a generated title. OmO skips titling slash-led prompts, so
   the adapter passes the command's arguments as the native `sessionTitlePrompt`.
-- Sub-agent sessions spawned without a `task` tool call (for example `agent()`
-  inside an `eval` cell) now open from their OmO task record instead of
-  returning `session not found`, and appear in the session list as soon as
-  they exist or complete, so their OmO Graph cards are clickable.
 
 ## [0.1.0] - 2026-10-14
 

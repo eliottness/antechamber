@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { closeSync, constants, openSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { findPidfdPython } from "./pidfd.js";
 
@@ -159,7 +159,7 @@ async function stopSupportedSessionHosts(created: ReadonlyMap<string, string>, p
           try {
             // The original leader must still exist after the process-table scan:
             // a recycled group number cannot confer its ownership on new members.
-            return readlinkSync(`/proc/self/fd/${info.fd}/cwd`) === directory;
+            return readlinkSync(`/proc/self/fd/${info.fd}/cwd`) === realpathSync(directory);
           } catch (error) {
             if (error instanceof Error && "code" in error && ["ENOENT", "ESRCH"].includes(String(error.code)))
               return false;

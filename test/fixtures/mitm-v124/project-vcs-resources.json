@@ -1,0 +1,47 @@
+{
+  "requests": {
+    "projectCurrent": {
+      "method": "GET",
+      "path": "/project/current",
+      "query": "directory=%2Fworkspace",
+      "headers": {
+        "accept": "application/json"
+      },
+      "body": ""
+    },
+    "projectList": {
+      "method": "GET",
+      "path": "/project",
+      "query": "directory=%2Fworkspace",
+      "headers": {
+        "accept": "application/json"
+      },
+      "body": ""
+    },
+    "vcs": {
+      "method": "GET",
+      "path": "/vcs",
+      "query": "directory=%2Fworkspace",
+      "headers": {
+        "accept": "application/json"
+      },
+      "body": ""
+    }
+  },
+  "responses": {
+    "project": {
+      "id": "global",
+      "worktree": "/workspace",
+      "vcs": "git",
+      "time": {
+        "created": 0,
+        "updated": 0
+      },
+      "sandboxes": []
+    },
+    "vcs": {
+      "branch": null,
+      "default_branch": null
+    }
+  }
+}

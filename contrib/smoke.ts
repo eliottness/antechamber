@@ -141,13 +141,30 @@ function textOf(m: OCMessageWithParts | undefined): string {
     .join("");
 }
 
+let teardown: (() => Promise<void>) | undefined;
+
+async function runTeardown(): Promise<void> {
+  const current = teardown;
+  teardown = undefined;
+  await current?.().catch((error: unknown) => console.error("smoke teardown failed:", error));
+}
+
 async function main(): Promise<void> {
   console.log(`workspace: ${WORKSPACE}`);
   console.log("— boot adapter —");
   const server = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: WORKSPACE });
+  teardown = async () => {
+    await server.stop();
+    rmSync(WORKSPACE, { recursive: true, force: true });
+  };
   await server.start();
   const url = server.url;
   const sse = new SseCollector(url);
+  teardown = async () => {
+    sse.stop();
+    await server.stop();
+    rmSync(WORKSPACE, { recursive: true, force: true });
+  };
   await sse.start();
   console.log(`adapter: ${url}`);
 
@@ -311,15 +328,14 @@ async function main(): Promise<void> {
   const listedAfter = await api<OCSession[]>(url, "/session");
   ok("session gone from list", !(listedAfter.body ?? []).some((x) => x.id === sessionId));
 
-  sse.stop();
-  await server.stop();
+  await runTeardown();
 
   console.log(`\n${failures === 0 ? "ALL PASS" : "FAILURES"}: ${checks - failures}/${checks} checks passed`);
-  rmSync(WORKSPACE, { recursive: true, force: true });
   process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("smoke crashed:", err);
+  await runTeardown();
   process.exit(1);
 });

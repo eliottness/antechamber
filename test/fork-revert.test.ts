@@ -42,6 +42,10 @@ async function turns(manager: SessionManager, dir: string) {
   return { s, id: session.id, tree: await getEntries(s.pi) };
 }
 
+function firstText(content: string | Array<{ type: string; text?: string }> | undefined): string | undefined {
+  return typeof content === "string" ? content : content?.[0]?.text;
+}
+
 test("repeated forks transfer listeners without retaining previous sessions", { timeout: 30_000 }, async (t) => {
   const { manager, dir } = setup(t);
   const { s } = await turns(manager, dir);
@@ -1232,10 +1236,10 @@ test("restart retains live ids and reverted transcript then a prompt branches fr
   const active = branchEntries(tree);
   assert.equal(active.filter((e) => e.message?.role === "user").length, 3);
   assert.equal(
-    active.some((e) => e.message?.content?.[0]?.text === "turn-3"),
+    active.some((e) => firstText(e.message?.content) === "turn-3"),
     false,
   );
-  assert.ok(tree.entries.some((e) => e.message?.content?.[0]?.text === "turn-3"));
+  assert.ok(tree.entries.some((e) => firstText(e.message?.content) === "turn-3"));
   assert.equal(tree.entries.find((e) => e.id === s.tree.messageEntries.msg_replacement)?.parentId, saved?.targetId);
   assert.equal(s.info.revert, undefined);
 });

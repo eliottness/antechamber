@@ -175,11 +175,10 @@ test("config includes default_agent with resolved OmO name", () => {
       ANTECHAMBER_TEST_DIRECTORY: state,
     });
     // v1 /config returns { default_agent }
-    assert.deepEqual(result.v1Config, { default_agent: "OmO" });
-    // v2 /api/config returns { location, data: { default_agent } }
-    assert.ok(result.v2Config && typeof result.v2Config === "object" && "data" in result.v2Config);
-    const v2Data = (result.v2Config as Record<string, unknown>).data;
-    assert.deepEqual(v2Data, { default_agent: "OmO" });
+    assert.ok(result.v1Config && typeof result.v1Config === "object" && "default_agent" in result.v1Config);
+    assert.equal(result.v1Config.default_agent, "OmO");
+    // v2 /api/config returns the OpenCode 2.x bare ConfigEntry[] that OpenChamber folds by document `info`.
+    assert.deepEqual(result.v2Config, [{ type: "document", path: "antechamber", info: { default_agent: "OmO" } }]);
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
@@ -253,7 +252,8 @@ test("build agent is visible when no OmO name is resolved", () => {
     assert.equal(v1Agents[0].name, "build");
     assert.equal(v1Agents[0].hidden, false, "v1: build should be visible when it's the default");
     // v1 config should have default_agent: "build"
-    assert.deepEqual(result.v1Config, { default_agent: "build" });
+    assert.ok(result.v1Config && typeof result.v1Config === "object" && "default_agent" in result.v1Config);
+    assert.equal(result.v1Config.default_agent, "build");
   } finally {
     rmSync(state, { recursive: true, force: true });
   }

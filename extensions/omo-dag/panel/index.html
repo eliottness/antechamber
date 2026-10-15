@@ -50,7 +50,7 @@
       #settings input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); font: 12px var(--mono); }
       #settings .row { display: flex; justify-content: flex-end; gap: 6px; }
       #settings button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; }
-      #settings button[type="submit"] { background: var(--accent); color: var(--oc-primary-fg, #001); border-color: transparent; }
+      #settings #btn-save { background: var(--accent); color: var(--oc-primary-fg, #001); border-color: transparent; }
 
       #viewport { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none;
         background-image: radial-gradient(color-mix(in srgb, var(--muted) 22%, transparent) 1px, transparent 1px);
@@ -76,7 +76,7 @@
       .has-hover .edge.is-in { opacity: 1; stroke: var(--edge-in); stroke-width: 2.2; }
       .has-hover .edge.is-out { opacity: 1; stroke: var(--edge-out); stroke-width: 2.2; }
 
-      .node { position: absolute; left: 0; top: 0; width: 232px; height: 80px; padding: 8px 10px; text-align: left; display: flex; flex-direction: column; gap: 1px;
+      .node { position: absolute; left: 0; top: 0; width: var(--node-card-width); height: var(--node-card-height); padding: 8px 10px; text-align: left; display: flex; flex-direction: column; gap: 1px;
         background: var(--surface); border: 1px solid var(--border); border-radius: calc(var(--radius) * .6); cursor: pointer;
         font: 11px/1.35 var(--mono); color: var(--muted); transition: opacity .15s, border-color .15s, box-shadow .15s, background .15s; }
       .node:hover, .node.is-hover { border-color: color-mix(in srgb, var(--fg) 40%, var(--border)); background: var(--surface-2); }
@@ -158,7 +158,7 @@
       <form id="settings" hidden>
         <label>OmO agent directory <input name="agentDir" placeholder="~/.omo/agent (default, then ~/.pi/agent)" autocomplete="off" spellcheck="false" /></label>
         <label>Connector state directory <input name="stateDir" placeholder="~/.config/antechamber (default)" autocomplete="off" spellcheck="false" /></label>
-        <div class="row"><button type="submit">Save</button></div>
+        <div class="row"><button id="btn-save" type="button">Save</button></div>
       </form>
       <div id="viewport">
         <div id="world" hidden>

@@ -2,9 +2,17 @@ import { RPC_COMMAND_TIMEOUT_MS, type PiRpcClient } from "./pi-rpc.js";
 import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts } from "./types.js";
+import type { OCPromptPart } from "./types.js";
+import { contextMessageID, nativePromptInput } from "./prompt-parts.js";
 
 export interface SessionTreeState {
   messageEntries: Record<string, string>;
+  /** Published part identities in native content order, keyed by durable message identity. */
+  messageParts?: Record<string, string[]>;
+  /** Original rich user input; native RPC stores only adapted text and images. */
+  promptParts?: Record<string, OCPromptPart[]>;
+  /** Client prompt metadata; native RPC does not store it. */
+  promptMetadata?: Record<string, Record<string, unknown>>;
   /** Actual transport dispatch, not inferred from a card's terminal state. */
   shellDispatch?: Record<string, boolean>;
   /** Identity-only dispatched admissions; never rendered without a native entry. */
@@ -17,10 +25,12 @@ export interface TreeEntry {
   type: string;
   id: string;
   parentId: string | null;
+  customType?: string;
+  details?: unknown;
   message?: {
     role: string;
     clientMessageId?: string;
-    content?: Array<{ type: string; text?: string }>;
+    content?: string | Array<{ type: string; text?: string }>;
     command?: string;
     output?: string;
     exitCode?: number | null;
@@ -96,17 +106,18 @@ export function branchEntries(tree: Entries, leafId = tree.leafId): TreeEntry[] 
   return branch.reverse();
 }
 
-/** Live ids belong to the UI; restored ids belong to JSONL offsets. Save both. */
-export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
+function selectedLeafId(s: ManagedSession, tree: Entries): string | null | undefined {
   let leafId = tree.leafId;
   if (!s.tree.revert && s.tree.leafId !== undefined && s.tree.leafId !== null) {
     const selected = branchEntries(tree, s.tree.leafId);
     // A stale snapshot cannot discard a selection or its identity candidates.
-    if (selected.length === 0) return;
+    if (selected.length === 0) return undefined;
     if (tree.leafId === null || selected.some((entry) => entry.id === tree.leafId)) leafId = s.tree.leafId;
   }
-  const branch = branchEntries(tree, s.tree.revert ? s.tree.revert.previousLeafId : leafId);
-  const positions = new Map(branch.map((entry, index) => [entry.id, index]));
+  return leafId;
+}
+
+function pruneStaleShellTurns(s: ManagedSession, positions: ReadonlyMap<string, number>): void {
   s.tree.localShellTurns = (s.tree.localShellTurns ?? []).filter((turn) => {
     if (turn.afterEntryId === null || positions.has(turn.afterEntryId)) return true;
     const ids = new Set(turn.messages.map((message) => message.info.id));
@@ -115,6 +126,62 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
     if (s.tree.shellDispatch) delete s.tree.shellDispatch[turn.messages[1].info.id];
     return false;
   });
+}
+
+function bindOrdinaryEntry(
+  s: ManagedSession,
+  entry: TreeEntry,
+  messages: readonly OCMessageWithParts[],
+  cursor: number,
+): number {
+  const content = entry.message?.content;
+  // pi allows plain-string message content (extensions, append_user_message).
+  const text =
+    typeof content === "string"
+      ? content
+      : content
+          ?.filter((part) => part.type === "text")
+          .map((part) => part.text ?? "")
+          .join("");
+  const index = messages.findIndex(
+    (message, position) =>
+      position >= cursor &&
+      !s.localMessageIds?.has(message.info.id) &&
+      s.tree.messageEntries[message.info.id] === undefined &&
+      message.info.role === entry.message?.role &&
+      (message.info.role !== "user" ||
+        (s.tree.promptParts?.[message.info.id]
+          ? nativePromptInput(
+              message.parts
+                .filter((part) => part.type === "text")
+                .map((part) => part.text)
+                .join("\n"),
+              s.tree.promptParts[message.info.id] ?? [],
+            ).message
+          : message.parts
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("")) === text),
+  );
+  const message = messages[index];
+  if (message === undefined) return cursor;
+  s.tree.messageEntries[message.info.id] = entry.id;
+  return index + 1;
+}
+
+/** Live ids belong to the UI; restored ids belong to JSONL offsets. Save both. */
+export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
+  const leafId = selectedLeafId(s, tree);
+  if (leafId === undefined) return;
+  const branch = branchEntries(tree, s.tree.revert ? s.tree.revert.previousLeafId : leafId);
+  const positions = new Map(branch.map((entry, index) => [entry.id, index]));
+  pruneStaleShellTurns(s, positions);
+  // Admitted context carries its OpenChamber id in the native custom message.
+  for (const entry of branch) {
+    const messageID = contextMessageID(entry);
+    if (messageID !== undefined && s.messages?.some((message) => message.info.id === messageID))
+      s.tree.messageEntries[messageID] = entry.id;
+  }
   const entries = branch.filter(
     (entry) =>
       entry.type === "message" &&
@@ -122,9 +189,10 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
         entry.message?.role === "assistant" ||
         entry.message?.role === "bashExecution"),
   );
+  const localShellTurns = s.tree.localShellTurns ?? [];
   const visible = s.messages ?? [];
   const visibleIds = new Set(visible.map((message) => message.info.id));
-  const candidates = s.tree.localShellTurns
+  const candidates = localShellTurns
     .flatMap((turn) => turn.messages)
     .filter((message) => !visibleIds.has(message.info.id));
   for (const message of candidates) (s.localMessageIds ??= new Set()).add(message.info.id);
@@ -212,37 +280,17 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
       }
       continue;
     }
-    const text = entry.message?.content
-      ?.filter((part) => part.type === "text")
-      .map((part) => part.text ?? "")
-      .join("");
-    const index = messages.findIndex(
-      (message, i) =>
-        i >= cursor &&
-        !s.localMessageIds?.has(message.info.id) &&
-        s.tree.messageEntries[message.info.id] === undefined &&
-        message.info.role === entry.message?.role &&
-        (message.info.role !== "user" ||
-          message.parts
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("") === text),
-    );
-    const message = messages[index];
-    if (message) {
-      s.tree.messageEntries[message.info.id] = entry.id;
-      cursor = index + 1;
-    }
+    cursor = bindOrdinaryEntry(s, entry, messages, cursor);
   }
   // Syncs/agent events preserve an active revert's navigation pin. Only
   // revert/unrevert select it explicitly; prompt clears the pin before branching.
   if (!s.tree.revert) s.tree.leafId = leafId;
-  s.tree.localShellTurns = s.tree.localShellTurns.filter(
+  s.tree.localShellTurns = localShellTurns.filter(
     (turn) => s.tree.messageEntries[turn.messages[1].info.id] === undefined,
   );
 }
 
-export function entryForMessage(s: ManagedSession, tree: Entries, messageID: string): TreeEntry {
+function entryForMessage(s: ManagedSession, tree: Entries, messageID: string): TreeEntry {
   const entryId = s.tree.messageEntries[messageID];
   const entry = tree.entries.find((candidate) => candidate.id === entryId);
   if (!entry || !s.messages?.some((message) => message.info.id === messageID)) {

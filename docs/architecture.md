@@ -28,6 +28,12 @@ Default: **RPC subprocess** (pi documents strict JSONL framing; Node `readline`
 is not compliant because it splits on U+2028/U+2029, so we split on `\n` only).
 SDK embed stays an option behind the same internal interface.
 
+RPC transport errors and stdout EOF close the client, reject pending requests,
+and dispose the owned child process. A response correlated to the wrong command
+is an upstream protocol error. A command timeout also closes the transport, so
+the process cannot accept another operation whose native completion is unknown.
+These boundaries are implemented in `src/pi-rpc.ts`.
+
 ## Mapping concerns
 
 ### Session model
@@ -62,6 +68,16 @@ it; a new prompt clears the cutoff and starts a branch at the earlier leaf.
 Revival reapplies the saved leaf rather than assuming the newest JSONL
 message is the active branch. The reverted transcript is retained for redo.
 
+The registry also stores the published part IDs in message order under each
+stable message ID. On history reconstruction, those IDs are restored onto the
+parsed parts so clients keep their live identities after a restart. History
+with no saved mapping keeps the deterministic IDs derived from native entries.
+Adapter-authored local cards are excluded from this mapping.
+
+Fork admission holds the lifecycle slot across native tree navigation, client
+transfer, and publication of the child owner. A concurrent create or revival
+therefore cannot observe the in-flight transfer as an available process slot.
+
 Revert only changes conversation context. It never invokes a filesystem
 restore, snapshot, or diff operation. The adapter publishes the cutoff as
 `session.revert` and adds no transcript card: OpenChamber renders its own
@@ -71,10 +87,11 @@ HTTP 400 before navigation.
 History refreshes and compact/bash RPCs share the conversation-operation queue
 with prompt, fork, revert and unrevert. A refresh cannot read an intermediate
 navigation state or overwrite the cursor before its operation completes.
-An abort can release a queued shell's HTTP waiter immediately, but cannot
-release that ordering barrier: when the predecessor completes, the cancelled
-entry rejects before dispatching any bash RPC. Later operations still wait for
-the predecessor. A dispatched shell continues to use `abort_bash`.
+Cancellation releases only the caller's HTTP waiter; it does not release the
+native operation's queue lease. If a queued shell is cancelled, it rejects
+after its predecessor completes and before dispatching a bash RPC. A dispatched
+operation retains the ordering barrier until its native reply or timeout. A
+dispatched shell continues to use `abort_bash`.
 
 Adapter-authored shell cards and notices are retained in canonical in-memory
 history, not appended to the revert-notice projection. While reverted, new
@@ -94,7 +111,31 @@ not across connector restarts: adapter-only cards are not persisted transcripts.
 | `permission.asked` | pi extension-UI sub-protocol (`extension_ui_request`/`extension_ui_response`); semantics differ, map conservatively |
 | `session.error` | `extension_error`, RPC error responses |
 
-The asynchronous prompt route keeps its HTTP 204 contract. If prompt submission
+V1 prompt bodies retain supported text, file, and agent parts. Inline image
+data becomes native image input, inline text files become prompt text, and
+agent mentions become `@name` text; unsupported inline attachment MIME types
+return 400. Slash-command file parts use the same adaptation. V1 `delivery`
+defaults to `steer` and can select `queue`, which maps to native
+`streamingBehavior: followUp`.
+
+For text and reasoning, the adapter emits the v1 `message.part.delta` before
+the authoritative `message.part.updated` snapshot; the snapshot does not
+repeat the append delta. This preserves a single append in clients that also
+replace their cached part from snapshots.
+
+V2 failed steps publish usage and error data on `session.step.failed` with
+`rawFinish: "error"`, followed by `session.execution.failed`. User
+interruptions publish `session.execution.interrupted` with `reason: "user"`.
+Successful executions use `session.execution.succeeded`; failed or interrupted
+executions do not later publish a success terminal. These transitions are
+translated in `src/v2.ts`.
+
+When the RPC process exits during a turn, the adapter finalizes streaming text,
+reasoning, and tool parts before publishing the session error and idle status.
+This prevents cards from remaining in a running state after process exit
+(`src/sessions.ts`, `src/pi-event-translation.ts`).
+
+The v1 asynchronous prompt route keeps its HTTP 204 contract. If prompt submission
 rejects, including a registry write before RPC dispatch, it emits `session.error`
 and appends an assistant error message to canonical session history. The error
 name and message are available through both SSE and the message GET route; a

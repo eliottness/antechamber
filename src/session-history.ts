@@ -12,6 +12,7 @@ import {
   resultText,
 } from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
+import { contextMessageID } from "./prompt-parts.js";
 import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree.js";
 import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
@@ -31,6 +32,8 @@ interface PiFileEntry {
   message?: PiFileMessage;
   customType?: string;
   details?: unknown;
+  /** `custom_message` entries */
+  content?: unknown;
   /** `compaction` entries */
   summary?: string;
   firstKeptEntryId?: string;
@@ -45,7 +48,7 @@ interface PiFileEntry {
 export interface PiFileMessage {
   clientMessageId?: string;
   role?: string;
-  content?: Array<Record<string, unknown>>;
+  content?: string | Array<Record<string, unknown>>;
   usage?: PiUsage;
   provider?: string;
   model?: string;
@@ -94,10 +97,7 @@ export function parsePiSessionFile(s: ManagedSession, agentName: string): OCMess
   return parsePiSessionText(s, agentName, raw);
 }
 
-export function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): OCMessageWithParts[] {
-  const sessionID = s.info.id;
-  const directory = s.info.directory;
-
+function parseEntries(raw: string): PiFileEntry[] {
   const entries: PiFileEntry[] = [];
   for (const line of raw.split("\n")) {
     if (line.length === 0) continue;
@@ -108,13 +108,46 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       /* torn trailing write — ignore */
     }
   }
+  return entries;
+}
 
-  const indexOf = new Map<PiFileEntry, number>();
-  entries.forEach((e, i) => indexOf.set(e, i));
+function nativeTree(entries: readonly PiFileEntry[], leaf: PiFileEntry | undefined): Entries {
+  return {
+    leafId: leaf?.id ?? null,
+    entries: entries.flatMap((entry): TreeEntry[] => {
+      if (entry.id === undefined || entry.type === undefined) return [];
+      const message = entry.message;
+      return [
+        {
+          type: entry.type,
+          id: entry.id,
+          parentId: entry.parentId ?? null,
+          ...(message?.role === undefined
+            ? {}
+            : {
+                message: {
+                  role: message.role,
+                  ...(message.clientMessageId === undefined ? {} : { clientMessageId: message.clientMessageId }),
+                  ...(message.role === "user" ? { content: [{ type: "text", text: textOf(message.content) }] } : {}),
+                  ...(message.command === undefined ? {} : { command: message.command }),
+                  ...(message.output === undefined ? {} : { output: message.output }),
+                  ...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),
+                  ...(message.cancelled === undefined ? {} : { cancelled: message.cancelled }),
+                },
+              }),
+        },
+      ];
+    }),
+  };
+}
+
+function activeChain(
+  s: ManagedSession,
+  entries: readonly PiFileEntry[],
+): { chain: PiFileEntry[]; nativeTree: Entries } {
   const byId = new Map<string, PiFileEntry>();
-  for (const e of entries) if (typeof e.id === "string") byId.set(e.id, e);
-
-  let leaf = [...entries].reverse().find((entry) => entry.type !== "session" && typeof entry.id === "string");
+  for (const entry of entries) if (typeof entry.id === "string") byId.set(entry.id, entry);
+  let leaf = entries.findLast((entry) => entry.type !== "session" && typeof entry.id === "string");
   let selectedLeaf = s.tree.revert ? s.tree.revert.previousLeafId : s.tree.leafId;
   if (!s.tree.revert && s.tree.localShellTurns?.length) {
     // Follow a newly recorded descendant, never a sibling of the selected native branch.
@@ -133,39 +166,24 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
   if (selectedLeaf !== undefined) leaf = selectedLeaf === null ? undefined : byId.get(selectedLeaf);
   const chain: PiFileEntry[] = [];
   const seen = new Set<PiFileEntry>();
-  for (let cur = leaf; cur !== undefined && !seen.has(cur); ) {
-    seen.add(cur);
-    chain.push(cur);
-    cur = typeof cur.parentId === "string" ? byId.get(cur.parentId) : undefined;
+  for (let entry = leaf; entry !== undefined && !seen.has(entry); ) {
+    seen.add(entry);
+    chain.push(entry);
+    entry = typeof entry.parentId === "string" ? byId.get(entry.parentId) : undefined;
   }
   chain.reverse();
-  const nativeTree: Entries = {
-    leafId: leaf?.id ?? null,
-    entries: entries.flatMap((entry): TreeEntry[] => {
-      if (entry.id === undefined || entry.type === undefined) return [];
-      const m = entry.message;
-      return [
-        {
-          type: entry.type,
-          id: entry.id,
-          parentId: entry.parentId ?? null,
-          ...(m?.role === undefined
-            ? {}
-            : {
-                message: {
-                  role: m.role,
-                  ...(m.clientMessageId === undefined ? {} : { clientMessageId: m.clientMessageId }),
-                  ...(m.role === "user" ? { content: [{ type: "text", text: textOf(m.content) }] } : {}),
-                  ...(m.command === undefined ? {} : { command: m.command }),
-                  ...(m.output === undefined ? {} : { output: m.output }),
-                  ...(m.exitCode === undefined ? {} : { exitCode: m.exitCode }),
-                  ...(m.cancelled === undefined ? {} : { cancelled: m.cancelled }),
-                },
-              }),
-        },
-      ];
-    }),
-  };
+  return { chain, nativeTree: nativeTree(entries, leaf) };
+}
+
+export function parsePiSessionText(s: ManagedSession, agentName: string, raw: string): OCMessageWithParts[] {
+  const sessionID = s.info.id;
+  const directory = s.info.directory;
+
+  const entries = parseEntries(raw);
+
+  const indexOf = new Map<PiFileEntry, number>();
+  entries.forEach((e, i) => indexOf.set(e, i));
+  const { chain, nativeTree } = activeChain(s, entries);
   if (s.tree.localShellTurns?.length) bindMessageEntries(s, nativeTree);
 
   const out: OCMessageWithParts[] = [];
@@ -192,7 +210,40 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     }
     if (e.type === "compaction" && typeof e.summary === "string" && typeof e.firstKeptEntryId === "string") {
       // Not a run boundary: an automatic compaction can sit between steps of one turn.
-      out.push(...compactionMessages(s, e.firstKeptEntryId, e.summary, entryTime(e), currentModel));
+      out.push(...compactionMessages(s, e.id ?? `r${indexOf.get(e) ?? 0}`, e.summary, entryTime(e), currentModel));
+      continue;
+    }
+    const contextID = contextMessageID(e);
+    if (contextID !== undefined) {
+      endRun();
+      const content = Array.isArray(e.content)
+        ? (e.content as Array<Record<string, unknown>>)
+        : typeof e.content === "string"
+          ? [{ type: "text", text: e.content }]
+          : [];
+      const time = entryTime(e);
+      if (e.id) s.tree.messageEntries[contextID] = e.id;
+      out.push({
+        info: {
+          id: contextID,
+          sessionID,
+          role: "user",
+          time: { created: time },
+          agent: agentName,
+          model: currentModel,
+          synthetic: true,
+        },
+        parts: [
+          {
+            id: `prt_${contextID}_context`,
+            sessionID,
+            messageID: contextID,
+            type: "text",
+            text: textOf(content),
+            time: { start: time, end: time },
+          },
+        ],
+      });
       continue;
     }
     if (e.type !== "message") continue;
@@ -434,7 +485,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     }
     // system / custom entries are not rendered
   }
-  const lastAssistant = [...chain].reverse().find((entry) => entry.message?.role === "assistant");
+  const lastAssistant = chain.findLast((entry) => entry.message?.role === "assistant");
   const stopReason = lastAssistant?.message?.stopReason;
   if (lastAssistant !== undefined && ["stop", "length", "error", "aborted"].includes(stopReason ?? "")) {
     finishProviderToolParts(
@@ -444,8 +495,10 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     );
   }
   s.todoBridge = new TodoBridge(sessionID);
+  // Tree-less snapshots predate branch selection and have no competing ancestor chain.
+  const todoEntries = chain.length === 0 && s.tree.leafId === undefined && !s.tree.revert ? entries : chain;
   s.todoBridge.restore(
-    entries,
+    todoEntries,
     new Map([...toolParts].flatMap(([callID, parts]) => (parts[0] ? [[callID, parts[0]] as const] : []))),
   );
   // Completions can be appended after the newest message, outside its ancestor chain.
@@ -496,6 +549,23 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       parts: [{ id: `prt_${messageID}_pending`, sessionID, messageID, type: "text", text }],
     });
     (s.inputs ??= new Map()).set(messageID, { text, delivery, accepted: true, delivered: false });
+  }
+  for (const message of out) {
+    const metadata = s.tree.promptMetadata?.[message.info.id];
+    if (message.info.role === "user" && metadata !== undefined) message.info.metadata = metadata;
+    const inputParts = s.tree.promptParts?.[message.info.id];
+    if (message.info.role === "user" && inputParts !== undefined)
+      message.parts = inputParts.map((part, index) => ({
+        ...part,
+        id: part.id ?? `prt_${message.info.id}_${index}`,
+        sessionID,
+        messageID: message.info.id,
+      }));
+    const identities = s.tree.messageParts?.[message.info.id];
+    for (const [index, part] of message.parts.entries()) {
+      const identity = identities?.[index];
+      if (identity !== undefined) part.id = identity;
+    }
   }
   return out;
 }

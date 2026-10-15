@@ -32,7 +32,7 @@ Published package = `dist/` + `bin/` shims + the built OmO Graph extension; the 
 | Why fork/revert/shutdown work as they do | `docs/architecture.md` | evidence-backed OmO protocol notes |
 | OmO deployment, systemd, teardown | `docs/backends/omo.md` | |
 | Release flow | `docs/releasing.md`, `.github/workflows/release.yml` | tag `vX.Y.Z` must equal package version |
-| Per-module responsibility table | `docs/development.md` | current for `src/`; stale on `contrib/` paths |
+| Per-module responsibility table | `docs/development.md` | source and smoke paths |
 
 ## CODE MAP
 Centrality measured by counting relative imports across src/test/contrib.
@@ -93,5 +93,5 @@ CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then
 - Teardown of detached OmO task hosts is Linux-only (pidfd via Python, `/proc`, GNU `tail --pid`). On other platforms it warns and skips.
 - `reference/` (gitignored) holds shallow clones of openchamber and pi-mono for protocol lookups. It is not part of the build and Biome ignores it.
 - `.omo/` is gitignored and Biome-ignored.
-- Docs drift: `docs/development.md` and CONTRIBUTING point at `contrib/omo-smoke.ts` and `contrib/smoke/`; the real paths are `contrib/omo/`.
-  CONTRIBUTING calls typecheck `tsc --noEmit`; it actually runs `tsc -p tsconfig.check.json`.
+- The route smoke reads the maintained static route table in `docs/api-surface.md`; parameterized routes are documented separately.
+- `npm run typecheck` runs `tsc -p tsconfig.check.json` and `tsc -p extensions/omo-dag/tsconfig.json`.

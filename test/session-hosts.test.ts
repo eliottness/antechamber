@@ -159,6 +159,7 @@ for (const scenario of [
       read: fs.readFileSync,
       dirs: fs.readdirSync,
       link: fs.readlinkSync,
+      realpath: fs.realpathSync,
       open: fs.openSync,
       close: fs.closeSync,
       spawn: cp.spawn,
@@ -209,6 +210,10 @@ for (const scenario of [
       const numeric = path.match(/^\/proc\/(10000000[1-5])\//);
       return numeric ? table.get(Number(numeric[1])) : undefined;
     };
+    t.mock.method(fs, "realpathSync", (path: fs.PathLike, ...args: unknown[]) => {
+      if (String(path) === cwd) return cwd;
+      return Reflect.apply(original.realpath, fs, [path, ...args]);
+    });
     t.mock.method(fs, "readlinkSync", (path: fs.PathLike, ...args: unknown[]) => {
       const record = recordAt(String(path));
       if (!record) return Reflect.apply(original.link, fs, [path, ...args]);
