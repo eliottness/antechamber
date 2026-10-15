@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-15
+
 ### Fixed
 
 - OmO Graph: panning no longer gets stuck following the mouse after the button
