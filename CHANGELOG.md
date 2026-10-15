@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-15
+
 ### Added
 
 - OmO terminal monitors now appear in OpenChamber as read-only child sessions of
