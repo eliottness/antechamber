@@ -423,8 +423,7 @@ settingsToggle.addEventListener("click", () => {
   settingsToggle.setAttribute("aria-expanded", String(!ui.settings.hidden));
   if (!ui.settings.hidden) ui.settings.querySelector("input")?.focus();
 });
-ui.settings.addEventListener("submit", (event) => {
-  event.preventDefault();
+$<HTMLButtonElement>("#btn-save").addEventListener("click", () => {
   const data = new FormData(ui.settings);
   const next: Paths = {};
   const agentDir = String(data.get("agentDir") ?? "").trim();
