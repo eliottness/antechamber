@@ -144,6 +144,8 @@ export class PiRpcClient extends EventEmitter {
           ...(process.env.SENPI_RPC_CLIENT_CAPABILITIES ?? "").split(","),
           "auto_title_sessions",
           "question",
+          // Extension `pi.rpc.emit` frames, e.g. the terminal extension's monitor state.
+          "extension_events",
         ]
           .map((value) => value.trim())
           .filter(Boolean),

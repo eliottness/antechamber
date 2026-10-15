@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OmO terminal monitors now appear in OpenChamber as read-only child sessions of
+  the session that started them. They are listed under Subagents and keep a live
+  sidebar dot while the watch runs, and their transcript shows the watched
+  command, filter, event count and how the watch ended. A session with a live
+  watch is no longer evicted as idle, which used to stop the watch.
+
 ## [0.2.4] - 2026-10-15
 
 ### Added

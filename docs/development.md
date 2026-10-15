@@ -35,6 +35,7 @@ One line per module in `src/`:
 | `approvals.ts` | Permission/question bridging through the agent's extension-UI protocol |
 | `question-forms.ts` | Converts pending native questions into v2 forms and parses form replies |
 | `subagents.ts` | Subagent/task card tracking and child-transcript resolution |
+| `monitor-sessions.ts` | OmO terminal monitors as read-only child sessions |
 | `todo-bridge.ts` | Translates the agent's todo tool calls into OpenCode todo state |
 | `thinking-levels.ts` | Maps OmO thinking levels onto OpenChamber's model/variant picker |
 | `tool-map.ts` | Maps pi/OmO tool-call events onto OpenCode v2 `ToolState` |

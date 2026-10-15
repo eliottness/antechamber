@@ -236,6 +236,40 @@ that start an agent turn still use the agent lifecycle events for completion.
 This is a connector-only mapping of the installed OmO protocol, not a change
 to OmO or its settings.
 
+### Background monitors
+
+OpenChamber has no surface for an agent's background watches, but it already
+lists child sessions under Subagents and gives each sidebar row a live dot.
+The connector therefore shows each OmO terminal monitor as a read-only child
+session of the session that started it: `busy` while the watch is live, `idle`
+once it ends. Its transcript is one `bash` tool card holding the watched
+command, the filter, the event count and how the watch ended. The parent
+session's own status is untouched, so the composer, queued messages, fork and
+revert keep working while a watch waits. A live watch does keep the parent's
+agent process out of idle eviction (`ANTECHAMBER_IDLE_TIMEOUT_MS`), because
+evicting it would stop the watch.
+
+Evidence, from the installed `@code-yeongyu/senpi` bundle inspected on
+October 15, 2026:
+
+- `core/extensions/builtin/terminal/extension-state.js` (`bundleSinks`) sends
+  `pi.rpc.emit("terminal_monitor_state", {activeCount, monitors})` on every
+  monitor change and fire, and `pi.rpc.emit("terminal_monitor_ended", event)`
+  when one ends. `session-bundle.js` (`bind`) re-publishes the snapshot when
+  the terminal bundle binds, so a revived session reports its restored
+  persistent watches again.
+- `modes/rpc/connection-handler.js` forwards those as
+  `{type: "extension_event", name, data}` only to clients that advertise the
+  `extension_events` capability, which the connector now does.
+- `core/extensions/builtin/monitor-state-event.js` defines the ended reasons
+  `exit`, `timeout`, `killed` and `disposed`.
+- Background bash sessions (`terminal-background-sessions`) are published
+  only on OmO's in-process event bus, not over RPC, so they are not shown yet.
+
+Monitor child sessions live only in memory, like adapter-authored cards. A
+watch the user deletes is not recreated by a later snapshot. When the agent
+process exits, its watches are marked ended.
+
 ### Capability gaps to decide explicitly
 
 - **Permissions/questions**: OpenCode has permission prompts and elicitation;
