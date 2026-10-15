@@ -19,8 +19,8 @@ concurrency:
 
 jobs:
   release:
-    # The release commit itself is not released again (it only reaches this
-    # workflow when RELEASE_TOKEN is a PAT; GITHUB_TOKEN pushes trigger nothing).
+    # The release commit itself is not released again (it reaches this workflow
+    # when pushed with the deploy key or a PAT; GITHUB_TOKEN pushes trigger nothing).
     if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
     runs-on: ubuntu-latest
     steps:
@@ -31,6 +31,9 @@ jobs:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          # The main ruleset only lets deploy keys push outside a PR; when set,
+          # this write deploy key takes precedence for git fetch and push.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
