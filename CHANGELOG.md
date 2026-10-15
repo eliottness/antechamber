@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-10-15
+
+- fix(session): resend bare /<skill> commands as /skill:<name>
+
 ## [0.2.7] - 2026-10-15
 
 ### Fixed
