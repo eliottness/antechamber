@@ -18,6 +18,7 @@ import {
   runSlashCommand,
 } from "./session-commands.js";
 import { envSetting } from "./config.js";
+import type { SelfUpdateResult } from "./self-update.js";
 
 export interface RouteServices {
   readonly sessions: SessionManager;
@@ -26,6 +27,7 @@ export interface RouteServices {
   readonly body: (req: IncomingMessage) => Promise<unknown>;
   readonly catalog: () => Promise<Catalog>;
   readonly broadcast: (directory: string, event: OCEvent | TodoUpdated) => void;
+  readonly selfUpdate: () => Promise<SelfUpdateResult>;
 }
 
 // This connector is not opencode — it only implements an OpenCode API subset.

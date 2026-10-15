@@ -8,6 +8,7 @@ import { miscRoute } from "./misc-routes.js";
 import { getAgentName } from "./agent-name.js";
 import { nativePromptInput, parsePromptParts } from "./prompt-parts.js";
 import { RequestBodyError } from "./http.js";
+import { SelfUpdateUnsupportedError } from "./self-update.js";
 import { announceSessionError, compactSession, getCommands, unsupportedShare } from "./session-commands.js";
 import type { ModelSelection } from "./thinking-levels.js";
 import type { OCPromptBody, OCProject, OCSession } from "./types.js";
@@ -34,7 +35,12 @@ function applyArchivedFilter(sessions: OCSession[], archived: string | null) {
   return sessions;
 }
 
-function handleV1GlobalRoute(res: ServerResponse, path: string, method: string): boolean {
+async function handleV1GlobalRoute(
+  services: RouteServices,
+  res: ServerResponse,
+  path: string,
+  method: string,
+): Promise<boolean> {
   if (method === "GET" && path === "/global/health") {
     json(
       res,
@@ -43,15 +49,19 @@ function handleV1GlobalRoute(res: ServerResponse, path: string, method: string):
     );
     return true;
   }
-  if ((method === "POST" || method === "GET") && path === "/global/upgrade") {
-    json(
-      res,
-      409,
-      errorBody(
-        "UnsupportedError",
-        "This endpoint is served by antechamber (a pi adapter), not a real opencode install — there is nothing to upgrade.",
-      ),
-    );
+  if (method === "POST" && path === "/global/upgrade") {
+    // The requested OpenCode `target` does not apply: this upgrades antechamber itself.
+    try {
+      const result = await services.selfUpdate();
+      json(res, 200, { success: true, version: result.to, updated: result.updated });
+    } catch (error) {
+      if (!(error instanceof SelfUpdateUnsupportedError)) throw error;
+      json(res, 409, errorBody("UnsupportedError", error.message));
+    }
+    return true;
+  }
+  if (method === "GET" && path === "/global/upgrade") {
+    json(res, 409, errorBody("UnsupportedError", "Upgrade antechamber with POST /global/upgrade."));
     return true;
   }
   return false;
@@ -82,7 +92,7 @@ export async function handleV1(
   method: string,
   directory: string,
 ): Promise<void> {
-  if (handleV1GlobalRoute(res, path, method)) return;
+  if (await handleV1GlobalRoute(services, res, path, method)) return;
 
   // --- sessions ---
   const misc = await miscRoute(method, path, url, directory);

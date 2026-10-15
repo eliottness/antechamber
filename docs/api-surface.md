@@ -28,7 +28,7 @@ invented resource IDs.
 | Route | Success | Response or behavior |
 |---|---:|---|
 | `GET /global/health` | 200 | JSON `{healthy: true}` and optional configured compatibility `version`. |
-| `GET /global/upgrade` | 409 | `UnsupportedError`; there is no OpenCode installation to upgrade. Unsupported; static-only. |
+| `GET /global/upgrade` | 409 | `UnsupportedError`; upgrades use `POST`. Static-only. |
 | `GET /session` | 200 | `OCSession[]`; accepts `directory` and `archived` filters. |
 | `POST /session` | 200 | Created `OCSession`. |
 | `GET /session/status` | 200 | Map of session IDs to status objects. |
@@ -126,7 +126,7 @@ invented resource IDs.
 | POST | `/provider/{providerID}/oauth/callback` | 400 | `UnsupportedError`. Unsupported. |
 | POST or DELETE | `/mcp/{name}/connect`, `/mcp/{name}/disconnect`, `/mcp/{name}/auth` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/mcp/{name}/auth/callback`, `/mcp/{name}/auth/authenticate` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/global/upgrade` | 409 | `UnsupportedError`; there is no OpenCode installation to upgrade. Unsupported. |
+| POST | `/global/upgrade` | 200 | Upgrades antechamber itself to the latest npm release (the OpenCode `target` is ignored) and returns `{success: true, version, updated}`; OpenChamber 1.x then restarts the process. 409 `UnsupportedError` when this is not a global npm/bun install or `npm root -g` cannot run; registry and installer failures are `UnknownError` 500 without installer output or registry credentials. |
 | GET | `/api/agent/{agentID}` | 200 | `{location, data: Agent}`; 404 for an unknown agent. |
 | PATCH | `/api/project/{projectID}` | 400 | `UnsupportedError`; project updates are unavailable with OmO. Unsupported. |
 | DELETE | `/api/credential/{credentialID}` | 204 | Idempotent no-op; no credentials are retained. |

@@ -73,12 +73,22 @@ Needs Node.js 22+ and OmO's `omo` command on PATH (`bun add -g omo-ai`).
 npm i -g antechamber
 # or: bun add -g antechamber
 antechamber doctor
-antechamber setup
+antechamber setup --auto-update
 ```
 
 `setup` updates OpenChamber's `opencodeBinary`, preserves all other settings,
 and backs up an existing settings file before changing it. Restart OpenChamber
 after setup. Preview changes with `antechamber setup --dry-run`.
+
+`--auto-update` keeps antechamber current without any action from you. It
+writes a small launcher, `~/.config/antechamber/opencode-antechamber`, and points
+OpenChamber at it. Each time OpenChamber starts antechamber, the launcher
+checks npm for a newer release once the server is up and installs it with the
+package manager that owns the global install. The new version runs from the
+next start; startup never waits on the network, and an offline start just
+skips the check. It needs a global npm or bun install, so it is refused for
+source checkouts and `npx`. Drop the flag (plain `antechamber setup`) to point
+OpenChamber back at the `antechamber` bin and stop auto-updates.
 
 Optionally, add the bundled [OmO Graph extension](#openchamber-extension-omo-graph):
 `setup` ends by printing its folder
@@ -131,28 +141,33 @@ antechamber serve --hostname 127.0.0.1 --port 4096
 | Command | Purpose / options |
 |---|---|
 | `antechamber serve` | OpenCode-compatible server; `--hostname`/`--host`, `--port`, `--directory`. Bare `antechamber` also starts the server. |
-| `antechamber setup` | Configure OpenChamber; `--settings <file>`, `--profile <dir>`, `--binary <path>`, `--dry-run`, `--systemd [unit]`, `--pi-binary <path>`, `--restart`. |
+| `antechamber setup` | Configure OpenChamber; `--settings <file>`, `--profile <dir>`, `--binary <path>`, `--dry-run`, `--systemd [unit]`, `--pi-binary <path>`, `--restart`, `--auto-update`. |
 | `antechamber doctor` | Read-only Node, backend, agent/state directories, teardown, OpenChamber and auth checks; `--json`, `--settings <file>`, `--profile <dir>`. Exits 1 on any FAIL; warnings do not fail. |
+| `antechamber upgrade` | Install the latest release over a global npm or bun install, with the package manager that owns it. Refused for source checkouts and `npx`. |
 | `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.0.20` for OpenChamber. |
 | `antechamber help` | Usage and options; also `--help`/`-h`. |
 
 ## Upgrade, uninstall and rollback
 
+With `setup --auto-update` there is nothing to do: each start installs the
+latest release for the next one. Otherwise:
+
 ```bash
-npm update -g antechamber
-# or: bun add -g antechamber
+antechamber upgrade
+# equivalent: npm update -g antechamber (or: bun add -g antechamber)
 ```
 
 Restart OpenChamber, or `systemctl --user restart openchamber.service` for a
 managed service. Run `antechamber doctor` again. If the executable moved,
 rerun `antechamber setup`.
 
-OpenChamber 2.3.2 may announce a newer OpenCode release. antechamber reports
-OpenCode API 2.0.20, the minimum OpenChamber accepts, and OpenChamber offers
-no signal that keeps that check while hiding the notice. Dismiss it or turn off
-OpenCode update notifications in OpenChamber. Its Update action runs
-`opencode-antechamber upgrade`, which refuses; upgrade antechamber with the
-commands above.
+OpenChamber 2.3.2 shows an "OpenCode update" notice because antechamber
+reports OpenCode API 2.0.20, the minimum OpenChamber accepts. The notice names
+an OpenCode version, but its **Update** button runs `<opencodeBinary> upgrade`,
+which upgrades antechamber itself (a no-op when it is already current). Click
+**Reload OpenCode** afterwards to restart onto the new version. OpenChamber
+1.x shows no notice; its `POST /global/upgrade` call upgrades antechamber the
+same way.
 
 To roll back wiring, copy the backup printed by setup over the settings file:
 

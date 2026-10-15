@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createContext, settingsPath } from "../src/commands/context.js";
+import { doctor } from "../src/commands/doctor.js";
 import { setup } from "../src/commands/setup.js";
+import { SelfUpdateUnsupportedError } from "../src/self-update.js";
 
 function fixture(t: TestContext) {
   const home = fs.mkdtempSync(join(tmpdir(), "antechamber-setup-"));
@@ -186,6 +188,65 @@ test("PATH launcher must belong to this installation otherwise setup uses the pa
       line.includes(join(home, "antechamber")),
     ),
   );
+});
+
+function globalInstall(t: TestContext) {
+  const base = fixture(t);
+  const npmRoot = join(base.home, "npm", "lib", "node_modules");
+  const cliPath = join(npmRoot, "antechamber", "dist", "cli.js");
+  fs.mkdirSync(join(npmRoot, "antechamber", "dist"), { recursive: true });
+  fs.writeFileSync(cliPath, "#!/usr/bin/env node\n", { mode: 0o755 });
+  const binary = join(base.home, "npm", "bin", "antechamber");
+  fs.mkdirSync(join(base.home, "npm", "bin"));
+  fs.symlinkSync(cliPath, binary);
+  const ctx = {
+    ...base.ctx,
+    cliPath,
+    env: { PATH: join(base.home, "npm", "bin") },
+    exec: (command: string, args: readonly string[]) => {
+      assert.deepEqual([basename(command), ...args], ["npm", "root", "-g"]);
+      return npmRoot;
+    },
+  };
+  return { home: base.home, ctx, binary, launcher: join(base.home, ".config", "antechamber", "opencode-antechamber") };
+}
+
+test("auto-update setup points OpenChamber at an executable launcher for the global install", (t) => {
+  const { home, ctx, binary, launcher } = globalInstall(t);
+  const settings = join(home, "settings.json");
+  setup({ settings, autoUpdate: true }, ctx);
+  assert.equal(JSON.parse(fs.readFileSync(settings, "utf8")).opencodeBinary, launcher);
+  const text = fs.readFileSync(launcher, "utf8");
+  assert.ok(text.startsWith("#!/bin/sh\n"));
+  assert.ok(text.includes("ANTECHAMBER_AUTO_UPDATE=1\nexport ANTECHAMBER_AUTO_UPDATE\n"));
+  assert.ok(text.includes(`exec '${binary}' "$@"`));
+  assert.equal(fs.statSync(launcher).mode & 0o777, 0o755);
+
+  const written = fs.readFileSync(settings, "utf8");
+  setup({ settings, autoUpdate: true }, ctx);
+  assert.equal(fs.readFileSync(settings, "utf8"), written);
+  assert.equal(fs.readFileSync(launcher, "utf8"), text);
+  assert.equal(fs.readdirSync(home).filter((name) => name.includes(".bak-")).length, 0);
+
+  const check = doctor({ settings }, ctx).checks.find((entry) => entry.name === "openchamber-settings");
+  assert.equal(check?.status, "PASS");
+  assert.ok(check?.message.includes(binary));
+});
+
+test("auto-update dry-run writes neither the launcher nor settings", (t) => {
+  const { home, ctx, launcher } = globalInstall(t);
+  const settings = join(home, "settings.json");
+  const lines = setup({ settings, autoUpdate: true, dryRun: true }, ctx);
+  assert.ok(lines.some((line) => line.startsWith(`Would write auto-update launcher ${launcher}`)));
+  assert.equal(fs.existsSync(launcher), false);
+  assert.equal(fs.existsSync(settings), false);
+});
+
+test("auto-update setup refuses an installation that cannot update itself", (t) => {
+  const { home, ctx } = fixture(t);
+  const settings = join(home, "settings.json");
+  assert.throws(() => setup({ settings, autoUpdate: true }, ctx), SelfUpdateUnsupportedError);
+  assert.equal(fs.existsSync(settings), false);
 });
 
 test("setup points at the bundled OmO Graph extension once it is built", (t) => {

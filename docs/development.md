@@ -6,10 +6,12 @@ One line per module in `src/`:
 
 | File | Responsibility |
 |---|---|
-| `cli.ts` | CLI entry point: argument parsing and lazy dispatch to serve, setup, doctor, version and help |
+| `cli.ts` | CLI entry point: argument parsing and lazy dispatch to serve, setup, doctor, upgrade, version and help |
 | `version.ts` | Runtime package.json version and the separate OpenCode 2.x compatibility constant |
 | `commands/serve.ts` | Default/OpenCode-compatible server startup, bind guard and shutdown signals |
-| `commands/setup.ts` | OpenChamber settings and optional systemd drop-in plans, backups and configuration |
+| `commands/setup.ts` | OpenChamber settings, optional auto-update launcher and systemd drop-in plans, backups and configuration |
+| `commands/upgrade.ts` | `antechamber upgrade` output around `selfUpdate` |
+| `self-update.ts` | Global npm/bun install detection, npm registry lookup, and the single-flight installer run behind `upgrade`, `POST /global/upgrade` and `ANTECHAMBER_AUTO_UPDATE` |
 | `commands/doctor.ts` | Read-only installation diagnostics and text/JSON reporting |
 | `commands/context.ts` | Injectable filesystem/environment/exec dependencies, executable and settings resolution |
 | `commands/help.ts` | Command and option reference printed by help |

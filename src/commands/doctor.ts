@@ -4,6 +4,8 @@ import { detectAgentName } from "../agent-name.js";
 import { agentBinary, defaultStateDir, envSetting, isPlainPi } from "../config.js";
 import { findPidfdPython } from "../pidfd.js";
 import {
+  autoUpdateLauncherPath,
+  autoUpdateLauncherTarget,
   type CommandContext,
   createContext,
   isPackageBinary,
@@ -103,11 +105,17 @@ export function doctor(options: SettingsOptions = {}, ctx: CommandContext = crea
   else {
     try {
       const configured = readSettings(settings, ctx).opencodeBinary;
-      const matches = typeof configured === "string" && isPackageBinary(configured, ctx);
+      const launcher = autoUpdateLauncherPath(ctx);
+      const launcherTarget =
+        configured === launcher && ctx.fs.existsSync(launcher)
+          ? autoUpdateLauncherTarget(ctx.fs.readFileSync(launcher, "utf8"))
+          : undefined;
+      const viaLauncher = launcherTarget !== undefined && isPackageBinary(launcherTarget, ctx);
+      const matches = viaLauncher || (typeof configured === "string" && isPackageBinary(configured, ctx));
       add(
         "openchamber-settings",
         matches ? "PASS" : "WARN",
-        `${settings}: opencodeBinary=${JSON.stringify(configured ?? null)}${matches ? "" : "; does not point at this antechamber installation"}`,
+        `${settings}: opencodeBinary=${JSON.stringify(configured ?? null)}${viaLauncher ? ` (auto-update launcher for ${launcherTarget})` : matches ? "" : "; does not point at this antechamber installation"}`,
       );
     } catch (error) {
       add("openchamber-settings", "WARN", error instanceof Error ? error.message : String(error));

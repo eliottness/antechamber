@@ -19,7 +19,8 @@ inputs and do not have `ANTECHAMBER_` or `OCPI_` aliases.
 | `ANTECHAMBER_MAX_LIVE` | `OCPI_MAX_LIVE` | `8` | Maximum number of concurrently live agent processes. Must be a positive integer. |
 | `ANTECHAMBER_DEBUG` | `OCPI_DEBUG` | unset (disabled) | Any non-empty value enables request/event debug logging. |
 | `ANTECHAMBER_DEBUG_LOG` | `OCPI_DEBUG_LOG` | `<os tmpdir>/antechamber-debug-<uid>.log` (created mode `0600`) | Path for the debug log when `ANTECHAMBER_DEBUG` is set. A write failure disables logging for the rest of the process and prints one warning; it never crashes the server. |
-| `ANTECHAMBER_OPENCODE_COMPAT_VERSION` | `OCPI_OPENCODE_COMPAT_VERSION` | unset | Overrides the OpenCode version antechamber reports in `GET /global/health` and `GET /api/info`. Unset, `/global/health` omits `version`, so OpenChamber 1.x's update checker reports no available update, and `/api/info` reports `2.0.20`, the minimum OpenCode version OpenChamber 2.3.2 accepts. OpenChamber 2.3.2 compares that value with the latest OpenCode release and can show an "OpenCode update" notice that does not apply to antechamber; see [Upgrade, uninstall and rollback](../README.md#upgrade-uninstall-and-rollback). |
+| `ANTECHAMBER_AUTO_UPDATE` | `OCPI_AUTO_UPDATE` | unset | `1` makes `serve` check npm for a newer antechamber after it starts listening and install it in the background with the package manager that owns the global install; the new version runs from the next start. Failures and unsupported installs (source checkout, `npx`) are logged to stderr and never stop the server. The launcher written by `antechamber setup --auto-update` sets it. The installer is the `npm` beside the running `node` (else `npm` on PATH) or `$BUN_INSTALL/bin/bun` (default `~/.bun`, else `bun` on PATH), so a service PATH without those directories still works. The version lookup reads `npm_config_registry` (credentials in it are stripped) but not `.npmrc`. |
+| `ANTECHAMBER_OPENCODE_COMPAT_VERSION` | `OCPI_OPENCODE_COMPAT_VERSION` | unset | Overrides the OpenCode version antechamber reports in `GET /global/health` and `GET /api/info`. Unset, `/global/health` omits `version`, so OpenChamber 1.x's update checker reports no available update, and `/api/info` reports `2.0.20`, the minimum OpenCode version OpenChamber 2.3.2 accepts. OpenChamber 2.3.2 compares that value with the latest OpenCode release and can show an "OpenCode update" notice whose Update button upgrades antechamber; see [Upgrade, uninstall and rollback](../README.md#upgrade-uninstall-and-rollback). |
 | `OMO_CODING_AGENT_DIR` | `SENPI_CODING_AGENT_DIR`, `PI_CODING_AGENT_DIR` (read directly, in that order, matching OmO; no `ANTECHAMBER_`/`OCPI_` prefix) | `~/.omo/agent` (`~/.pi/agent` when the backend binary is `pi`) | Agent state directory: sessions, child transcripts, and config discovery (agent name, models). |
 | `OMO_RPC_CLIENT_CAPABILITIES` | none | inherited, then adapter additions | Comma-separated RPC client capabilities inherited from the environment. Antechamber merges this list first with `SENPI_RPC_CLIENT_CAPABILITIES`, trims and deduplicates entries, then adds `auto_title_sessions` and `question`; it writes the combined list to both variables for the agent process. |
 | `SENPI_RPC_CLIENT_CAPABILITIES` | none | inherited, then adapter additions | Comma-separated RPC client capabilities merged after `OMO_RPC_CLIENT_CAPABILITIES`. Entries are trimmed and deduplicated; antechamber always adds `auto_title_sessions` and `question`, then writes the combined list to both capability variables for the agent process. |
@@ -35,6 +36,15 @@ Quick start section and `antechamber --help`.
 points at a different installation. `--binary <path>` selects an explicit
 executable. The npm bin works directly; the `bin/opencode-antechamber`
 launcher is only needed in source checkouts.
+
+`--auto-update` instead writes `<state dir>/opencode-antechamber` (the
+`ANTECHAMBER_STATE_DIR` default, `~/.config/antechamber`), a `/bin/sh`
+launcher that exports `ANTECHAMBER_AUTO_UPDATE=1` and execs the executable
+above, and points `opencodeBinary` at it. It requires a global npm or bun
+install (detected from `npm root -g` or `$BUN_INSTALL`, default `~/.bun`) and
+fails otherwise. `doctor` accepts the launcher when it targets this
+installation. Running setup without the flag points `opencodeBinary` back at
+the executable and leaves the launcher file unused.
 
 Settings-file precedence:
 
