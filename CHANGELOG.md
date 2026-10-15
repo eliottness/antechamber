@@ -30,6 +30,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
   `/mcp auth-complete` with a paste-the-code step. A completed sign-in emits
   `mcp.status.changed`.
 
+### Fixed
+
+- OmO Graph: dragging the graph no longer stops after a fraction of a second.
+  The previous stuck-pan fix also ended the drag when the panel lost focus or
+  pointer capture, which can happen while the button is still held; the drag
+  now ends only on release, cancel, or a move without the button held.
+
 ## [0.2.4] - 2026-10-15
 
 ### Added

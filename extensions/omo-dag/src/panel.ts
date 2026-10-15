@@ -131,8 +131,6 @@ window.addEventListener("pointermove", (event) => {
 });
 window.addEventListener("pointerup", (event) => endPan(event.pointerId, true));
 window.addEventListener("pointercancel", (event) => endPan(event.pointerId));
-ui.viewport.addEventListener("lostpointercapture", (event) => endPan(event.pointerId));
-window.addEventListener("blur", () => endPan());
 ui.viewport.addEventListener(
   "wheel",
   (event) => {
