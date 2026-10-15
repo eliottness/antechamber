@@ -377,6 +377,21 @@ test("slash command reuses the client messageID for its user message", { timeout
   );
 });
 
+test("bare skill slash command resends as OmO's /skill: form", { timeout: 30_000 }, async (t) => {
+  const { url } = await startServer(t);
+  const sessionId = await createSession(url);
+
+  const response = await fetch(`${url}/session/${sessionId}/command`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command: "impeccable", arguments: "polish it" }),
+  });
+  assert.equal(response.status, 200);
+  const history = JSON.stringify(await (await fetch(`${url}/session/${sessionId}/message`)).json());
+  assert.match(history, /reply: \/skill:impeccable polish it/);
+  assert.doesNotMatch(history, /Unknown command/);
+});
+
 test("v2 shell lifecycle uses native shell and output resource shapes", { timeout: 15_000 }, async (t) => {
   const { url, directory } = await startServer(t);
   const sessionID = await createSession(url);

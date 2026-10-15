@@ -15,6 +15,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
   command, filter, event count and how the watch ended. A session with a live
   watch is no longer evicted as idle, which used to stop the watch.
 
+### Fixed
+
+- Invoking a skill as `/<name>` (as OpenChamber offers it) no longer fails with
+  `Unknown command /<name>. Did you mean /skill:<name>?`. When OmO suggests the
+  matching skill, antechamber resends the prompt as `/skill:<name>`.
+
 ## [0.2.4] - 2026-10-15
 
 ### Added

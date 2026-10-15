@@ -115,6 +115,19 @@ input.on("line", (line) => {
         reply(command, true, { disposition: "handled" });
         return;
       }
+      if (text.startsWith("/impeccable")) {
+        send({
+          type: "response",
+          id: command.id,
+          command: command.type,
+          success: false,
+          error:
+            'Unknown command /impeccable. Did you mean /skill:impeccable? Resend with "unknownCommandAsText": true to send it as text.',
+          errorCode: "unknown_command",
+          errorData: { command: "impeccable", suggestions: ["skill:impeccable"], reason: "unknown" },
+        });
+        return;
+      }
       if (text === "/fixture") {
         recordMessage("assistant", "Slash command output without agent events");
         reply(command, true, {});
