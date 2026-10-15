@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-10-15
+
+- fix(omo-graph): stop ending the pan on blur and lost capture
+
 ## [0.2.5] - 2026-10-15
 
 ### Added
