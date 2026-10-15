@@ -288,8 +288,9 @@ export async function handleV2(
     });
     return;
   }
-  // Read-only inventories OpenChamber loads at bootstrap: OmO has no background shells,
-  // web-search providers or MCP servers, so each is an honest empty list (mutations stay 400).
+  // Read-only inventories OpenChamber loads at bootstrap. OmO has no OpenCode-style shells,
+  // web-search providers or MCP servers, so each is an honest empty list (mutations stay 400);
+  // OmO monitors appear as child sessions instead (monitor-sessions.ts).
   if ((path === "/api/shell" || path === "/api/websearch/provider" || path === "/api/mcp") && method === "GET") {
     json(res, 200, withLocation([]));
     return;

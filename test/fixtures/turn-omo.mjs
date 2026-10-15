@@ -129,6 +129,9 @@ createInterface({ input: process.stdin })
       send({ type: "agent_end" });
       send({ type: "agent_idle" });
     }
+    // Replays an arbitrary agent frame, e.g. an extension_event OmO would publish.
+    if (cmd.type === "emit") send(cmd.frame);
+    if (cmd.type === "exit") process.exit(3);
     if (cmd.type === "inject") {
       const injected = { message: cmd.message };
       user(injected);

@@ -17,6 +17,7 @@ import type { ManagedSession } from "./sessions.js";
 import type { PiFileMessage } from "./session-history.js";
 import type { SessionStore } from "./session-store.js";
 import type { SubagentBridge } from "./subagents.js";
+import type { MonitorSessions } from "./monitor-sessions.js";
 import {
   applyProviderToolResults,
   finishProviderToolParts,
@@ -187,6 +188,7 @@ export function compactionMessages(
 interface PiEventServices {
   readonly emit: (directory: string, event: OCEvent | TodoUpdated) => void;
   readonly subagents: SubagentBridge;
+  readonly monitors: MonitorSessions;
   readonly store: Pick<SessionStore, "update">;
   readonly dirtyDiffs: Set<string>;
   readonly ensureMessages: (s: ManagedSession) => OCMessageWithParts[];
@@ -342,6 +344,9 @@ export class PiEventTranslator {
       case "compaction_start":
       case "compaction_end":
         this.onCompactionEvent(s, ev);
+        break;
+      case "extension_event":
+        this.services.monitors.observe(s, ev);
         break;
       default:
         break; // turn_start, queue_update — future milestones

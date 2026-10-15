@@ -77,6 +77,7 @@ export class SessionLifecycle {
       s.status.type === "idle" &&
       !s.hasPendingInteraction() &&
       !s.hasRunningChildren() &&
+      !s.hasBackgroundWork?.() &&
       s.piSessionId !== undefined &&
       s.piPath !== undefined
     );

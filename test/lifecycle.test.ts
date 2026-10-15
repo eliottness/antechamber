@@ -341,12 +341,13 @@ test("reaper disposes by the first bounded sweep after idle timeout", async (t) 
   gone(before.childPid);
 });
 
-test("reaper never disposes busy, pending-interaction or running-child sessions", async (t) => {
+test("reaper never disposes busy, pending-interaction, running-child or watching sessions", async (t) => {
   const { manager, clock, dir } = setup(t);
-  const infos = await Promise.all(Array.from({ length: 4 }, () => manager.create(dir)));
+  const infos = await Promise.all(Array.from({ length: 5 }, () => manager.create(dir)));
   const sessions = infos.map((info) => manager.get(info.id));
-  const [busy, pending, children, retry] = sessions;
-  assert.ok(busy && pending && children && retry);
+  const [busy, pending, children, retry, watching] = sessions;
+  assert.ok(busy && pending && children && retry && watching);
+  watching.hasBackgroundWork = () => true;
   busy.status = { type: "busy" };
   pending.hasPendingInteraction = () => true;
   children.hasRunningChildren = () => true;

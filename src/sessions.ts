@@ -35,6 +35,7 @@ import {
   type SessionTreeState,
 } from "./session-tree.js";
 import { SubagentBridge } from "./subagents.js";
+import { MonitorSessions } from "./monitor-sessions.js";
 import { sessionDiff } from "./session-diff.js";
 import { announceSessionNotice, slashTitlePrompt } from "./session-commands.js";
 import {
@@ -114,6 +115,8 @@ export interface ManagedSession extends ThinkingState {
   /** Hooks wired by the approvals and child-task bridges. */
   hasPendingInteraction: () => boolean;
   hasRunningChildren: () => boolean;
+  /** Live OmO background work (monitors) that keeps the agent process from idle eviction. */
+  hasBackgroundWork?: () => boolean;
 }
 
 type EventSink = (directory: string, event: OCEvent | TodoUpdated) => void;
@@ -148,6 +151,7 @@ export class SessionManager {
   private readonly store: SessionStore;
   readonly lifecycle: SessionLifecycle;
   readonly subagents: SubagentBridge;
+  readonly monitors: MonitorSessions;
   /** directory → last scan freshness (pi dir mtime + wall clock). */
   private scanCache = new Map<string, { mtimeMs: number; at: number }>();
   /** freshness of the all-directories scan (see listAll). */
@@ -164,9 +168,11 @@ export class SessionManager {
     this.subagents = new SubagentBridge(this.store, this.sessions, this.emit, (session, raw) =>
       parsePiSessionText(session, getAgentName(), raw),
     );
+    this.monitors = new MonitorSessions(this.sessions, this.emit);
     this.events = new PiEventTranslator({
       emit: this.emit,
       subagents: this.subagents,
+      monitors: this.monitors,
       store: this.store,
       dirtyDiffs: this.dirtyDiffs,
       ensureMessages: (s) => this.ensureMessages(s),
@@ -250,6 +256,7 @@ export class SessionManager {
       this.sessions.set(info.id, managed);
       published = true;
       this.subagents.wire(managed);
+      this.monitors.wire(managed);
       this.lifecycle.touch(managed);
       this.wirePi(managed, pi);
 
@@ -349,6 +356,7 @@ export class SessionManager {
       });
       delete s.interruptRequested;
       this.subagents.stopParent(s.info.id);
+      this.monitors.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
         .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
@@ -434,8 +442,10 @@ export class SessionManager {
     this.sessions.delete(sessionId);
     this.emit(s.info.directory, { type: "session.deleted", properties: { info: s.info } });
     await this.lifecycle.dormant(s);
-    const piPath = this.subagents.owns(sessionId) ? undefined : (s.piPath ?? s.restored?.piPath);
+    const piPath =
+      this.subagents.owns(sessionId) || this.monitors.owns(sessionId) ? undefined : (s.piPath ?? s.restored?.piPath);
     this.subagents.remove(sessionId);
+    this.monitors.remove(sessionId);
     if (piPath !== undefined) {
       try {
         unlinkSync(piPath);
@@ -1289,6 +1299,7 @@ export class SessionManager {
 
   private ensureMessages(s: ManagedSession): OCMessageWithParts[] {
     if (this.subagents.owns(s.info.id)) return this.subagents.messages(s.info.id);
+    if (this.monitors.owns(s.info.id)) return this.monitors.messages(s.info.id);
     if (s.messages === undefined) {
       const admissions = s.tree.localShellTurns?.length;
       s.messages = parsePiSessionFile(s, getAgentName());
@@ -1413,6 +1424,7 @@ export class SessionManager {
     this.sessions.set(ocId, managed);
     if (reg?.connectorOwned === true) this.createdSessions.set(sc.piSessionId, sc.directory);
     this.subagents.wire(managed);
+    this.monitors.wire(managed);
     return managed;
   }
 
