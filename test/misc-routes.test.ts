@@ -48,6 +48,7 @@ test("owned routes return real listings or truthful neutral and unsupported resp
     assert.deepEqual(await get(path), { status: 200, body: [] });
   }
   for (const path of ["/provider/auth", "/mcp"]) assert.deepEqual(await get(path), { status: 200, body: {} });
+  assert.equal((await fetch(`${server.url}/mcp/qa/auth`, { method: "POST" })).status, 400);
   for (const [method, path] of [
     ["PUT", "/auth/anthropic"],
     ["POST", "/provider/anthropic/oauth/authorize"],
@@ -55,10 +56,7 @@ test("owned routes return real listings or truthful neutral and unsupported resp
     ["PATCH", "/config"],
     ["POST", "/mcp/qa/connect"],
     ["POST", "/mcp/qa/disconnect"],
-    ["POST", "/mcp/qa/auth"],
     ["DELETE", "/mcp/qa/auth"],
-    ["POST", "/mcp/qa/auth/callback"],
-    ["POST", "/mcp/qa/auth/authenticate"],
     ["POST", "/experimental/control-plane/move-session"],
   ] as const) {
     const response = await fetch(server.url + path, {

@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { errorBody, json, RequestBodyError } from "./http.js";
 import { nativePromptInput, parsePromptParts, v2PromptAttachments, v2PromptParts } from "./prompt-parts.js";
 import { debugLog, miscRoute } from "./misc-routes.js";
+import { mcpRouteV2 } from "./mcp.js";
 import { OPENCODE_API_VERSION } from "./version.js";
 import { toV2Permission } from "./approvals.js";
 import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-forms.js";
@@ -249,8 +250,10 @@ export async function handleV2(
     res.writeHead(204).end();
     return;
   }
-  if (path === "/api/integration" && method === "GET") {
-    json(res, 200, withLocation([]));
+  const mcp = await mcpRouteV2(services, method, path, directory, () => services.body(req));
+  if (mcp !== undefined) {
+    if (mcp.status === 204) res.writeHead(204).end();
+    else json(res, mcp.status, mcp.body);
     return;
   }
   const integrationMatch = path.match(/^\/api\/integration\/([^/]+)$/);
@@ -288,10 +291,10 @@ export async function handleV2(
     });
     return;
   }
-  // Read-only inventories OpenChamber loads at bootstrap. OmO has no OpenCode-style shells,
-  // web-search providers or MCP servers, so each is an honest empty list (mutations stay 400);
+  // Read-only inventories OpenChamber loads at bootstrap. OmO has no OpenCode-style shells or
+  // web-search providers, so each is an honest empty list (mutations stay 400);
   // OmO monitors appear as child sessions instead (monitor-sessions.ts).
-  if ((path === "/api/shell" || path === "/api/websearch/provider" || path === "/api/mcp") && method === "GET") {
+  if ((path === "/api/shell" || path === "/api/websearch/provider") && method === "GET") {
     json(res, 200, withLocation([]));
     return;
   }

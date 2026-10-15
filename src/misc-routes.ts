@@ -59,7 +59,7 @@ export async function miscRoute(
   if (method === "GET" && ["/skill", "/lsp", "/formatter", "/experimental/tool/ids"].includes(path)) {
     return { status: 200, body: [] };
   }
-  if (method === "GET" && ["/provider/auth", "/mcp"].includes(path)) return { status: 200, body: {} };
+  if (method === "GET" && path === "/provider/auth") return { status: 200, body: {} };
   if (
     (method === "PUT" && /^\/auth\/[^/]+$/.test(path)) ||
     (method === "POST" && /^\/provider\/[^/]+\/oauth\/(authorize|callback)$/.test(path)) ||
@@ -68,8 +68,7 @@ export async function miscRoute(
     return unsupported("Not supported with OmO; configure providers in OmO");
   }
   if (
-    (["POST", "DELETE"].includes(method) &&
-      /^\/mcp\/[^/]+\/(connect|disconnect|auth(?:\/(?:callback|authenticate))?)$/.test(path)) ||
+    (["POST", "DELETE"].includes(method) && /^\/mcp\/[^/]+\/(connect|disconnect|auth)$/.test(path)) ||
     (method === "POST" && path === "/experimental/control-plane/move-session")
   ) {
     return unsupported("Not supported with OmO; configure MCP and session directories in OmO");

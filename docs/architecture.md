@@ -270,6 +270,76 @@ Monitor child sessions live only in memory, like adapter-authored cards. A
 watch the user deletes is not recreated by a later snapshot. When the agent
 process exits, its watches are marked ended.
 
+### MCP status and authorization
+
+OpenChamber scopes MCP calls by directory, while OmO owns MCP per session
+process. The connector answers them from the most recently used session in the
+directory that has a running agent. It never revives a dormant session for MCP,
+and a status read does not itself refresh the idle timer (only agent events do). Evidence below is from the
+installed `@code-yeongyu/senpi` 2026.10.13 bundle (omo-ai 5.1.33); it is covered
+by the hermetic fixture `test/fixtures/mcp-omo.mjs`, not by a dated live probe.
+
+- `get_loaded_surfaces` returns `mcpServers: [{name, toolCount, status,
+  authStatus}]` (`dist/modes/rpc/rpc-types.d.ts`, `connection-handler.js`). The
+  status is the connection state or the config state (`idle`, `connected`,
+  `needs_auth`, `disabled`, `untrusted`, ...). Lazy `idle` servers are usable and
+  map to OpenCode `connected`. An OAuth server with `authStatus: "notLoggedIn"`
+  that is not connected maps to `needs_auth`.
+- No MCP RPC exists for authorization. The `/mcp` extension command
+  (`core/extensions/builtin/mcp/commands.js`, `auth/commands-auth.js`) runs the
+  interactive flow when the runner has a UI context, which RPC mode does. It
+  binds a `127.0.0.1` loopback listener, launches the browser with `xdg-open`
+  (or `open`), and records the URL as `appendEntry("mcp-auth", "Open this URL to
+  authorize <name>:\n<url>")`. That append is published as an `entry_appended`
+  event. OmO then exchanges the code itself, reconnects the server and
+  reattaches MCP tools to the session. The listener gives up after 5 minutes.
+- An extension command dispatched by `prompt` runs before the turn gate
+  (`core/agent-session.js` `_prompt`). It does not create a user message or
+  an LLM turn, and without a `clientMessageId` it writes no admission entry
+  (`modes/rpc/client-admissions.js`). The `prompt` response arrives only after
+  the handler returns, so the connector gives it a 10-minute transport budget.
+  It sends the command outside the conversation queue and holds the session
+  active so the reaper cannot stop the listener. Before sending, it checks
+  `get_commands` for the extension command `mcp`, so a missing command can never
+  reach the model as prompt text. Handler failures arrive as `notify` errors.
+- The `mcp-auth` entries persist in the session JSONL as custom entries. They
+  are not LLM context, and history rebuilding does not render them.
+- The headless pair documented in `docs/mcp.md` ("Auth") is `/mcp auth-start
+  <name>` followed by `/mcp auth-complete <name> <redirect-url>`. `auth-start`
+  opens no listener and no browser. Its authorization request carries
+  `redirect_uri` (the `mcp.oauthCallbackUrl` setting, else
+  `http://127.0.0.1:0/callback`) and a single-use `state` that only the same
+  process can consume (`auth/oauth.js` `completeAuthorization`, `consumeState`).
+  `/mcp auth` parks the same pending state, instead of listening, when
+  `mcp.oauthCallbackUrl` is set (`auth/callback.js` `openCallbackChannel`).
+  OpenChamber sends only the bare `code`, so the connector rebuilds
+  `redirect_uri?code=…&state=…` from the authorization URL it saw. It runs
+  `auth-complete` in the session that started the flow, and drops the attempt
+  if that session's agent changed or 10 minutes have passed.
+- A code that arrives while `/mcp auth` is still waiting on its loopback
+  listener is delivered to that listener as the browser's redirect would be.
+  The connector always runs on the same host as its agent. This covers a
+  browser that cannot reach the loopback port: the user pastes the failed
+  redirect URL or its code instead. OmO validates the state, and a rejected
+  redirect is reported without waiting for the listener to time out.
+- OpenChamber 2.x has no MCP auth routes. It signs in through `mcp_*`
+  integrations (`IntegrationInfo` with `metadata.source: "mcp"`) and the attempt
+  protocol `connect/oauth`, `connect/oauth/{attemptID}`, `.../complete`. The
+  connector serves these with `auth-start` (`mode: "code"`, so the UI shows its
+  paste box) and `auth-complete`. Providers settings already hide `mcp_*`
+  integrations. A completed sign-in emits `mcp.status.changed`, which makes
+  OpenChamber re-read `/api/mcp`.
+
+Limitations: one-click `/mcp auth` needs a browser that can reach OmO's
+loopback port; otherwise the user pastes the code. Point `mcp.oauthCallbackUrl`
+at OpenChamber's `/mcp/oauth/callback` to complete remote sign-ins without
+pasting. When OpenChamber opens the URL itself and OmO's `xdg-open` also
+works, two tabs may open. OpenChamber 2.3.2 shows the sign-in only on the MCP
+settings page, and that page lists servers from OpenCode config files, so
+servers defined only in OmO get status there but no sign-in button. Tokens are
+stored globally, but other live sessions in the directory keep their own MCP
+connections until they reconnect.
+
 ### Capability gaps to decide explicitly
 
 - **Permissions/questions**: OpenCode has permission prompts and elicitation;

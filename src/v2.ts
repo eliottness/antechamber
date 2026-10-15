@@ -543,6 +543,8 @@ export class V2EventTranslator {
             sessionID: ev.properties.sessionID,
           }),
         ];
+      case "mcp.tools.changed":
+        return [this.frame(directory, "mcp.status.changed", { server: ev.properties.server })];
       default:
         return [];
     }

@@ -46,7 +46,7 @@ invented resource IDs.
 | `GET /formatter` | 200 | Empty array; formatter inventory is unavailable. |
 | `GET /experimental/tool/ids` | 200 | Empty array; experimental tool inventory is unavailable. |
 | `GET /provider/auth` | 200 | Empty object; provider authentication state is unavailable. |
-| `GET /mcp` | 200 | Empty object; MCP inventory is unavailable. |
+| `GET /mcp` | 200 | `{name: McpStatus}` from RPC `get_loaded_surfaces` on the most recently used live session in the directory; empty object when no session in the directory has a running agent or OmO has no such RPC. |
 | `GET /command` | 200 | Agent slash-command descriptors. |
 | `GET /path` | 200 | Home, state, config, worktree, and directory paths. |
 | `GET /vcs` | 200 | `{branch, default_branch}` for the selected directory. |
@@ -70,13 +70,13 @@ invented resource IDs.
 | `DELETE /api/debug/location` | 204 | Empty, as OpenCode answers. OpenChamber evicts a location after git worktree changes; antechamber keeps no per-location instance, so there is nothing to evict. |
 | `GET /api/credential` | 200 | `{location, data: []}`; no credentials are retained. |
 | `POST /api/credential` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| `GET /api/integration` | 200 | `{location, data: []}`; no integrations are configured by this adapter. |
+| `GET /api/integration` | 200 | `{location, data: IntegrationInfo[]}`: one `mcp_{name}` integration (`metadata.source: "mcp"`, one `oauth` method) per OAuth-capable OmO MCP server in the newest live session of the directory; empty without one. Providers are not integrations here. |
 | `GET /api/plugin` | 200 | `{location, data: []}`; no OpenCode plugins are loaded by OmO. |
 | `POST /api/plugin/check` | 200 | Read-only update query returning `{location, data: []}`; there are no plugins to check. |
 | `POST /api/plugin/update` | 400 | `UnsupportedError`; plugin updates are unavailable with OmO. Unsupported. |
 | `POST /api/experimental/generate` | 503 | `{_tag: "ServiceUnavailableError", message: "No generation model is available through antechamber/OmO", service: "opencode"}`. |
 | `GET /api/experimental/session/stats` | 400 | `UnsupportedError`; session statistics are unavailable with OmO. Unsupported. |
-| `GET /api/mcp` | 200 | `{location, data: []}`; no MCP servers exist under OmO, so the read-only inventory is empty. |
+| `GET /api/mcp` | 200 | `{location, data: McpServer[]}` (`name`, v2 `status`, `integrationID` for OAuth-capable servers) from RPC `get_loaded_surfaces` on the newest live session in the directory; empty without one. |
 | `POST /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `DELETE /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file"}]}`. |
@@ -124,21 +124,28 @@ invented resource IDs.
 | PUT | `/auth/{providerID}` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/provider/{providerID}/oauth/authorize` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/provider/{providerID}/oauth/callback` | 400 | `UnsupportedError`. Unsupported. |
-| POST or DELETE | `/mcp/{name}/connect`, `/mcp/{name}/disconnect`, `/mcp/{name}/auth` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/mcp/{name}/auth/callback`, `/mcp/{name}/auth/authenticate` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/mcp/{name}/auth` | 200 | `{authorizationUrl, oauthState}` announced by OmO's native `/mcp auth {name}` in the live session; the flow then finishes inside OmO (loopback callback, token exchange, reconnect). 400 without a live session, on an OmO error or when no URL appears within 30 s; 404 for an unknown server. |
+| POST | `/mcp/{name}/auth/authenticate` | 200 | `McpStatus` after the same native flow completes (OmO opens the browser itself); joins a flow already running for that server. Same errors as `/mcp/{name}/auth`, plus 400 when OmO parked the flow for a pasted code. Both routes return 409 while a different auth flow for the server is running in the same agent; concurrent identical requests share one flow. |
+| POST or DELETE | `/mcp/{name}/connect`, `/mcp/{name}/disconnect`, DELETE `/mcp/{name}/auth` | 400 | `UnsupportedError`. Unsupported. |
+| POST | `/mcp/{name}/auth/callback` | 200 | `McpStatus` once `{code}` (a bare code or the whole redirect URL) finishes the pending flow. A flow still waiting on OmO's loopback listener receives the redirect there; a parked flow (`mcp.oauthCallbackUrl` set) is finished with `/mcp auth-complete {name} {redirect}`. A bare code is rebuilt from the authorization request's `redirect_uri` and `state`. 400 when nothing is pending or OmO rejects the response. |
 | POST | `/global/upgrade` | 200 | Upgrades antechamber itself to the latest npm release (the OpenCode `target` is ignored) and returns `{success: true, version, updated}`; OpenChamber 1.x then restarts the process. 409 `UnsupportedError` when this is not a global npm/bun install or `npm root -g` cannot run; registry and installer failures are `UnknownError` 500 without installer output or registry credentials. |
 | GET | `/api/agent/{agentID}` | 200 | `{location, data: Agent}`; 404 for an unknown agent. |
 | PATCH | `/api/project/{projectID}` | 400 | `UnsupportedError`; project updates are unavailable with OmO. Unsupported. |
 | DELETE | `/api/credential/{credentialID}` | 204 | Idempotent no-op; no credentials are retained. |
 | PATCH | `/api/credential/{credentialID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | POST | `/api/credential/{credentialID}/activate` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| GET | `/api/integration/{integrationID}` | 404 | `NotFoundError`; the integration inventory is empty. |
+| GET | `/api/integration/mcp_{name}` | 200 | `{location, data: IntegrationInfo}` for an OAuth-capable OmO MCP server; 404 otherwise. |
+| POST | `/api/integration/mcp_{name}/connect/oauth` | 200 | `{location, data: IntegrationAttempt}` with `mode: "code"`: runs OmO's headless `/mcp auth-start {name}` and returns its authorization URL. |
+| GET | `/api/integration/mcp_{name}/connect/oauth/{attemptID}` | 200 | `{location, data: IntegrationAttemptStatus}` (`pending`, `complete`, `failed`, `expired` after 10 min); 404 for an unknown attempt. |
+| POST | `/api/integration/mcp_{name}/connect/oauth/{attemptID}/complete` | 204 | `{code}` (bare code or redirect URL) is finished with `/mcp auth-complete {name} {redirect}` in the session that started it; 400 when OmO rejects it, 404 for an unknown attempt. |
+| DELETE | `/api/integration/mcp_{name}/connect/oauth/{attemptID}` | 204 | Forgets the attempt; OmO's parked state is replaced by the next start. |
+| GET | `/api/integration/{integrationID}` | 404 | `NotFoundError` for any other integration. |
 | POST | `/api/integration/{integrationID}/connect/key` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | POST | `/api/integration/{integrationID}/connect/external` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| POST | `/api/integration/{integrationID}/connect/oauth` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| GET | `/api/integration/{integrationID}/connect/oauth/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| DELETE | `/api/integration/{integrationID}/connect/oauth/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| POST | `/api/integration/{integrationID}/connect/oauth/{attemptID}/complete` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/integration/{integrationID}/connect/oauth` (non-MCP) | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| GET | `/api/integration/{integrationID}/connect/oauth/{attemptID}` (non-MCP) | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| DELETE | `/api/integration/{integrationID}/connect/oauth/{attemptID}` (non-MCP) | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
+| POST | `/api/integration/{integrationID}/connect/oauth/{attemptID}/complete` (non-MCP) | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | POST | `/api/integration/{integrationID}/connect/command` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | GET | `/api/integration/{integrationID}/connect/command/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | DELETE | `/api/integration/{integrationID}/connect/command/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
@@ -320,7 +327,11 @@ fix; this adapter does not invent a reply target absent from native state.
 | `command.list` | RPC `get_commands` |
 | `app.agents` | static pi agent descriptors: `build` plus pi's own agent name |
 | `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
-| `auth.set`, `provider.oauth`, `mcp.connect/disconnect` | unsupported with OmO; configure providers and MCP in OmO |
+| `mcp.status` | RPC `get_loaded_surfaces` on the newest live session in the directory |
+| `mcp.auth.start`, `mcp.auth.authenticate` | RPC `prompt` `/mcp auth {name}` sent outside the conversation queue |
+| `mcp.auth.callback` | loopback redirect to OmO's waiting listener, or RPC `prompt` `/mcp auth-complete {name} {redirect}` |
+| v2 `mcp.list`, `integration.*` for `mcp_*` | `get_loaded_surfaces`; `/mcp auth-start` + `/mcp auth-complete`; `mcp.status.changed` after a sign-in |
+| `auth.set`, `provider.oauth`, `mcp.connect/disconnect`, `mcp.auth.remove` | unsupported with OmO; configure providers and MCP in OmO |
 
 ## SSE event contract
 
