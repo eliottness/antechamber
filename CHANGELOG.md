@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-10-15
+
 ### Fixed
 
 - OmO Graph: panning no longer selects the wave labels, so pressing near the
