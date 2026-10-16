@@ -3,7 +3,9 @@
  *
  * OpenChamber scopes MCP calls by directory only, while OmO owns MCP per session process.
  * Everything therefore targets the most recently used LIVE session in the directory; a
- * dormant session is never revived just to answer an MCP request.
+ * dormant session is never revived just to answer an MCP request. Status reads for a
+ * directory without one fall back to the most recently used live session elsewhere.
+ * Authorization stays scoped to the directory.
  *
  * Status comes from the read-only `get_loaded_surfaces` RPC. Authorization drives OmO's
  * documented `/mcp` subcommands (docs/mcp.md "Auth"):
@@ -142,7 +144,10 @@ async function loadedServers(pi: PiRpcClient): Promise<OmoMcpServer[]> {
 }
 
 async function directoryServers(sessions: SessionManager, directory: string): Promise<OmoMcpServer[]> {
-  const live = liveSession(sessions, directory);
+  // A directory whose sessions are all dormant would list nothing. Its servers are mostly
+  // the user's global and built-in ones, so any running session gives a better answer.
+  const fallback = sessions.liveSessions()[0]?.pi;
+  const live = liveSession(sessions, directory) ?? (fallback === undefined ? undefined : { pi: fallback });
   return live === undefined ? [] : loadedServers(live.pi).catch(() => []);
 }
 
