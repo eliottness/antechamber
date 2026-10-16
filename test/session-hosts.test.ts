@@ -238,7 +238,7 @@ for (const scenario of [
       // Open proc directories keep the old identity; numeric paths resolve anew.
       const current = recordAt(name);
       if (!current?.alive) throw missing();
-      if (kind === "cmdline") return current.argv.join("\0") + "\0";
+      if (kind === "cmdline") return `${current.argv.join("\0")}\0`;
       const fields = Array<string>(20).fill("0");
       fields[0] = "S";
       fields[2] = String(current.group);

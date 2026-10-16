@@ -33,54 +33,52 @@ function put(path: string, value: unknown): void {
 }
 
 function transcript(text: string, childId = "child-pi"): string {
-  return (
-    [
-      { type: "session", version: 3, id: childId, cwd: "/tmp/test", timestamp: "2026-10-12T00:00:00.000Z" },
-      {
-        type: "message",
-        id: "u",
-        parentId: null,
-        timestamp: 1,
-        message: { role: "user", content: [{ type: "text", text: "Do the child job" }] },
+  return `${[
+    { type: "session", version: 3, id: childId, cwd: "/tmp/test", timestamp: "2026-10-12T00:00:00.000Z" },
+    {
+      type: "message",
+      id: "u",
+      parentId: null,
+      timestamp: 1,
+      message: { role: "user", content: [{ type: "text", text: "Do the child job" }] },
+    },
+    {
+      type: "message",
+      id: "a",
+      parentId: "u",
+      timestamp: 2,
+      message: {
+        role: "assistant",
+        provider: "anthropic",
+        model: "haiku",
+        content: [
+          { type: "thinking", thinking: "Read the file first." },
+          { type: "toolCall", id: "read-1", name: "read", arguments: { path: "child.txt" } },
+        ],
       },
-      {
-        type: "message",
-        id: "a",
-        parentId: "u",
-        timestamp: 2,
-        message: {
-          role: "assistant",
-          provider: "anthropic",
-          model: "haiku",
-          content: [
-            { type: "thinking", thinking: "Read the file first." },
-            { type: "toolCall", id: "read-1", name: "read", arguments: { path: "child.txt" } },
-          ],
-        },
+    },
+    {
+      type: "message",
+      id: "r",
+      parentId: "a",
+      timestamp: 3,
+      message: {
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        content: [{ type: "text", text: "contents" }],
       },
-      {
-        type: "message",
-        id: "r",
-        parentId: "a",
-        timestamp: 3,
-        message: {
-          role: "toolResult",
-          toolCallId: "read-1",
-          toolName: "read",
-          content: [{ type: "text", text: "contents" }],
-        },
-      },
-      {
-        type: "message",
-        id: "z",
-        parentId: "r",
-        timestamp: 4,
-        message: { role: "assistant", provider: "anthropic", model: "haiku", content: [{ type: "text", text }] },
-      },
-    ]
-      .map((entry) => JSON.stringify(entry))
-      .join("\n") + "\n"
-  );
+    },
+    {
+      type: "message",
+      id: "z",
+      parentId: "r",
+      timestamp: 4,
+      message: { role: "assistant", provider: "anthropic", model: "haiku", content: [{ type: "text", text }] },
+    },
+  ]
+    .map((entry) => JSON.stringify(entry))
+    .join("\n")}\n`;
 }
 
 function setup(t: TestContext) {
@@ -96,13 +94,13 @@ function setup(t: TestContext) {
   const parentPath = join(piSessionDir(directory), "parent.jsonl");
   put(
     parentPath,
-    JSON.stringify({
+    `${JSON.stringify({
       type: "session",
       version: 3,
       id: "parent-pi",
       cwd: directory,
       timestamp: "2026-10-12T00:00:00.000Z",
-    }) + "\n",
+    })}\n`,
   );
   const bus = new EventEmitter();
   const events: OCEvent[] = [];
@@ -358,13 +356,13 @@ test("in-process child_session_id streams tools and archives without host_sessio
   );
   appendFileSync(
     path,
-    JSON.stringify({
+    `${JSON.stringify({
       type: "message",
       id: "live",
       parentId: "z",
       timestamp: 5,
       message: { role: "assistant", content: [{ type: "text", text: "IN_PROCESS_STREAM" }] },
-    }) + "\n",
+    })}\n`,
   );
   await streamed;
   const idle = eventWhen(bus, (event) => event.type === "session.idle" && event.properties.sessionID === childID);
@@ -488,13 +486,13 @@ test("partial lines and split UTF8 stream only after the terminating newline", a
   start(manager, parent, { task_summary: "Tailed child" });
   result(manager, parent, { task_id: "st_child", status: "running" }, "", false);
   const entry = Buffer.from(
-    JSON.stringify({
+    `${JSON.stringify({
       type: "message",
       id: "new",
       parentId: "z",
       timestamp: 5,
       message: { role: "assistant", content: [{ type: "text", text: "new café result" }] },
-    }) + "\n",
+    })}\n`,
   );
   const cut = entry.indexOf(Buffer.from("é")) + 1;
   appendFileSync(child.path, entry.subarray(0, cut));
@@ -651,7 +649,7 @@ test("dormant parent rebuilds batch children and applies trailing wake results",
   const batch = fixture.samples[1];
   appendFileSync(
     parentPath,
-    [
+    `${[
       {
         type: "message",
         id: "a",
@@ -691,7 +689,7 @@ test("dormant parent rebuilds batch children and applies trailing wake results",
       },
     ]
       .map((entry) => JSON.stringify(entry))
-      .join("\n") + "\n",
+      .join("\n")}\n`,
   );
   parent.messages = undefined;
   const cards = parts(manager.messages(parent.info.id));

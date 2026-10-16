@@ -319,7 +319,7 @@ export class PiRpcClient extends EventEmitter {
 
   private write(obj: Record<string, unknown>): void {
     if (this.closed) return;
-    this.proc.stdin!.write(JSON.stringify(obj) + "\n");
+    this.proc.stdin!.write(`${JSON.stringify(obj)}\n`);
   }
 
   private failAll(err: Error): void {

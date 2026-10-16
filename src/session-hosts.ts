@@ -64,6 +64,7 @@ function processInfo(pid: number): HostProcess | undefined {
 // Node 22 has no pidfd API. This bounded, stdlib-only helper holds all pidfds
 // across TERM, readiness-based death observation, and KILL. -I ignores Python
 // environment customizations. No numeric-PID signal fallback is permitted.
+// biome-ignore lint/complexity/noUselessStringRaw: embedded Python must keep any backslashes verbatim.
 const stopBoundHosts = String.raw`
 import contextlib, json, os, selectors, signal, sys, time
 

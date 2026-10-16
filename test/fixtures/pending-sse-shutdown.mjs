@@ -46,7 +46,7 @@ let client;
 try {
   await server.start();
   client = await new Promise((resolve, reject) => {
-    const request = get(server.url + "/event", { agent: false }, resolve);
+    const request = get(`${server.url}/event`, { agent: false }, resolve);
     request.once("error", reject);
   });
   client.resume();

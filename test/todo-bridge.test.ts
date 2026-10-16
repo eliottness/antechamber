@@ -215,7 +215,7 @@ test("both HTTP flavors return dormant JSONL state after restart and empty sessi
   const sessionDir = piSessionDir(dir);
   mkdirSync(sessionDir, { recursive: true });
   const header = (id: string) =>
-    JSON.stringify({ type: "session", version: 3, id, cwd: dir, timestamp: "2026-10-12T00:00:00.000Z" }) + "\n";
+    `${JSON.stringify({ type: "session", version: 3, id, cwd: dir, timestamp: "2026-10-12T00:00:00.000Z" })}\n`;
   const piPath = join(sessionDir, "session.jsonl");
   writeFileSync(
     piPath,
