@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-10-16
+
 ### Fixed
 
 - `/btw` on an idle session no longer fails with "Invalid entry ID for
