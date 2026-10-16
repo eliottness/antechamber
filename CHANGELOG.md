@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Retry a manual compaction that OmO cancelled without a user abort. Compacting a dormant session failed with
+  "Compaction cancelled" when its MCP servers finished connecting right after the agent started.
+
 ## [0.2.13] - 2026-10-16
 
 ### Fixed

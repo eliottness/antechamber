@@ -40,6 +40,51 @@ test("manual compaction shows progress and its summary live and after restart", 
   );
 });
 
+function withEnv(t: { after: (fn: () => void) => void }, key: string, value: string): void {
+  const saved = process.env[key];
+  process.env[key] = value;
+  t.after(() => {
+    if (saved === undefined) delete process.env[key];
+    else process.env[key] = saved;
+  });
+}
+
+async function compactCommands(h: ReturnType<typeof bugHarness>, id: string): Promise<number> {
+  const pi = h.manager.get(id)?.pi;
+  assert.ok(pi);
+  const inspected = await pi.command<{ commands: Array<{ type: string }> }>({ type: "inspect" });
+  return inspected.data?.commands.filter((command) => command.type === "compact").length ?? 0;
+}
+
+test("a compaction OmO cancels on its own is retried", { timeout: 15000 }, async (t) => {
+  withEnv(t, "ANTECHAMBER_TEST_CANCELLED_COMPACTS", "1");
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal");
+
+  assert.deepEqual(await compactSession(h.manager, session.id), { kind: "compacted" });
+  assert.equal(await compactCommands(h, session.id), 2);
+  const summary = h.manager.messages(session.id)?.at(-1);
+  assert.ok(summary?.info.role === "assistant" && summary.info.summary === true);
+});
+
+test("a compaction the user aborts is not retried", { timeout: 15000 }, async (t) => {
+  withEnv(t, "ANTECHAMBER_TEST_HOLD_COMPACT", "1");
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal");
+
+  const started = h.wait(
+    (e) => e.type === "session.updated" && e.properties.info.id === session.id && !!e.properties.info.time.compacting,
+  );
+  const result = compactSession(h.manager, session.id);
+  await started;
+  await h.manager.abort(session.id);
+
+  assert.deepEqual(await result, { kind: "error", message: "Compaction cancelled" });
+  assert.equal(await compactCommands(h, session.id), 1);
+});
+
 test("background compaction after agent_end remains selected through revival", { timeout: 15000 }, async (t) => {
   const h = bugHarness(t);
   const info = await h.manager.create(h.root);

@@ -70,6 +70,9 @@ const SESSION_SCAN_CACHE_TTL_MS = 5_000;
 const PI_FILE_RESOLVE_ATTEMPTS = 10;
 const PI_FILE_RESOLVE_RETRY_MS = 200;
 const SESSION_TITLE_MAX_CHARS = 60;
+/** OmO's reply when a compaction is aborted (`CompactionCancelledError`). */
+const OMO_COMPACTION_CANCELLED = "Compaction cancelled";
+const COMPACT_CANCEL_RETRIES = 2;
 
 interface StreamingState {
   message: OCAssistantMessage;
@@ -79,6 +82,8 @@ interface StreamingState {
 
 export interface ManagedSession extends ThinkingState {
   interruptRequested?: boolean;
+  /** Counts abort requests, so a compaction cancelled by the user is not retried. */
+  abortRequests?: number;
   titleSource?: TitleSource;
   activeUserMessageID?: string;
   inputs?: Map<string, { text: string; delivery: "steer" | "queue"; accepted: boolean; delivered: boolean }>;
@@ -808,6 +813,7 @@ export class SessionManager {
   async abort(sessionId: string): Promise<boolean> {
     const s = this.get(sessionId);
     if (!s) return false;
+    s.abortRequests = (s.abortRequests ?? 0) + 1;
     if (s.pi !== undefined) {
       if (s.status.type !== "idle") s.interruptRequested = true;
       try {
@@ -896,7 +902,23 @@ export class SessionManager {
       this.lifecycle.touch(s);
       const timeout = command.type === "compact" ? COMPACT_RPC_TIMEOUT_MS : RPC_COMMAND_TIMEOUT_MS;
       signal?.throwIfAborted();
-      const response = await pi.command<T>(command, timeout, undefined, onDispatch);
+      const abortsBefore = s.abortRequests ?? 0;
+      let response = await pi.command<T>(command, timeout, undefined, onDispatch);
+      // OmO cancels a running compaction whenever its active tool set changes. On a session
+      // just revived for this request, MCP servers finish connecting a moment after startup
+      // and cancel it although nobody asked. Retry unless the user sent an abort meanwhile.
+      for (
+        let retry = 0;
+        retry < COMPACT_CANCEL_RETRIES &&
+        command.type === "compact" &&
+        !response.success &&
+        response.error === OMO_COMPACTION_CANCELLED &&
+        (s.abortRequests ?? 0) === abortsBefore &&
+        !signal?.aborted &&
+        s.pi === pi;
+        retry++
+      )
+        response = await pi.command<T>(command, timeout);
       if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash"))
         await this.reloadMessagesLive(s, signal);
       return response;
