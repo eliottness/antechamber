@@ -55,10 +55,19 @@ try {
       await upgrade();
     } else if (command === "doctor") {
       const { doctor, formatDoctor } = await import("./commands/doctor.js");
-      const report = doctor({
-        ...(values.settings !== undefined ? { settings: values.settings } : {}),
-        ...(values.profile !== undefined ? { profile: values.profile } : {}),
-      });
+      const { createContext } = await import("./commands/context.js");
+      const { fetchLatestVersion } = await import("./self-update.js");
+      const latest = await fetchLatestVersion().catch((error: unknown) =>
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      const report = doctor(
+        {
+          ...(values.settings !== undefined ? { settings: values.settings } : {}),
+          ...(values.profile !== undefined ? { profile: values.profile } : {}),
+        },
+        createContext(),
+        latest,
+      );
       console.log(formatDoctor(report, values.json ?? false));
       process.exitCode = report.exitCode;
     } else if (command === "serve") {

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createContext } from "../src/commands/context.js";
 import { doctor, formatDoctor } from "../src/commands/doctor.js";
+import { recordRunningServer } from "../src/running-servers.js";
+import { ADAPTER_VERSION } from "../src/version.js";
 
 function fixture(t: TestContext, backend = "omo") {
   const home = fs.mkdtempSync(join(tmpdir(), "antechamber-doctor-"));
@@ -55,6 +57,38 @@ test("doctor JSON is structured and all checks leave files untouched", (t) => {
   assert.equal(report.checks.find((check) => check.name === "agent-name")?.message, "OmO");
   assert.deepEqual(fs.readdirSync(home), before);
   assert.equal(fs.existsSync(join(home, ".config")), false);
+});
+
+test("doctor compares installed and running versions with the latest release", (t) => {
+  const { home, settings, ctx } = fixture(t);
+  const state = join(home, "state");
+  const withState = { ...ctx, env: { ...ctx.env, ANTECHAMBER_STATE_DIR: state } };
+  const checks = (latest?: string | Error) =>
+    doctor({ settings }, withState, latest)
+      .checks.filter((check) => check.name === "version" || check.name === "running")
+      .map((check) => `${check.status} ${check.name}`);
+
+  assert.deepEqual(checks(ADAPTER_VERSION), ["PASS version", "INFO running"]);
+  const forget = recordRunningServer(
+    state,
+    { pid: process.pid, version: "0.0.1", url: "http://127.0.0.1:1", started: "2026-10-16T00:00:00.000Z" },
+    fs,
+  );
+  recordRunningServer(
+    state,
+    { pid: 2 ** 22 + 1, version: "0.0.1", url: "http://127.0.0.1:2", started: "2026-10-16T00:00:00.000Z" },
+    fs,
+  );
+  assert.deepEqual(checks(ADAPTER_VERSION), ["PASS version", "WARN running"]);
+  assert.deepEqual(checks("999.0.0"), ["WARN version", "WARN running"]);
+  assert.deepEqual(checks(new Error("offline")), ["INFO version", "WARN running"]);
+  forget();
+  recordRunningServer(
+    state,
+    { pid: process.pid, version: ADAPTER_VERSION, url: "http://127.0.0.1:1", started: "2026-10-16T00:00:00.000Z" },
+    fs,
+  );
+  assert.deepEqual(checks(ADAPTER_VERSION), ["PASS version", "PASS running"]);
 });
 
 test("doctor fails when backend cannot be resolved", (t) => {

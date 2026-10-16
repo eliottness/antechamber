@@ -1,6 +1,10 @@
-import { envSetting } from "../config.js";
+import * as fs from "node:fs";
+import { homedir } from "node:os";
+import { defaultStateDir, envSetting } from "../config.js";
+import { recordRunningServer } from "../running-servers.js";
 import { selfUpdate } from "../self-update.js";
 import { AdapterServer, isLoopbackHost, serverPassword } from "../server.js";
+import { ADAPTER_VERSION } from "../version.js";
 
 interface ServeOptions {
   readonly port: number;
@@ -23,7 +27,9 @@ export async function serve(options: ServeOptions): Promise<void> {
     );
   }
   const server = new AdapterServer({ port, host, defaultDirectory: directory });
+  let forget = (): void => {};
   const shutdown = (): void => {
+    forget();
     void server.stop().then(
       () => process.exit(0),
       (error: unknown) => {
@@ -37,6 +43,18 @@ export async function serve(options: ServeOptions): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   await server.start();
+  try {
+    forget = recordRunningServer(
+      envSetting("STATE_DIR") ?? defaultStateDir(homedir(), fs.existsSync),
+      { pid: process.pid, version: ADAPTER_VERSION, url: server.url, started: new Date().toISOString() },
+      fs,
+    );
+  } catch (error) {
+    // Only doctor reads the record; serving must not depend on it.
+    console.error(
+      `antechamber: cannot record the running version: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (compatible) console.log(`opencode server listening on ${server.url}`);
   else {
     console.log(`antechamber listening on ${server.url}`);
