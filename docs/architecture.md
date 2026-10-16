@@ -34,18 +34,9 @@ is an upstream protocol error. A command timeout also closes the transport, so
 the process cannot accept another operation whose native completion is unknown.
 These boundaries are implemented in `src/pi-rpc.ts`.
 
-The ordinary RPC deadline is 60 seconds. A default-budget `prompt` can wait for an
-existing agent turn, retry, or compaction before OmO acknowledges it, so its
-60-second deadline is suspended while those lifecycle events report active work.
-The deadline resumes when that work settles. A separate 32-minute admission ceiling
-(the 31-minute compaction budget plus the ordinary deadline) bounds the whole wait,
-including repeated work events. Explicit caller deadlines and non-prompt commands
-retain their requested limits.
-
-An isolated 2026-10-16 probe with OmO 2026.10.13 reproduced a prompt waiting
-behind a startup goal turn while the agent continued to stream. The installed
-`core/agent-session.js` session-work barrier and
-`modes/rpc/client-input-handler.js` preflight acknowledgment explain that ordering.
+Default `prompt` timeouts are suspended during active turns, retries, or compaction,
+then reset to 60 seconds when work settles, with a 32-minute overall cap.
+Explicit deadlines and other RPC commands keep fixed limits.
 
 ## Mapping concerns
 
