@@ -68,6 +68,19 @@ it; a new prompt clears the cutoff and starts a branch at the earlier leaf.
 Revival reapplies the saved leaf rather than assuming the newest JSONL
 message is the active branch. The reverted transcript is retained for redo.
 
+Native progress is checkpointed at `agent_end`, successful `compaction_end`,
+and process exit, before the exited session becomes dormant. Exit checkpoints
+bind already recorded messages and tool results even when no `agent_end` arrived;
+successful background compaction also saves its new leaf without depending on
+a manual compact RPC or another turn. Disk checkpoints advance a saved selection
+only when the newest entry descends from it. Stale ancestors, missing selections,
+and unrelated sibling branches cannot replace it, and an active revert retains
+its navigation pin and redo leaf. Missing or malformed files are reported through
+the existing persistence-error event path without preventing exit cleanup; a
+torn final JSONL line is ignored. These boundaries are covered by the hermetic
+session-tree and RPC fixtures in `test/fork-revert.test.ts`,
+`test/lifecycle.test.ts`, and `test/compaction.test.ts`.
+
 The registry also stores the published part IDs in message order under each
 stable message ID. On history reconstruction, those IDs are restored onto the
 parsed parts so clients keep their live identities after a restart. History

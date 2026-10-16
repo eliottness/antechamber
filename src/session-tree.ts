@@ -89,9 +89,20 @@ export function readSessionTree(piPath: string): Entries {
   return { entries, leafId: entries.at(-1)?.id ?? null };
 }
 
-/** agent_end runs after message persistence; no async lease or timing race. */
+/** Checkpoint persisted progress after agent_end, successful compaction, or process exit. */
 export function recordTurn(s: ManagedSession): void {
-  if (s.piPath) bindMessageEntries(s, readSessionTree(s.piPath));
+  if (!s.piPath) return;
+  const tree = readSessionTree(s.piPath);
+  // Disk order is not navigation: only a descendant can advance a saved selection.
+  // An ancestor, missing selection, or newer sibling must leave its bindings intact.
+  if (
+    !s.tree.revert &&
+    s.tree.leafId !== undefined &&
+    s.tree.leafId !== null &&
+    !branchEntries(tree).some((entry) => entry.id === s.tree.leafId)
+  )
+    return;
+  bindMessageEntries(s, tree);
 }
 
 export function branchEntries(tree: Entries, leafId = tree.leafId): TreeEntry[] {

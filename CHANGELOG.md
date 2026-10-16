@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve recorded conversation progress when the agent process exits before
+  `agent_end`, and retain successful background compaction across revival.
+  Checkpoints respect reverted selections and do not switch to sibling branches.
+
 ## [0.2.9] - 2026-10-16
 
 ### Fixed

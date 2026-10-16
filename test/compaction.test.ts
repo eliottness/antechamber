@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compactSession } from "../src/session-commands.js";
+import { getEntries } from "../src/session-tree.js";
 import { toV2Message } from "../src/v2.js";
 import { bugHarness } from "./bug-harness.js";
 
@@ -36,5 +37,32 @@ test("manual compaction shows progress and its summary live and after restart", 
   assert.deepEqual(
     restored.map((message) => message.info.id),
     live.map((message) => message.info.id),
+  );
+});
+
+test("background compaction after agent_end remains selected through revival", { timeout: 15000 }, async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  await h.manager.prompt(info.id, "normal");
+  const session = h.manager.get(info.id);
+  assert.ok(session?.pi);
+  const previousLeaf = session.tree.leafId;
+
+  // Use the native event path, without sessionRpc's manual-compaction history refresh.
+  await session.pi.command({ type: "compact" });
+  const native = await getEntries(session.pi);
+  assert.notEqual(native.leafId, previousLeaf);
+  assert.equal(native.entries.at(-1)?.type, "compaction");
+  const liveIds = h.manager.messages(info.id)?.map((message) => message.info.id);
+  await h.restart();
+  await h.manager.reloadMessages(info.id);
+
+  const revived = h.manager.get(info.id);
+  assert.ok(revived?.pi);
+  assert.equal((await getEntries(revived.pi)).leafId, native.leafId);
+  assert.equal(revived.tree.leafId, native.leafId);
+  assert.deepEqual(
+    h.manager.messages(info.id)?.map((message) => message.info.id),
+    liveIds,
   );
 });
