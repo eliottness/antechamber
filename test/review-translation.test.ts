@@ -105,6 +105,30 @@ test("a background task's step completes before the next step, so v2 never reope
   assert.ok(!frames.includes("session.execution.succeeded"), frames.join(","));
 });
 
+test("an auto-compaction between steps closes the waiting step first, so v2 never reopens it", (t) => {
+  const { frames, feed } = replaySession(t);
+  feed(
+    { type: "agent_start" },
+    assistantStart,
+    ...toolCall("call_bg", "task", { prompt: "explore", description: "background", run_in_background: true }),
+    assistantEnd("toolUse"),
+    {
+      type: "tool_execution_end",
+      toolCallId: "call_bg",
+      toolName: "task",
+      result: { content: [{ type: "text", text: "started" }], details: { status: "running" } },
+      isError: false,
+    },
+    { type: "compaction_start", reason: "threshold" },
+    { type: "compaction_end", reason: "threshold", result: { summary: "earlier work", firstKeptEntryId: "e1" } },
+    assistantStart,
+    assistantEnd("stop"),
+    { type: "agent_end" },
+    { type: "agent_idle" },
+  );
+  assert.equal(frames.filter((type) => type === "session.step.started").length, 3, frames.join(","));
+});
+
 test("an assistant message stays incomplete until its tools settle, so OpenChamber never marks them Interrupted", (t) => {
   const { live, events, feed } = replaySession(t);
   const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8").trim().split("\n");
