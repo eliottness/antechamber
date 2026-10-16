@@ -186,6 +186,50 @@ test("V124-006: honors message list limit", { timeout: 10_000 }, async (t) => {
   assert.equal(messages[0].info && isRecord(messages[0].info) ? messages[0].info.id : undefined, "msg-two");
 });
 
+test("V124-006b: pages older messages through x-next-cursor and before", { timeout: 10_000 }, async (t) => {
+  const { directory, url } = await startServer(t);
+  const sessionID = await createSession(url, directory, "paged");
+  const stream = await openEvents(`${url}/event?directory=${encodeURIComponent(directory)}`);
+  t.after(() => stream.close());
+  await stream.wait((event) => event.type === "server.connected");
+
+  for (const id of ["msg-page-1", "msg-page-2", "msg-page-3"]) {
+    const stored = stream.wait(
+      (event) => event.type === "message.updated" && isRecord(event.properties.info) && event.properties.info.id === id,
+    );
+    await enqueueText(url, directory, sessionID, id, id);
+    await stored;
+  }
+
+  const base = `${url}/session/${sessionID}/message?directory=${encodeURIComponent(directory)}`;
+  const ids = (body: unknown): string[] => {
+    if (!Array.isArray(body)) throw new TypeError("expected a message array");
+    return body.map((message) => (isRecord(message) && isRecord(message.info) ? String(message.info.id) : ""));
+  };
+  const full = await fetch(base);
+  assert.equal(full.headers.get("x-next-cursor"), null);
+  const all = ids(await full.json());
+  assert.ok(all.length >= 3);
+
+  // OpenChamber's loader only asks for older pages when a cursor is returned.
+  const collected: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const response = await fetch(`${base}&limit=1${cursor === null ? "" : `&before=${encodeURIComponent(cursor)}`}`);
+    assert.equal(response.status, 200);
+    const page = ids(await response.json());
+    assert.equal(page.length, 1);
+    collected.unshift(...page);
+    cursor = response.headers.get("x-next-cursor");
+    if (cursor !== null) assert.equal(cursor, page[0]);
+  } while (cursor !== null && collected.length <= all.length);
+  assert.deepEqual(collected, all);
+
+  const unknown = await fetch(`${base}&limit=1&before=msg-missing`);
+  assert.deepEqual(await unknown.json(), []);
+  assert.equal(unknown.headers.get("x-next-cursor"), null);
+});
+
 test("V124-007: returns a v1 message by id", { timeout: 10_000 }, async (t) => {
   const { directory, url } = await startServer(t);
   const sessionID = await createSession(url, directory, "lookup");

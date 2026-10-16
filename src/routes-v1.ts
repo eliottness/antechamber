@@ -180,9 +180,23 @@ export async function handleV1(
         json(res, 200, await services.sessions.remove(sessionId));
         return;
       case "GET /message": {
+        // OpenCode pages backwards from the newest message: `before` is the
+        // x-next-cursor of the previous page (here, its oldest message ID).
+        // Without the cursor, OpenChamber's loader treats a partial page as the
+        // whole history; mobile's 30-message first page then has no user
+        // message to anchor a turn on, and the transcript renders blank.
         const messages = services.sessions.messages(sessionId) ?? [];
         const limit = numberParam(url.searchParams.get("limit"));
-        json(res, 200, limit === undefined ? messages : limit === 0 ? [] : messages.slice(-limit));
+        const before = url.searchParams.get("before");
+        const end = before === null ? messages.length : messages.findIndex((message) => message.info.id === before);
+        if (end < 0 || limit === 0) {
+          json(res, 200, []);
+          return;
+        }
+        const start = limit === undefined ? 0 : Math.max(0, end - limit);
+        const page = messages.slice(start, end);
+        if (start > 0 && page[0] !== undefined) res.setHeader("x-next-cursor", page[0].info.id);
+        json(res, 200, page);
         return;
       }
       case "GET /children":

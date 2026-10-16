@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Mobile: sessions whose newest 30 messages contain no user prompt no longer
+  open blank on OpenChamber's mobile surface. v1 `GET /session/{id}/message`
+  now returns `x-next-cursor` and honors `before`, so the client pages back
+  until it finds the start of a turn.
+
 ## [0.2.8] - 2026-10-15
 
 - fix(session): resend bare /<skill> commands as /skill:<name>

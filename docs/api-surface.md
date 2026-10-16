@@ -102,7 +102,7 @@ invented resource IDs.
 | GET | `/session/{sessionID}` | 200 | Session record; 404 if unknown. |
 | PATCH | `/session/{sessionID}` | 200 | Updated session record; supports title, archive time, and metadata. |
 | DELETE | `/session/{sessionID}` | 200 | Session removal result. |
-| GET | `/session/{sessionID}/message` | 200 | Message list; optional `limit` returns the newest bounded page. |
+| GET | `/session/{sessionID}/message` | 200 | Message list; optional `limit` returns the newest bounded page. When older messages remain, the `x-next-cursor` header carries the page's oldest message ID; pass it back as `before` to fetch the page that precedes it. An unknown `before` returns `[]`. |
 | GET | `/session/{sessionID}/message/{messageID}` | 200 | One message; 404 if unknown. |
 | GET | `/session/{sessionID}/children` | 200 | Direct child sessions. |
 | GET | `/session/{sessionID}/todo` | 200 | Session todo items. |
