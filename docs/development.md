@@ -13,6 +13,7 @@ One line per module in `src/`:
 | `commands/upgrade.ts` | `antechamber upgrade` output around `selfUpdate` |
 | `self-update.ts` | Global npm/bun install detection, npm registry lookup, and the single-flight installer run behind `upgrade`, `POST /global/upgrade` and `ANTECHAMBER_AUTO_UPDATE` |
 | `commands/doctor.ts` | Read-only installation diagnostics and text/JSON reporting |
+| `running-servers.ts` | `serve` records its PID, version and URL under `<state>/run/` so doctor can report what is actually running |
 | `commands/context.ts` | Injectable filesystem/environment/exec dependencies, executable and settings resolution |
 | `commands/help.ts` | Command and option reference printed by help |
 | `pidfd.ts` | Shared bounded Python/Linux pidfd capability probe for doctor and session-host teardown |
@@ -91,6 +92,7 @@ real model calls, so they cost tokens and are not run in CI:
 | `contrib/probe.ts` | `npm run probe` | Dumps raw pi/OmO RPC events to a JSONL file for protocol inspection |
 | `contrib/model-consistency.ts` | `npm run model-smoke` | Checks that model selection/resolution stays consistent across requests |
 | `contrib/v2-smoke.ts` | `npm run v2-smoke` | Checks the OpenCode v2 API surface specifically |
+| `contrib/replay/transcripts.ts` | `npm run replay` | Opens copies of real sessions in an isolated OpenChamber with headless Chrome, at phone and desktop sizes, and fails when a transcript renders no turn. No agent and no tokens; the data stays local. See `contrib/AGENTS.md`. |
 
 `contrib/omo/smoke/` holds the shared smoke-test harness (`core.ts`,
 `context.ts`, and the `checks/` modules loaded by
