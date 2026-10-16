@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show and resume turns that another OmO client, such as the terminal, appended to a session while the connector
+  was detached. Previously the connector stayed pinned to its last saved message. A committed revert's abandoned
+  branch stays hidden.
+
 ## [0.2.12] - 2026-10-16
 
 ### Fixed

@@ -1,5 +1,5 @@
 import { RPC_COMMAND_TIMEOUT_MS, type PiRpcClient } from "./pi-rpc.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts } from "./types.js";
 import type { OCPromptPart } from "./types.js";
@@ -18,6 +18,8 @@ export interface SessionTreeState {
   /** Identity-only dispatched admissions; never rendered without a native entry. */
   localShellTurns?: Array<{ afterEntryId: string | null; messages: [OCMessageWithParts, OCMessageWithParts] }>;
   leafId?: string | null;
+  /** Session file size when this connector last saved a live runtime; growth past it came from another client. */
+  fileSize?: number;
   revert?: { messageID: string; previousLeafId: string | null; targetId: string | null };
 }
 
@@ -103,6 +105,29 @@ export function recordTurn(s: ManagedSession): void {
   )
     return;
   bindMessageEntries(s, tree);
+}
+
+/**
+ * Another OmO client (e.g. the terminal) resumes at the file tail and appends there.
+ * Follow that tail when it descends from the saved selection and was written after
+ * this connector last saved, so a committed revert's abandoned branch stays hidden.
+ * Registries saved before the size marker existed follow any descendant tail.
+ */
+export function followExternalAppends(s: ManagedSession, piPath: string): void {
+  const saved = s.tree.leafId;
+  if (s.tree.revert || saved === undefined || saved === null) return;
+  const size = statSync(piPath, { throwIfNoEntry: false })?.size;
+  if (size === undefined || (s.tree.fileSize !== undefined && size <= s.tree.fileSize)) return;
+  let tree: Entries;
+  try {
+    tree = readSessionTree(piPath);
+  } catch (error) {
+    // History parsing skips malformed lines; keep the saved selection rather than guess a tail.
+    if (error instanceof SessionTreeError) return;
+    throw error;
+  }
+  if (tree.leafId === saved || !branchEntries(tree).some((entry) => entry.id === saved)) return;
+  s.tree.leafId = tree.leafId;
 }
 
 export function branchEntries(tree: Entries, leafId = tree.leafId): TreeEntry[] {

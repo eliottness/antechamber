@@ -667,6 +667,73 @@ test("revival preserves an unreverted native branch instead of adopting its late
   assert.equal(restoredPin.tree.revert?.messageID, "msg_live_2");
 });
 
+/** Simulate the terminal client resuming the file at its tail and completing one turn. */
+function appendExternalTurn(piPath: string, text: string): void {
+  const entries = readFileSync(piPath, "utf8")
+    .trimEnd()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const user = structuredClone(entries.findLast((entry) => entry.message?.role === "user"));
+  const assistant = structuredClone(entries.findLast((entry) => entry.message?.role === "assistant"));
+  assert.ok(user && assistant);
+  Object.assign(user, { id: "external-user", parentId: entries.at(-1).id });
+  user.message.content = [{ type: "text", text }];
+  delete user.message.clientMessageId;
+  Object.assign(assistant, { id: "external-assistant", parentId: "external-user" });
+  assistant.message.content = [{ type: "text", text: `${text} reply` }];
+  writeFileSync(
+    piPath,
+    `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n${JSON.stringify(user)}\n${JSON.stringify(assistant)}\n`,
+  );
+}
+
+function texts(manager: SessionManager, id: string): string[] {
+  return (manager.messages(id) ?? []).flatMap((message) =>
+    message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+  );
+}
+
+test("dormant history and revival follow turns another client appended to the session file", {
+  timeout: 30_000,
+}, async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { s, id } = await turns(manager, dir);
+  assert.ok(s.piPath);
+  await manager.disposeAll();
+  appendExternalTurn(s.piPath, "from-terminal");
+
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+  assert.ok(texts(cold, id).includes("from-terminal reply"));
+  await cold.reloadMessages(id);
+  const revived = cold.get(id);
+  assert.ok(revived?.pi);
+  assert.equal(revived.tree.leafId, "external-assistant");
+  assert.equal((await getEntries(revived.pi)).leafId, "external-assistant");
+  assert.ok(texts(cold, id).includes("from-terminal reply"));
+});
+
+test("a committed revert keeps its abandoned branch hidden after restart", { timeout: 30_000 }, async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { id } = await turns(manager, dir);
+  await manager.revert(id, "msg_live_3");
+  await manager.commitRevert(id);
+  const pin = manager.get(id)?.tree.leafId;
+  await manager.disposeAll();
+
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+  assert.equal(
+    cold.messages(id)?.some((message) => message.info.id === "msg_live_3"),
+    false,
+  );
+  await cold.reloadMessages(id);
+  const revived = cold.get(id);
+  assert.ok(revived?.pi);
+  assert.equal(revived.tree.leafId, pin);
+  assert.equal((await getEntries(revived.pi)).leafId, pin);
+});
+
 for (const action of ["read", "refresh", "fork", "notice", "prewarmed-fork", "prewarmed-revert"] as const) {
   test(`an invisible admission binds a later native result on normal ${action}`, { timeout: 30_000 }, async (t) => {
     const { manager, dir, state } = setup(t);

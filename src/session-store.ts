@@ -380,6 +380,8 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
     return false;
   if (value.shellDispatch !== undefined && !booleanRecord(value.shellDispatch)) return false;
   if (value.leafId !== undefined && value.leafId !== null && typeof value.leafId !== "string") return false;
+  if (value.fileSize !== undefined && (typeof value.fileSize !== "number" || !Number.isFinite(value.fileSize)))
+    return false;
   if (value.revert !== undefined) {
     if (
       !record(value.revert) ||

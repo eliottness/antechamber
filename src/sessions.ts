@@ -25,6 +25,7 @@ import type { TodoBridge, Todo, TodoUpdated } from "./todo-bridge.js";
 import {
   bindMessageEntries,
   durableShellTree,
+  followExternalAppends,
   forkConversation,
   getEntries,
   navigate,
@@ -1325,6 +1326,8 @@ export class SessionManager {
     if (this.subagents.owns(s.info.id)) return this.subagents.messages(s.info.id);
     if (this.monitors.owns(s.info.id)) return this.monitors.messages(s.info.id);
     if (s.messages === undefined) {
+      // A dormant session may have been continued by another OmO client since the last save.
+      if (s.pi === undefined && s.restored !== undefined) followExternalAppends(s, s.restored.piPath);
       const admissions = s.tree.localShellTurns?.length;
       s.messages = parsePiSessionFile(s, getAgentName());
       this.subagents.discover(s, s.messages);
@@ -1487,6 +1490,11 @@ export class SessionManager {
     const piPath = s.piPath ?? s.restored?.piPath;
     const piSessionId = s.piSessionId ?? s.restored?.piSessionId;
     if (piPath === undefined || piSessionId === undefined) return;
+    // Only a live runtime vouches for the file contents; dormant saves keep the previous marker.
+    if (s.pi !== undefined) {
+      const size = statSync(piPath, { throwIfNoEntry: false })?.size;
+      if (size !== undefined) s.tree.fileSize = size;
+    }
     this.store.set(s.info.id, {
       ...(this.createdSessions.has(piSessionId) ? { connectorOwned: true } : {}),
       tree: durableShellTree(s.tree),
