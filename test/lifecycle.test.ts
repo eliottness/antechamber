@@ -13,6 +13,8 @@ import { SessionManager } from "../src/sessions.js";
 import { SessionStore } from "../src/session-store.js";
 import { stopSessionHosts } from "../src/session-hosts.js";
 import { trackDetachedFixture } from "./fixtures/detached-fixture.js";
+import { bugHarness } from "./bug-harness.js";
+import { branchEntries, getEntries } from "../src/session-tree.js";
 
 const fixture = resolve("test/fixtures/fake-omo.mjs");
 const deadline = () => AbortSignal.timeout(10_000);
@@ -46,6 +48,73 @@ interface State {
 function gone(pid: number): void {
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 }
+
+test("interrupted native work survives process exit disposal and revival", { timeout: 15_000 }, async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  await h.manager.prompt(info.id, "normal");
+  const session = h.manager.get(info.id);
+  assert.ok(session?.pi);
+  const completedLeaf = session.tree.leafId;
+  // Progress arrives after prompt admission's get_entries checkpoint, without agent_end.
+  await session.pi.command({ type: "inject", message: "interrupted-work", clientMessageId: "msg_interrupted_work" });
+  const native = await getEntries(session.pi);
+  assert.notEqual(native.leafId, completedLeaf);
+  assert.equal(session.tree.leafId, completedLeaf);
+  const liveIds = h.manager.messages(info.id)?.map((message) => message.info.id);
+  const exited = h.wait((event) => event.type === "session.idle" && event.properties.sessionID === info.id);
+
+  await session.pi.dispose();
+  await exited;
+  await h.restart();
+  await h.manager.reloadMessages(info.id);
+
+  const revived = h.manager.get(info.id);
+  assert.ok(revived?.pi);
+  assert.equal((await getEntries(revived.pi)).leafId, native.leafId);
+  assert.deepEqual(
+    h.manager.messages(info.id)?.map((message) => message.info.id),
+    liveIds,
+  );
+  assert.equal(revived.tree.messageEntries.msg_interrupted_work, native.entries.at(-4)?.id);
+  assert.equal(
+    branchEntries(await getEntries(revived.pi)).some((entry) => entry.message?.role === "toolResult"),
+    true,
+  );
+  const tool = h.manager
+    .messages(info.id)
+    ?.flatMap((message) => message.parts)
+    .find((part) => part.type === "tool");
+  assert.ok(tool?.type === "tool" && tool.state.status === "completed");
+  assert.equal(tool.state.output, "checkpoint\n");
+});
+
+for (const failure of ["missing", "corrupt"] as const)
+  test(`exit reports a ${failure} checkpoint file and still becomes dormant`, { timeout: 15_000 }, async (t) => {
+    const h = bugHarness(t);
+    const info = await h.manager.create(h.root);
+    await h.manager.prompt(info.id, "normal");
+    const session = h.manager.get(info.id);
+    assert.ok(session?.pi && session.piPath);
+    const before = structuredClone(session.tree);
+    if (failure === "missing") rmSync(session.piPath);
+    else fs.appendFileSync(session.piPath, "not-json\n{}\n");
+    const reported = h.wait(
+      (event) =>
+        event.type === "session.error" &&
+        event.properties.sessionID === info.id &&
+        event.properties.error !== undefined &&
+        /ENOENT|Malformed session line/.test(event.properties.error.data.message),
+    );
+    const idle = h.wait((event) => event.type === "session.idle" && event.properties.sessionID === info.id);
+
+    await session.pi.dispose();
+    await Promise.all([reported, idle]);
+
+    assert.equal(session.pi, undefined);
+    assert.ok(session.restored);
+    assert.deepEqual(session.tree, before);
+  });
 
 test("detached fixture groups are cleaned up after assertion failure", { timeout: 20_000 }, async (t) => {
   const env = { ...process.env };

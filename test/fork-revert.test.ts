@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
-import { bindMessageEntries, branchEntries, getEntries } from "../src/session-tree.js";
+import { bindMessageEntries, branchEntries, getEntries, recordTurn } from "../src/session-tree.js";
 import { SessionManager, type ManagedSession } from "../src/sessions.js";
 import { SessionStore } from "../src/session-store.js";
 import { AdapterServer } from "../src/server.js";
@@ -587,6 +587,49 @@ test("an older cached ancestor cannot carry a later queued attempt across either
     false,
   );
 });
+
+for (const snapshot of ["descendant", "ancestor", "sibling", "missing-selection", "revert", "torn-tail"] as const)
+  test(`native checkpoint respects the selected branch with a ${snapshot} disk snapshot`, async (t) => {
+    const { manager, dir } = setup(t);
+    const { s, id, tree } = await turns(manager, dir);
+    assert.ok(s.piPath);
+    if (snapshot === "revert") await manager.revert(id, "msg_live_3");
+    const before = structuredClone(s.tree);
+    const raw = readFileSync(s.piPath, "utf8");
+    const header = raw.split("\n")[0];
+    const appended = {
+      type: "compaction",
+      id: "checkpoint-compaction",
+      parentId: snapshot === "sibling" ? tree.entries[1]?.id : tree.leafId,
+      summary: "checkpoint",
+    };
+    if (snapshot === "ancestor")
+      writeFileSync(
+        s.piPath,
+        `${[header, ...tree.entries.slice(0, -1).map((entry) => JSON.stringify(entry))].join("\n")}\n`,
+      );
+    else if (snapshot === "missing-selection") writeFileSync(s.piPath, `${header}\n`);
+    else writeFileSync(s.piPath, `${raw}${JSON.stringify(appended)}\n${snapshot === "torn-tail" ? '{"type":' : ""}`);
+
+    recordTurn(s);
+
+    if (snapshot === "descendant" || snapshot === "torn-tail") assert.equal(s.tree.leafId, appended.id);
+    else assert.deepEqual(s.tree, before);
+  });
+
+for (const failure of ["missing", "corrupt"] as const)
+  test(`native checkpoint rejects a ${failure} session file without changing selection`, async (t) => {
+    const { manager, dir } = setup(t);
+    const { s } = await turns(manager, dir);
+    assert.ok(s.piPath);
+    const before = structuredClone(s.tree);
+    if (failure === "missing") rmSync(s.piPath);
+    else writeFileSync(s.piPath, `${readFileSync(s.piPath, "utf8")}not-json\n{}\n`);
+
+    assert.throws(() => recordTurn(s), failure === "missing" ? { code: "ENOENT" } : /Malformed session line/);
+
+    assert.deepEqual(s.tree, before);
+  });
 
 test("revival preserves an unreverted native branch instead of adopting its latest sibling", {
   timeout: 30_000,

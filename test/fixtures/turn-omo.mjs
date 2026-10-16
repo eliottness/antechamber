@@ -70,6 +70,31 @@ const start = (cmd) => {
   active = cmd;
   send({ type: "agent_start" });
   user(cmd);
+  if (cmd.message === "interrupted-work") {
+    const message = {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "checkpoint-tool", name: "bash", arguments: { command: "echo checkpoint" } }],
+      provider: "fake",
+      model: "served",
+      timestamp: 1100,
+      stopReason: "toolUse",
+    };
+    send({ type: "message_start", message, clientMessageId: cmd.clientMessageId });
+    record("message", { message });
+    send({ type: "message_end", message, clientMessageId: cmd.clientMessageId });
+    const toolResult = {
+      role: "toolResult",
+      toolCallId: "checkpoint-tool",
+      toolName: "bash",
+      content: [{ type: "text", text: "checkpoint\n" }],
+      isError: false,
+      timestamp: 1200,
+    };
+    record("message", { message: toolResult });
+    send({ type: "turn_end", message, toolResults: [toolResult] });
+    assistant("toolUse", cmd);
+    return;
+  }
   if (cmd.message === "hold") {
     send({
       type: "message_start",
@@ -111,6 +136,14 @@ createInterface({ input: process.stdin })
         isStreaming: !!active,
       };
     if (cmd.type === "get_entries") data = { entries, leafId: leaf };
+    if (cmd.type === "navigate_tree") {
+      const entry = entries.find((entry) => entry.id === cmd.targetId);
+      success = entry !== undefined;
+      if (entry) {
+        leaf = cmd.intent === "resume" || entry.message?.role !== "user" ? entry.id : entry.parentId;
+        data = { cancelled: false, leafId: leaf };
+      }
+    }
     if (cmd.type === "inspect")
       data = {
         commands,
@@ -133,9 +166,12 @@ createInterface({ input: process.stdin })
     if (cmd.type === "emit") send(cmd.frame);
     if (cmd.type === "exit") process.exit(3);
     if (cmd.type === "inject") {
-      const injected = { message: cmd.message };
-      user(injected);
-      assistant("stop", injected);
+      if (cmd.message === "interrupted-work") start(cmd);
+      else {
+        const injected = { message: cmd.message };
+        user(injected);
+        assistant("stop", injected);
+      }
     }
     if (cmd.type === "compact") {
       // OmO: compaction_start, persisted entry, compaction_end with the result, then the reply.

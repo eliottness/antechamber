@@ -627,6 +627,7 @@ export class PiEventTranslator {
               },
         );
         if (ev.aborted !== true && typeof result?.summary === "string" && typeof result.firstKeptEntryId === "string") {
+          recordTurn(s);
           const messages = this.services.ensureMessages(s);
           let key: string | undefined;
           // compaction_end follows persistence, but its result omits the entry ID.
@@ -643,6 +644,7 @@ export class PiEventTranslator {
             this.services.emit(s.info.directory, { type: "message.updated", properties: { info: message.info } });
             for (const part of message.parts) this.emitPart(s, part);
           }
+          this.services.persistMeta(s);
         }
         this.services.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
         if (s.compactingFromIdle) {

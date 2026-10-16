@@ -28,6 +28,7 @@ import {
   forkConversation,
   getEntries,
   navigate,
+  recordTurn,
   readSessionTree,
   revertConversation,
   SessionTreeError,
@@ -354,6 +355,12 @@ export class SessionManager {
         name: "UnknownError",
         data: { message: `pi process exited (code=${code})` },
       });
+      try {
+        recordTurn(s);
+        this.persistMeta(s);
+      } catch (error) {
+        this.reportPersistenceError(s, error);
+      }
       delete s.interruptRequested;
       this.subagents.stopParent(s.info.id);
       this.monitors.stopParent(s.info.id);

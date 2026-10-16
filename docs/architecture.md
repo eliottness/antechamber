@@ -72,6 +72,9 @@ it; a new prompt clears the cutoff and starts a branch at the earlier leaf.
 Revival reapplies the saved leaf rather than assuming the newest JSONL
 message is the active branch. The reverted transcript is retained for redo.
 
+Native progress is checkpointed at `agent_end`, successful `compaction_end`, and
+process exit. Checkpoints advance only to descendants of the saved leaf.
+
 The registry also stores the published part IDs in message order under each
 stable message ID. On history reconstruction, those IDs are restored onto the
 parsed parts so clients keep their live identities after a restart. History
