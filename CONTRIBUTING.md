@@ -26,6 +26,7 @@ Node.js 22+ is required. You don't need `pi` or `omo` installed to build, run
 | `npm run probe` | dump raw pi/OmO RPC events for protocol inspection |
 | `npm run model-smoke` | model-selection consistency check |
 | `npm run v2-smoke` | OpenCode v2 API surface check |
+| `npm run replay` | renders copies of your real sessions in an isolated OpenChamber (needs `npm run build`, Chrome and `openchamber`) |
 
 Run `npm run typecheck && npm test && npm run build` before opening a pull
 request.
@@ -92,7 +93,8 @@ see [RELEASE.md](RELEASE.md). Do not bump versions or push tags yourself. Add us
 - [ ] `npm run typecheck` passes
 - [ ] `npm test` passes
 - [ ] `npm run build` succeeds
-- [ ] New behavior has a unit test; no fixed sleeps were added
+- [ ] New behavior has a unit test that fails without the change; no fixed sleeps were added
+- [ ] A bug fix was reproduced on the reported case before the change and shown fixed after it, on the real surface (`npm run replay -- --session <id>` for transcript/UI bugs)
 - [ ] Commit messages follow Conventional Commits
 - [ ] Docs updated if you changed a config variable, route, or CLI flag
 - [ ] No personal paths, hostnames, or credentials in anything you touched
