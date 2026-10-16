@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-10-16
+
 ### Fixed
 
 - Preserve recorded conversation progress when the agent process exits before
