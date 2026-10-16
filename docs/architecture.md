@@ -34,6 +34,10 @@ is an upstream protocol error. A command timeout also closes the transport, so
 the process cannot accept another operation whose native completion is unknown.
 These boundaries are implemented in `src/pi-rpc.ts`.
 
+Default `prompt` timeouts are suspended during active turns, retries, or compaction,
+then reset to 60 seconds when work settles, with a 32-minute overall cap.
+Explicit deadlines and other RPC commands keep fixed limits.
+
 ## Mapping concerns
 
 ### Session model

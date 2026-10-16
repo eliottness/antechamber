@@ -29,6 +29,7 @@ export const RPC_COMMAND_TIMEOUT_MS = 60_000;
  * long before a large session finished, leaving the run orphaned.
  */
 export const COMPACT_RPC_TIMEOUT_MS = 31 * 60_000;
+const PROMPT_ADMISSION_TIMEOUT_MS = COMPACT_RPC_TIMEOUT_MS + RPC_COMMAND_TIMEOUT_MS;
 const MAX_JSONL_FRAME_BYTES = 64 * 1024 * 1024;
 export class UpstreamProtocolError extends Error {
   constructor(message: string) {
@@ -107,6 +108,7 @@ interface PendingRequest {
   command: string;
   resolve: (r: PiRpcResponse) => void;
   reject: (e: Error) => void;
+  onWorkState?: () => void;
 }
 
 export class PiRpcClient extends EventEmitter {
@@ -118,6 +120,8 @@ export class PiRpcClient extends EventEmitter {
   private closed = false;
   private stderrTail = "";
   private disposing: Promise<void> | undefined;
+  private agentActive = false;
+  private compacting = false;
 
   get pid(): number | undefined {
     return this.proc.pid;
@@ -301,6 +305,27 @@ export class PiRpcClient extends EventEmitter {
       return;
     }
 
+    const wasWorking = this.agentActive || this.compacting;
+    switch (msg.type) {
+      case "agent_start":
+      case "auto_retry_start":
+        this.agentActive = true;
+        break;
+      case "agent_end":
+        if (msg.willRetry !== true) this.agentActive = false;
+        break;
+      case "agent_idle":
+        this.agentActive = false;
+        break;
+      case "compaction_start":
+        this.compacting = true;
+        break;
+      case "compaction_end":
+        this.compacting = false;
+        break;
+    }
+    if (wasWorking !== (this.agentActive || this.compacting))
+      for (const request of this.pending.values()) request.onWorkState?.();
     this.emit("event", msg);
   }
 
@@ -330,7 +355,7 @@ export class PiRpcClient extends EventEmitter {
   /** Send a command and wait for its correlated response. */
   command<T = unknown>(
     cmd: Omit<PiRpcCommand, "id">,
-    timeoutMs = RPC_COMMAND_TIMEOUT_MS,
+    timeoutMs?: number,
     signal?: AbortSignal,
     onDispatch?: () => void,
   ): Promise<PiRpcResponse<T>> {
@@ -338,9 +363,14 @@ export class PiRpcClient extends EventEmitter {
     if (signal?.aborted) return Promise.reject(signal.reason);
     const id = randomUUID();
     const expectedCommand = String(cmd.type);
+    const deadlineMs = timeoutMs ?? RPC_COMMAND_TIMEOUT_MS;
+    const waitsForWork = expectedCommand === "prompt" && timeoutMs === undefined;
     return new Promise((resolve, reject) => {
+      let timer: NodeJS.Timeout | undefined;
+      let admissionTimer: NodeJS.Timeout | undefined;
       const cleanup = (): void => {
         clearTimeout(timer);
+        clearTimeout(admissionTimer);
         signal?.removeEventListener("abort", onAbort);
         this.pending.delete(id);
       };
@@ -351,9 +381,17 @@ export class PiRpcClient extends EventEmitter {
       const onAbort = (): void => {
         rejectCommand(signal?.reason);
       };
-      const timer = setTimeout(() => {
-        this.closeForTransportFailure(new Error(`pi command "${expectedCommand}" timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
+      const expire = (duration: number): void => {
+        this.closeForTransportFailure(new Error(`pi command "${expectedCommand}" timed out after ${duration}ms`));
+      };
+      const armDeadline = (): void => {
+        clearTimeout(timer);
+        if (!waitsForWork || !(this.agentActive || this.compacting))
+          timer = setTimeout(() => expire(deadlineMs), deadlineMs);
+      };
+      armDeadline();
+      if (waitsForWork)
+        admissionTimer = setTimeout(() => expire(PROMPT_ADMISSION_TIMEOUT_MS), PROMPT_ADMISSION_TIMEOUT_MS);
       this.pending.set(id, {
         command: expectedCommand,
         resolve: (r) => {
@@ -362,6 +400,7 @@ export class PiRpcClient extends EventEmitter {
           resolve(r.success ? { ...r, data: r.data as T } : r);
         },
         reject: rejectCommand,
+        ...(waitsForWork ? { onWorkState: armDeadline } : {}),
       });
       signal?.addEventListener("abort", onAbort, { once: true });
       this.write({ ...cmd, id });
