@@ -576,6 +576,8 @@ export class PiEventTranslator {
   private onCompactionEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     switch (ev.type) {
       case "compaction_start":
+        // An auto-compaction can fall between steps; its summary is a new step.
+        this.completeAwaitingTools(s);
         s.compactionID = id("compaction");
         this.services.emit(s.info.directory, {
           type: "session.compaction.started",
