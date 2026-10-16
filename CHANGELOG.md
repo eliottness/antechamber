@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-16
+
 ### Fixed
 
 - Mobile: sessions whose newest 30 messages contain no user prompt no longer
