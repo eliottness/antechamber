@@ -111,18 +111,23 @@ test("v2 announces MCP status changes as mcp.status.changed", () => {
   assert.deepEqual(frame?.data, { server: "x" });
 });
 
-test("v1 status comes from the live session and is empty without one", async (t) => {
-  const { server, url } = await startServer(t);
+test("v1 status comes from a live session, preferring the directory's, and is empty without one", async (t) => {
+  const { server, url, root } = await startServer(t);
   assert.deepEqual(await call(url, "GET", "/mcp"), { status: 200, body: {} });
   assert.equal((await call(url, "POST", "/mcp/linear/auth")).status, 400);
   await liveSession(server, url);
-  assert.deepEqual((await call(url, "GET", "/mcp")).body, {
+  const expected = {
     linear: { status: "needs_auth" },
     github: { status: "needs_auth" },
     notion: { status: "needs_auth" },
     local: { status: "connected" },
     broken: { status: "needs_auth" },
-  });
+  };
+  assert.deepEqual((await call(url, "GET", "/mcp")).body, expected);
+  // A directory whose sessions are all dormant reads the servers from the live one elsewhere.
+  const elsewhere = encodeURIComponent(join(root, "dormant-project"));
+  assert.deepEqual((await call(url, "GET", `/mcp?directory=${elsewhere}`)).body, expected);
+  assert.equal((await call(url, "POST", `/mcp/linear/auth?directory=${elsewhere}`)).status, 400);
 });
 
 test("v1 auth start returns OmO's URL, completes in OmO, and leaves the conversation untouched", async (t) => {

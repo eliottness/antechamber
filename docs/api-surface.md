@@ -46,7 +46,7 @@ invented resource IDs.
 | `GET /formatter` | 200 | Empty array; formatter inventory is unavailable. |
 | `GET /experimental/tool/ids` | 200 | Empty array; experimental tool inventory is unavailable. |
 | `GET /provider/auth` | 200 | Empty object; provider authentication state is unavailable. |
-| `GET /mcp` | 200 | `{name: McpStatus}` from RPC `get_loaded_surfaces` on the most recently used live session in the directory; empty object when no session in the directory has a running agent or OmO has no such RPC. |
+| `GET /mcp` | 200 | `{name: McpStatus}` from RPC `get_loaded_surfaces` on the most recently used live session in the directory, else on the most recently used live session in any directory; empty object when no session has a running agent or OmO has no such RPC. |
 | `GET /command` | 200 | Agent slash-command descriptors. |
 | `GET /path` | 200 | Home, state, config, worktree, and directory paths. |
 | `GET /vcs` | 200 | `{branch, default_branch}` for the selected directory. |
@@ -70,13 +70,13 @@ invented resource IDs.
 | `DELETE /api/debug/location` | 204 | Empty, as OpenCode answers. OpenChamber evicts a location after git worktree changes; antechamber keeps no per-location instance, so there is nothing to evict. |
 | `GET /api/credential` | 200 | `{location, data: []}`; no credentials are retained. |
 | `POST /api/credential` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| `GET /api/integration` | 200 | `{location, data: IntegrationInfo[]}`: one `mcp_{name}` integration (`metadata.source: "mcp"`, one `oauth` method) per OAuth-capable OmO MCP server in the newest live session of the directory; empty without one. Providers are not integrations here. |
+| `GET /api/integration` | 200 | `{location, data: IntegrationInfo[]}`: one `mcp_{name}` integration (`metadata.source: "mcp"`, one `oauth` method) per OAuth-capable OmO MCP server in the newest live session of the directory, else of any directory; empty without one. Providers are not integrations here. |
 | `GET /api/plugin` | 200 | `{location, data: []}`; no OpenCode plugins are loaded by OmO. |
 | `POST /api/plugin/check` | 200 | Read-only update query returning `{location, data: []}`; there are no plugins to check. |
 | `POST /api/plugin/update` | 400 | `UnsupportedError`; plugin updates are unavailable with OmO. Unsupported. |
 | `POST /api/experimental/generate` | 503 | `{_tag: "ServiceUnavailableError", message: "No generation model is available through antechamber/OmO", service: "opencode"}`. |
 | `GET /api/experimental/session/stats` | 400 | `UnsupportedError`; session statistics are unavailable with OmO. Unsupported. |
-| `GET /api/mcp` | 200 | `{location, data: McpServer[]}` (`name`, v2 `status`, `integrationID` for OAuth-capable servers) from RPC `get_loaded_surfaces` on the newest live session in the directory; empty without one. |
+| `GET /api/mcp` | 200 | `{location, data: McpServer[]}` (`name`, v2 `status`, `integrationID` for OAuth-capable servers) from RPC `get_loaded_surfaces` on the newest live session in the directory, else in any directory; empty without one. |
 | `POST /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `DELETE /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file"}]}`. |

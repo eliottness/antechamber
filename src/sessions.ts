@@ -410,11 +410,11 @@ export class SessionManager {
     return undefined;
   }
 
-  /** Sessions with a running agent in `directory`, most recently used first; never revives a dormant one. */
-  liveSessions(directory: string): ManagedSession[] {
+  /** Sessions with a running agent (in `directory`, if given), most recently used first; never revives a dormant one. */
+  liveSessions(directory?: string): ManagedSession[] {
     if (this.disposed) return [];
     return [...this.sessions.values()]
-      .filter((s) => s.pi !== undefined && s.info.directory === directory)
+      .filter((s) => s.pi !== undefined && (directory === undefined || s.info.directory === directory))
       .sort((a, b) => this.lifecycle.lastUsed(b) - this.lifecycle.lastUsed(a));
   }
 

@@ -11,6 +11,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - Retry a manual compaction that OmO cancelled without a user abort. Compacting a dormant session failed with
   "Compaction cancelled" when its MCP servers finished connecting right after the agent started.
+- List MCP servers for a directory whose sessions are all dormant, from the most recently used live session
+  elsewhere, instead of showing none.
 
 ## [0.2.13] - 2026-10-16
 
