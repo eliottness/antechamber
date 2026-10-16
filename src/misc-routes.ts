@@ -18,7 +18,7 @@ export function debugLog(line: string): void {
   try {
     appendFileSync(
       envSetting("DEBUG_LOG") ?? join(tmpdir(), `antechamber-debug-${process.getuid?.() ?? "user"}.log`),
-      line + "\n",
+      `${line}\n`,
       { flag: "a", mode: 0o600 },
     );
   } catch (error) {

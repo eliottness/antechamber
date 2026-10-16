@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
 
+// biome-ignore lint/complexity/noUselessStringRaw: embedded Python must keep any backslashes verbatim.
 const pidfdProbe = String.raw`
 import os, selectors, signal
 fd = os.pidfd_open(os.getpid())

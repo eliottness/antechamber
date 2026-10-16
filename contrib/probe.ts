@@ -16,7 +16,7 @@ let closed = false;
 const write = (line: string): void => {
   if (closed) return;
   try {
-    writeSync(out, line + "\n");
+    writeSync(out, `${line}\n`);
   } catch {
     /* fd already closed */
   }

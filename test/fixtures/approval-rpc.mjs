@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 const responses = [];
 const sessionId = randomUUID();
-const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let buffer = "";
 process.stdin.on("data", (chunk) => {
   buffer += chunk.toString();

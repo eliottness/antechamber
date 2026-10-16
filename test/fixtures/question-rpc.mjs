@@ -18,13 +18,13 @@ const sessionFile = resume < 0 ? join(directory, `${randomUUID()}.jsonl`) : proc
 if (resume < 0)
   writeFileSync(
     sessionFile,
-    JSON.stringify({
+    `${JSON.stringify({
       type: "session",
       version: 3,
       id: randomUUID(),
       cwd: process.cwd(),
       timestamp: new Date().toISOString(),
-    }) + "\n",
+    })}\n`,
   );
 const lines = readFileSync(sessionFile, "utf8").trim().split("\n").map(JSON.parse);
 const sessionId = lines[0].id;
@@ -34,13 +34,13 @@ const record = (entry) => {
   const value = { id: randomUUID(), parentId: leafId, timestamp: new Date().toISOString(), ...entry };
   entries.push(value);
   leafId = value.id;
-  appendFileSync(sessionFile, JSON.stringify(value) + "\n");
+  appendFileSync(sessionFile, `${JSON.stringify(value)}\n`);
 };
 const questions = [
   { id: "q1", header: "Features", question: "Which?", options: [{ label: "A" }, { label: "B" }], multiSelect: true },
   { id: "q2", header: "Details", question: "Details?", options: [], multiSelect: false },
 ];
-const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let pending;
 let busy = false;
 let refused = false;
