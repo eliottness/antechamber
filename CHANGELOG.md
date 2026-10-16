@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-10-16
+
 ### Fixed
 
 - Keep pending prompts alive while the agent is running or compacting instead of terminating useful work at the
