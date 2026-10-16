@@ -305,12 +305,21 @@ export async function forkConversation(s: ManagedSession, pi: PiRpcClient, tree:
   const shellUser =
     entry.message?.role === "bashExecution" &&
     s.messages?.find((message) => message.info.id === messageID)?.info.role === "user";
-  const forkEntryId = shellUser ? entry.parentId : entry.id;
-  if (forkEntryId === null) throw new SessionTreeError("Cannot fork before a root shell entry");
+  // OpenCode forks strictly before any selected message. OmO's default "before"
+  // position only accepts user entries, so other boundaries (an assistant reply,
+  // as /btw sends) fork "at" the entry preceding them.
+  const beforeOther =
+    messageID !== undefined && entry.message?.role !== "user" && entry.message?.role !== "bashExecution";
+  const forkEntryId = shellUser || beforeOther ? entry.parentId : entry.id;
+  if (forkEntryId === null) {
+    throw new SessionTreeError(
+      shellUser ? "Cannot fork before a root shell entry" : "Cannot fork before the first entry",
+    );
+  }
   const response = await pi.command<{ cancelled?: boolean }>({
     type: "fork",
     entryId: forkEntryId,
-    ...(messageID === undefined || entry.message?.role === "bashExecution" ? { position: "at" } : {}),
+    ...(messageID === undefined || beforeOther || entry.message?.role === "bashExecution" ? { position: "at" } : {}),
   });
   if (!response.success) throw new SessionTreeError(response.error ?? "OmO fork failed");
   if (response.data?.cancelled) throw new SessionTreeError("Conversation fork was cancelled");

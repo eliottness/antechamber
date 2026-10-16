@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `/btw` no longer fails with "Invalid entry ID for forking". Forking before an
+  assistant message (the fork point `/btw` sends) now keeps everything before
+  that reply, matching OpenCode's exclusive fork boundary.
+
 ## [0.2.9] - 2026-10-16
 
 ### Fixed
