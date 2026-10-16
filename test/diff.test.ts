@@ -182,11 +182,11 @@ test("real RPC editing turns emit diff events and both HTTP diff contracts retur
   assert.equal(new V2EventTranslator().translate(dir, event)[0]?.type, "session.diff");
   await server.start();
   // The fixture transcript is also restorable by a separate server.
-  const base = server.url + "/session/" + info.id;
-  const response = await fetch(base + "/diff");
+  const base = `${server.url}/session/${info.id}`;
+  const response = await fetch(`${base}/diff`);
   assert.equal(response.status, 200);
   assert.equal(((await response.json()) as SessionFileDiff[])[0]?.after, "RPC content\n");
-  const alternate = await fetch(server.url + "/api/session/" + info.id + "/diff");
+  const alternate = await fetch(`${server.url}/api/session/${info.id}/diff`);
   assert.equal(alternate.status, 200);
   assert.equal(((await alternate.json()) as { data: SessionFileDiff[] }).data[0]?.after, "RPC content\n");
 });

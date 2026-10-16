@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -14,6 +14,152 @@ import { bugHarness, openEvents } from "./bug-harness.js";
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+
+/** A live session fed raw pi events, recording the v1 events and the v2 frames they translate to. */
+function replaySession(t: TestContext) {
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-tool-completion-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const events: (OCEvent | TodoUpdated)[] = [];
+  const frames: string[] = [];
+  const translator = new V2EventTranslator();
+  const manager = new SessionManager((directory, event) => {
+    events.push(structuredClone(event));
+    for (const frame of translator.translate(directory, event as OCEvent)) frames.push(frame.type);
+  }, new SessionStore(dir));
+  t.after(() => manager.disposeAll());
+  const live: ManagedSession = {
+    info: {
+      id: "ses_tools",
+      projectID: dir,
+      directory: dir,
+      title: "Tools",
+      version: "test",
+      time: { created: 0, updated: 0 },
+    },
+    pi: undefined,
+    messages: [],
+    status: { type: "idle" },
+    model: undefined,
+    streaming: undefined,
+    toolByCallId: new Map(),
+    tree: { messageEntries: {} },
+    hasPendingInteraction: () => false,
+    hasRunningChildren: () => false,
+  };
+  const feed = (...piEvents: Record<string, unknown>[]) => {
+    for (const event of piEvents) manager["onPiEvent"](live, event);
+  };
+  return { manager, live, events, frames, feed };
+}
+
+const assistantStart = { type: "message_start", message: { role: "assistant" } };
+const toolCall = (id: string, name: string, args: Record<string, unknown>) => [
+  { type: "message_update", assistantMessageEvent: { type: "toolcall_start", contentIndex: 0, id, toolName: name } },
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: { id, name, arguments: args } },
+  },
+];
+const assistantEnd = (stopReason: string) => ({ type: "message_end", message: { role: "assistant", stopReason } });
+
+test("a retried provider error keeps its tool-call message completed, so v2 reports the retry's success", (t) => {
+  const { frames, feed } = replaySession(t);
+  feed(
+    { type: "agent_start" },
+    assistantStart,
+    ...toolCall("call_retry", "bash", { command: "true" }),
+    assistantEnd("error"),
+    { type: "agent_end", willRetry: true },
+    { type: "auto_retry_start", attempt: 1, errorMessage: "overloaded", delayMs: 0 },
+    assistantStart,
+    assistantEnd("stop"),
+    { type: "agent_end" },
+    { type: "agent_idle" },
+  );
+  assert.ok(frames.includes("session.execution.succeeded"), frames.join(","));
+  assert.ok(!frames.includes("session.execution.failed"), frames.join(","));
+});
+
+test("a background task's step completes before the next step, so v2 never reopens it", (t) => {
+  const { frames, feed } = replaySession(t);
+  feed(
+    { type: "agent_start" },
+    assistantStart,
+    ...toolCall("call_bg", "task", { prompt: "explore", description: "background", run_in_background: true }),
+    assistantEnd("toolUse"),
+    { type: "tool_execution_start", toolCallId: "call_bg", toolName: "task", args: {} },
+    {
+      type: "tool_execution_end",
+      toolCallId: "call_bg",
+      toolName: "task",
+      result: { content: [{ type: "text", text: "started" }], details: { status: "running" } },
+      isError: false,
+    },
+    assistantStart,
+    assistantEnd("error"),
+    { type: "agent_end" },
+    { type: "agent_idle" },
+  );
+  assert.equal(frames.filter((type) => type === "session.step.started").length, 2, frames.join(","));
+  assert.ok(frames.includes("session.execution.failed"), frames.join(","));
+  assert.ok(!frames.includes("session.execution.succeeded"), frames.join(","));
+});
+
+test("an auto-compaction between steps closes the waiting step first, so v2 never reopens it", (t) => {
+  const { frames, feed } = replaySession(t);
+  feed(
+    { type: "agent_start" },
+    assistantStart,
+    ...toolCall("call_bg", "task", { prompt: "explore", description: "background", run_in_background: true }),
+    assistantEnd("toolUse"),
+    {
+      type: "tool_execution_end",
+      toolCallId: "call_bg",
+      toolName: "task",
+      result: { content: [{ type: "text", text: "started" }], details: { status: "running" } },
+      isError: false,
+    },
+    { type: "compaction_start", reason: "threshold" },
+    { type: "compaction_end", reason: "threshold", result: { summary: "earlier work", firstKeptEntryId: "e1" } },
+    assistantStart,
+    assistantEnd("stop"),
+    { type: "agent_end" },
+    { type: "agent_idle" },
+  );
+  assert.equal(frames.filter((type) => type === "session.step.started").length, 3, frames.join(","));
+});
+
+test("an assistant message stays incomplete until its tools settle, so OpenChamber never marks them Interrupted", (t) => {
+  const { live, events, feed } = replaySession(t);
+  const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8").trim().split("\n");
+  // The recorded run ends 21 assistant messages with stopReason toolUse.
+  const states = new Map<string, string>();
+  let completedWithTools = 0;
+  for (const line of rpc) {
+    feed(JSON.parse(line));
+    for (const event of events.splice(0)) {
+      if (event.type === "message.part.updated" && event.properties.part.type === "tool") {
+        const part = event.properties.part;
+        states.set(`${part.messageID}|${part.callID}`, part.state.status);
+      }
+      if (event.type !== "message.updated" || event.properties.info.role !== "assistant") continue;
+      const info = event.properties.info;
+      if (info.time.completed === undefined) continue;
+      const active = [...states].filter(
+        ([key, status]) => key.startsWith(`${info.id}|`) && (status === "pending" || status === "running"),
+      );
+      assert.deepEqual(active, [], `message ${info.id} completed with active tools`);
+      if ([...states.keys()].some((key) => key.startsWith(`${info.id}|`))) completedWithTools++;
+    }
+  }
+  assert.ok(completedWithTools > 0, "the recording completes messages that carried tools");
+  const unfinished = live.messages?.filter((m) => m.info.role === "assistant" && m.info.time.completed === undefined);
+  assert.deepEqual(
+    unfinished?.map((m) => m.info.id),
+    [],
+    "every assistant message is completed by the end of the run",
+  );
+});
 
 test("R-006: provider errors produce failed v2 terminal frames", () => {
   const translator = new V2EventTranslator();

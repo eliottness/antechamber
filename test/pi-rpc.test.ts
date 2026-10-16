@@ -40,7 +40,7 @@ for (const fields of [
     const [chunk] = await sent;
     const command = JSON.parse(String(chunk));
     const rejected = assert.rejects(pending, /malformed.*response/i);
-    stdout.write(JSON.stringify({ type: "response", id: command.id, command: "get_state", ...fields }) + "\n");
+    stdout.write(`${JSON.stringify({ type: "response", id: command.id, command: "get_state", ...fields })}\n`);
     await rejected;
     assert.equal(pi.isBusy, false);
     assert.equal(logged.mock.callCount(), 1);
@@ -55,7 +55,7 @@ test("ignores non-object JSON and invalid response IDs without losing valid fram
   const command = JSON.parse(String(chunk));
   stdout.write('null\n[]\n{"type":"response","id":12,"command":"get_state","success":true}\n');
   stdout.write(
-    JSON.stringify({ type: "response", id: command.id, command: "get_state", success: true, data: "valid" }) + "\n",
+    `${JSON.stringify({ type: "response", id: command.id, command: "get_state", success: true, data: "valid" })}\n`,
   );
   assert.equal((await pending).data, "valid");
 });

@@ -99,7 +99,7 @@ test("serve preserves the OpenChamber listening line and clean shutdown", { time
 });
 
 test("npm package configuration retains the CLI and supported Node runtime", () => {
-  assert.equal(manifest.bin.antechamber, "./dist/cli.js");
+  assert.equal(manifest.bin.antechamber, "dist/cli.js");
   assert.ok(manifest.files.includes("dist"));
   assert.equal(manifest.engines.node, ">=22");
   assert.deepEqual(manifest.publishConfig, { access: "public", provenance: true });

@@ -39,7 +39,7 @@ test("owned routes return real listings or truthful neutral and unsupported resp
     "/file?path=escape",
     "/find/file?query=../secret",
     "/find/file?path=../",
-    "/find/file?query=" + encodeURIComponent(base),
+    `/find/file?query=${encodeURIComponent(base)}`,
   ]) {
     assert.equal((await get(route)).status, 400, route);
   }

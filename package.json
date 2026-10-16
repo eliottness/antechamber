@@ -1,6 +1,6 @@
 {
   "name": "antechamber",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "OpenCode-compatible HTTP/SSE server that lets OpenChamber drive the pi coding agent (and OmO) over RPC",
   "type": "module",
   "license": "MIT",
@@ -40,7 +40,7 @@
     "CHANGELOG.md"
   ],
   "bin": {
-    "antechamber": "./dist/cli.js"
+    "antechamber": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node --input-type=module -e \"import { chmodSync } from 'node:fs'; chmodSync('dist/cli.js', 0o755)\" && npm run build:extension",
@@ -59,6 +59,9 @@
     "omo-smoke": "tsx contrib/omo/omo-smoke.ts",
     "model-smoke": "tsx contrib/model-consistency.ts",
     "v2-smoke": "tsx contrib/v2-smoke.ts"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   },
   "engines": {
     "node": ">=22"

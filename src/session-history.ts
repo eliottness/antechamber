@@ -481,7 +481,6 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
               metadata,
               time: { start: startedAt, end: created },
             };
-      continue;
     }
     // system / custom entries are not rendered
   }

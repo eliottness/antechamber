@@ -10,7 +10,7 @@ let sessionFile = resumeIndex === -1 ? join(process.cwd(), `${randomUUID()}.json
 let header = existsSync(sessionFile)
   ? JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0])
   : { type: "session", version: 3, id: randomUUID(), cwd: process.cwd(), timestamp: new Date().toISOString() };
-if (!existsSync(sessionFile)) writeFileSync(sessionFile, JSON.stringify(header) + "\n");
+if (!existsSync(sessionFile)) writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
 const child = spawn("sleep", ["300"], { stdio: "ignore" });
 const ignoring = process.argv.includes("--ignore-term");
 const requireGroup = process.argv.includes("--require-group");
@@ -22,7 +22,7 @@ let records = readFileSync(sessionFile, "utf8")
   .split("\n")
   .map((line) => JSON.parse(line));
 for (const record of records) if (record.type === "message") leaf = record.id;
-const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const stop = (eof = false) => {
   if (eof && requireGroup) return;
   if (ignoring) {
@@ -66,7 +66,7 @@ const record = (role, text) => {
     message: { role, content: [{ type: "text", text }], provider: model.provider, model: model.id, thinkingLevel },
   };
   leaf = entry.id;
-  appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
+  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
   records.push(entry);
   return entry.message;
 };
@@ -143,7 +143,7 @@ input.on("line", (line) => {
     header = { ...header, id: randomUUID(), parentSession: sessionFile };
     sessionFile = join(process.cwd(), `${header.id}.jsonl`);
     records = [header, ...entries];
-    writeFileSync(sessionFile, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    writeFileSync(sessionFile, `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
     data = { cancelled: false };
   }
   if (command.type === "get_available_models") data = { models: thinkingModels };
@@ -160,7 +160,7 @@ input.on("line", (line) => {
       return;
     }
     thinkingLevel = command.level === "minimal" ? "low" : command.level;
-    appendFileSync(sessionFile, JSON.stringify({ type: "thinking_level_change", thinkingLevel }) + "\n");
+    appendFileSync(sessionFile, `${JSON.stringify({ type: "thinking_level_change", thinkingLevel })}\n`);
     send({ type: "thinking_level_changed", level: thinkingLevel });
   }
   if (command.type === "get_state")
@@ -207,7 +207,7 @@ input.on("line", (line) => {
       };
       leaf = entry.id;
       records.push(entry);
-      appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
+      appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
       send({ type: "fake_bash_finished", command: command.command });
       send({ type: "response", id: command.id, command: command.type, success: true, data: result });
     });
