@@ -3,6 +3,9 @@ import { piAgentDir } from "../agent-dir.js";
 import { detectAgentName } from "../agent-name.js";
 import { agentBinary, defaultStateDir, envSetting, isPlainPi } from "../config.js";
 import { findPidfdPython } from "../pidfd.js";
+import { readRunningServers } from "../running-servers.js";
+import { isNewerVersion } from "../self-update.js";
+import { ADAPTER_VERSION } from "../version.js";
 import {
   autoUpdateLauncherPath,
   autoUpdateLauncherTarget,
@@ -27,7 +30,11 @@ interface DoctorReport {
 }
 
 /** Checks capabilities with access/stat only, never creating state or config files. */
-export function doctor(options: SettingsOptions = {}, ctx: CommandContext = createContext()): DoctorReport {
+export function doctor(
+  options: SettingsOptions = {},
+  ctx: CommandContext = createContext(),
+  latestVersion?: string | Error,
+): DoctorReport {
   const checks: DoctorCheck[] = [];
   const add = (name: string, status: DoctorCheck["status"], message: string): void => {
     checks.push({ name, status, message });
@@ -66,6 +73,26 @@ export function doctor(options: SettingsOptions = {}, ctx: CommandContext = crea
     );
   } catch (error) {
     add("state-dir", "FAIL", `${stateDir}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const latest = typeof latestVersion === "string" ? latestVersion : undefined;
+  if (latestVersion instanceof Error)
+    add("version", "INFO", `${ADAPTER_VERSION}; latest unknown (${latestVersion.message})`);
+  else if (latest !== undefined && isNewerVersion(latest, ADAPTER_VERSION))
+    add("version", "WARN", `${ADAPTER_VERSION} installed; ${latest} is released: run antechamber upgrade`);
+  else add("version", "PASS", ADAPTER_VERSION);
+  // A released fix is live only once OpenChamber relaunches the adapter.
+  const running = readRunningServers(stateDir, ctx.fs, (pid) =>
+    ctx.platform === "linux" ? ctx.fs.existsSync(`/proc/${pid}`) : true,
+  );
+  if (running.length === 0) add("running", "INFO", `no running antechamber server recorded in ${stateDir}`);
+  for (const server of running) {
+    const target = latest !== undefined && isNewerVersion(latest, ADAPTER_VERSION) ? latest : ADAPTER_VERSION;
+    const stale = isNewerVersion(target, server.version);
+    add(
+      "running",
+      stale ? "WARN" : "PASS",
+      `pid ${server.pid} at ${server.url} runs ${server.version}${stale ? `; restart OpenChamber to run ${target}` : ""}`,
+    );
   }
   const python =
     ctx.platform === "linux"

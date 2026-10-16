@@ -16,6 +16,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Keep OpenChamber 1.24's mobile transcript from opening blank after a long agent turn: a v1 message page with no
   user message now reaches back to the prompt that opened its turn.
 
+### Added
+
+- `antechamber doctor` reports the installed, latest released and running adapter versions, and warns when the running
+  server is older, since a released fix only goes live after OpenChamber relaunches the adapter.
+
 ## [0.2.13] - 2026-10-16
 
 ### Fixed
