@@ -113,7 +113,7 @@ invented resource IDs.
 | POST | `/session/{sessionID}/fork` | 200 | Forked session record; optional `messageID` selects the fork boundary. |
 | POST | `/session/{sessionID}/revert` | 200 | Session record with staged revert state; requires a user-message `messageID`. |
 | POST | `/session/{sessionID}/unrevert` | 200 | Session record after restoring the saved leaf. |
-| POST | `/session/{sessionID}/summarize` | 200 | Boolean success after compaction; 400 if compaction cannot run. |
+| POST | `/session/{sessionID}/summarize` | 200 | Boolean success after compaction; 400 if compaction cannot run. A compaction OmO cancels without a user abort (e.g. its tool set changed while MCP servers connected) is retried up to twice. |
 | POST | `/session/{sessionID}/shell` | 200 | Shell message; 400 for invalid input and 409 if the session is busy. |
 | POST | `/session/{sessionID}/command` | 200 | Slash-command message envelope; 400 if the command is missing. |
 | POST | `/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |

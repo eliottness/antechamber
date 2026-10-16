@@ -27,6 +27,9 @@ let entries = readFileSync(sessionFile, "utf8").trim().split("\n").map(JSON.pars
 let leaf = entries.at(-1)?.id ?? null;
 let name = entries.filter((e) => e.type === "session_info").at(-1)?.name ?? process.env.ANTECHAMBER_TEST_NATIVE_TITLE;
 let active;
+// OmO cancels a compaction when its tool set changes (e.g. MCP servers connecting after startup).
+let cancelledCompacts = Number(process.env.ANTECHAMBER_TEST_CANCELLED_COMPACTS ?? 0);
+let heldCompact;
 const queued = [];
 const commands = [];
 const send = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
@@ -127,6 +130,12 @@ createInterface({ input: process.stdin })
     commands.push(cmd);
     let data = {};
     let success = true;
+    let error = "admission refused";
+    const cancelCompaction = () => {
+      send({ type: "compaction_end", reason: "manual", aborted: true, willRetry: false });
+      success = false;
+      error = "Compaction cancelled";
+    };
     if (cmd.type === "get_state")
       data = {
         sessionId,
@@ -175,11 +184,27 @@ createInterface({ input: process.stdin })
     }
     if (cmd.type === "compact") {
       // OmO: compaction_start, persisted entry, compaction_end with the result, then the reply.
-      const firstKeptEntryId = entries.find((e) => e.type === "message")?.id ?? "none";
       send({ type: "compaction_start", reason: "manual" });
+      if (process.env.ANTECHAMBER_TEST_HOLD_COMPACT === "1") {
+        heldCompact = cmd;
+        return;
+      }
+      if (cancelledCompacts > 0) {
+        cancelledCompacts--;
+        cancelCompaction();
+      }
+    }
+    if (cmd.type === "compact" && success) {
+      const firstKeptEntryId = entries.find((e) => e.type === "message")?.id ?? "none";
       record("compaction", { summary: "Summary of earlier work", firstKeptEntryId, tokensBefore: 1234 }, 3000);
       data = { summary: "Summary of earlier work", firstKeptEntryId, tokensBefore: 1234 };
       send({ type: "compaction_end", reason: "manual", result: data, aborted: false, willRetry: false });
+    }
+    if (cmd.type === "abort" && heldCompact) {
+      cancelCompaction();
+      send({ type: "response", id: heldCompact.id, command: "compact", success, error });
+      heldCompact = undefined;
+      success = true;
     }
     if (cmd.type === "prompt") {
       if (active && !cmd.streamingBehavior) return;
@@ -208,7 +233,7 @@ createInterface({ input: process.stdin })
       command: cmd.type,
       success,
       data,
-      ...(!success ? { error: "admission refused" } : {}),
+      ...(!success ? { error } : {}),
     });
   })
   .on("close", () => process.exit(0));
