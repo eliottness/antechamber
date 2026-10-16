@@ -12,6 +12,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - `/btw` no longer fails with "Invalid entry ID for forking". Forking before an
   assistant message (the fork point `/btw` sends) now keeps everything before
   that reply, matching OpenCode's exclusive fork boundary.
+- Running tool cards no longer flash a red "Interrupted" error until they
+  finish. An assistant message is now marked completed only once its tools
+  (including subagent task cards) have settled, as OpenCode does.
 
 ## [0.2.9] - 2026-10-16
 

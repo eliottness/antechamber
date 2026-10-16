@@ -200,6 +200,9 @@ interface PiEventServices {
 
 /** Translates per-session events; registry and lifecycle operations stay with SessionManager. */
 export class PiEventTranslator {
+  /** Ended assistant messages whose completion waits on their tools. */
+  private awaitingTools = new WeakSet<OCMessageWithParts["info"]>();
+
   constructor(private services: PiEventServices) {}
 
   /** Close dead-runtime UI state before an error or idle event can reach the client. */
@@ -547,7 +550,12 @@ export class PiEventTranslator {
         }
         applyUsage(s.streaming.message, ended.usage);
         Object.assign(s.streaming.message, piStopReason(ended.stopReason, ended.errorMessage));
-        s.streaming.message.time.completed = Date.now();
+        // OpenCode completes an assistant message only after its tools settle, and
+        // OpenChamber marks active tools under a completed message as Interrupted.
+        // pi ends the message before executing its tool calls, so defer completion
+        // to the last tool result (applyToolResults) or turn end (finalizeDanglingTools).
+        if (hasActiveTools(s, s.streaming.message.id)) this.awaitingTools.add(s.streaming.message);
+        else s.streaming.message.time.completed = Date.now();
         this.services.emit(s.info.directory, { type: "message.updated", properties: { info: s.streaming.message } });
         this.finishStreaming(s);
         if (syncSessionCost(s))
@@ -844,7 +852,12 @@ export class PiEventTranslator {
   private applyToolResults(s: ManagedSession, results: Array<Record<string, unknown>>): void {
     for (const tr of results) {
       const callID = typeof tr.toolCallId === "string" ? tr.toolCallId : undefined;
-      if (callID !== undefined && this.services.subagents.result(s, callID, tr, true)) continue;
+      if (callID !== undefined && this.services.subagents.result(s, callID, tr, true)) {
+        const owner = s.messages?.find((m) => m.parts.some((p) => p.type === "tool" && p.callID === callID));
+        if (owner && this.completeSettled(s, owner.info))
+          this.services.emit(s.info.directory, { type: "message.updated", properties: { info: owner.info } });
+        continue;
+      }
       const part = callID !== undefined ? s.toolByCallId.get(callID) : undefined;
       if (!part || callID === undefined) continue;
       s.toolByCallId.delete(callID);
@@ -881,8 +894,18 @@ export class PiEventTranslator {
       if (touchedFiles([part]).length > 0) this.services.dirtyDiffs.add(s.info.id);
       this.emitPart(s, part);
       const owner = s.messages?.find((m) => m.info.id === part.messageID);
-      if (owner) this.services.emit(s.info.directory, { type: "message.updated", properties: { info: owner.info } });
+      if (!owner) continue;
+      this.completeSettled(s, owner.info);
+      this.services.emit(s.info.directory, { type: "message.updated", properties: { info: owner.info } });
     }
+  }
+
+  /** Complete an ended assistant message whose completion waited on its tools; true when it changed. */
+  private completeSettled(s: ManagedSession, info: OCMessageWithParts["info"]): boolean {
+    if (!this.awaitingTools.has(info) || info.role !== "assistant" || hasActiveTools(s, info.id)) return false;
+    this.awaitingTools.delete(info);
+    info.time.completed = Date.now();
+    return true;
   }
 
   /** Tool parts that never received a result (abort, crash) must not spin forever. */
@@ -900,5 +923,23 @@ export class PiEventTranslator {
       this.emitPart(s, part);
     }
     s.toolByCallId.clear();
+    // The run is over: complete every ended message still waiting on its tools.
+    const now = Date.now();
+    for (const { info } of s.messages ?? []) {
+      if (!this.awaitingTools.has(info) || info.role !== "assistant") continue;
+      this.awaitingTools.delete(info);
+      info.time.completed = now;
+      this.services.emit(s.info.directory, { type: "message.updated", properties: { info } });
+    }
   }
+}
+
+/** A tool part of this message (including subagent task cards) still waiting for its result. */
+function hasActiveTools(s: ManagedSession, messageID: string): boolean {
+  const active = (part: OCMessageWithParts["parts"][number]) =>
+    part.type === "tool" &&
+    part.messageID === messageID &&
+    (part.state.status === "pending" || part.state.status === "running");
+  if ([...s.toolByCallId.values()].some(active)) return true;
+  return s.messages?.find((m) => m.info.id === messageID)?.parts.some(active) ?? false;
 }
