@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep pending prompts alive while the agent is running or compacting instead of terminating useful work at the
+  ordinary RPC deadline. Silent requests still time out, and prompt admission has a bounded overall wait.
+
 ## [0.2.9] - 2026-10-16
 
 ### Fixed
