@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -14,6 +14,55 @@ import { bugHarness, openEvents } from "./bug-harness.js";
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+
+test("an assistant message stays incomplete until its tools settle, so OpenChamber never marks them Interrupted", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-tool-completion-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const events: (OCEvent | TodoUpdated)[] = [];
+  const manager = new SessionManager((_directory, event) => events.push(structuredClone(event)), new SessionStore(dir));
+  t.after(() => manager.disposeAll());
+  const live: ManagedSession = {
+    info: {
+      id: "ses_tools",
+      projectID: dir,
+      directory: dir,
+      title: "Tools",
+      version: "test",
+      time: { created: 0, updated: 0 },
+    },
+    pi: undefined,
+    messages: [],
+    status: { type: "idle" },
+    model: undefined,
+    streaming: undefined,
+    toolByCallId: new Map(),
+    tree: { messageEntries: {} },
+    hasPendingInteraction: () => false,
+    hasRunningChildren: () => false,
+  };
+  const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8").trim().split("\n");
+  // The recorded run ends 21 assistant messages with stopReason toolUse.
+  const states = new Map<string, string>();
+  let completedWithTools = 0;
+  for (const line of rpc) {
+    manager["onPiEvent"](live, JSON.parse(line));
+    for (const event of events.splice(0)) {
+      if (event.type === "message.part.updated" && event.properties.part.type === "tool") {
+        const part = event.properties.part;
+        states.set(`${part.messageID}|${part.callID}`, part.state.status);
+      }
+      if (event.type !== "message.updated" || event.properties.info.role !== "assistant") continue;
+      const info = event.properties.info;
+      if (info.time.completed === undefined) continue;
+      const active = [...states].filter(
+        ([key, status]) => key.startsWith(`${info.id}|`) && (status === "pending" || status === "running"),
+      );
+      assert.deepEqual(active, [], `message ${info.id} completed with active tools`);
+      if ([...states.keys()].some((key) => key.startsWith(`${info.id}|`))) completedWithTools++;
+    }
+  }
+  assert.ok(completedWithTools > 0, "the recording completes messages that carried tools");
+});
 
 test("R-006: provider errors produce failed v2 terminal frames", () => {
   const translator = new V2EventTranslator();
