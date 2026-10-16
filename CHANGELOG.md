@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-10-16
+
 ### Fixed
 
 - Show and resume turns that another OmO client, such as the terminal, appended to a session while the connector
