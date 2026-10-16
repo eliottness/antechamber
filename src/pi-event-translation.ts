@@ -487,6 +487,10 @@ export class PiEventTranslator {
           | { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown }
           | undefined;
         if (msg?.role !== "assistant") return; // user message already recorded at prompt()
+        // pi starts the next step only after the previous step's tool results, so
+        // close any earlier step still waiting on cards (e.g. a background task)
+        // before this one opens; v2 clients must never see an ended step reopen.
+        this.completeAwaitingTools(s);
         // pi stamps the assistant message with the model really serving it.
         // Trust that over our snapshot, which goes stale whenever pi switches on
         // its own side (subagent routing, an in-session /model, a resumed file).
@@ -552,9 +556,11 @@ export class PiEventTranslator {
         Object.assign(s.streaming.message, piStopReason(ended.stopReason, ended.errorMessage));
         // OpenCode completes an assistant message only after its tools settle, and
         // OpenChamber marks active tools under a completed message as Interrupted.
-        // pi ends the message before executing its tool calls, so defer completion
-        // to the last tool result (applyToolResults) or turn end (finalizeDanglingTools).
-        if (hasActiveTools(s, s.streaming.message.id)) this.awaitingTools.add(s.streaming.message);
+        // pi ends a toolUse message before executing its tool calls, so defer its
+        // completion to the last tool result (applyToolResults), the next step, or
+        // the run end. Errored/aborted messages never run their tools.
+        if (ended.stopReason === "toolUse" && hasActiveTools(s, s.streaming.message.id))
+          this.awaitingTools.add(s.streaming.message);
         else s.streaming.message.time.completed = Date.now();
         this.services.emit(s.info.directory, { type: "message.updated", properties: { info: s.streaming.message } });
         this.finishStreaming(s);
@@ -923,7 +929,11 @@ export class PiEventTranslator {
       this.emitPart(s, part);
     }
     s.toolByCallId.clear();
-    // The run is over: complete every ended message still waiting on its tools.
+    this.completeAwaitingTools(s); // the run is over
+  }
+
+  /** Complete every ended message of this session still waiting on its tools. */
+  private completeAwaitingTools(s: ManagedSession): void {
     const now = Date.now();
     for (const { info } of s.messages ?? []) {
       if (!this.awaitingTools.has(info) || info.role !== "assistant") continue;
