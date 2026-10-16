@@ -13,6 +13,7 @@ contrib/
 │   ├── omo-fixtures.ts     # session JSONL -> test/fixtures/omo-tools/*.json (redacted)
 │   ├── capture-omo-rpc.ts  # real RPC run -> test/fixtures/omo-rpc/run1.jsonl (redacted)
 │   └── smoke/{core,context}.ts, checks/NN-*.ts, README.md
+├── replay/transcripts.ts   # real sessions -> isolated OpenChamber + headless Chrome; no agent, no tokens
 └── examples/opencode-dispatch  # POSIX sh: SSH-remote OpenChamber backend dispatch by port
 ```
 
@@ -24,6 +25,7 @@ contrib/
 | Shared HTTP/SSE helpers | `omo/smoke/context.ts` (`api`, `prompt`, `messages`, `waitForEvent`, `idle`, `delta`) |
 | Raw RPC event dump | `probe.ts` (`npm run probe`) -> `pi-probe-events.jsonl` (gitignored) |
 | OmO deployment/ops scripts | belong under `omo/`, not repo root or `docs/` |
+| Does a session's transcript render on phone/desktop? | `npm run build && npm run replay -- --session <id>`; whole store without `--session` |
 
 ## CONVENTIONS
 - Run with the binary named explicitly: `ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke -- --only prompt,abort`.
@@ -32,6 +34,14 @@ contrib/
 - omo-smoke runs in a private HOME and state dir under `/tmp/antechamber-qa/`. It copies config and credentials and deletes them on exit.
 - Acceptance means two consecutive unfiltered runs, with every check PASS and zero SKIP.
 - Deltas arrive as `message.part.updated` with `properties.delta`, not `message.part.delta`.
+
+## REPLAY (`replay/transcripts.ts`)
+- It copies `sessions.json`, the state dir and each selected session's OmO JSONL into a temp sandbox, and starts OpenChamber with a private HOME and `OPENCODE_BINARY` set to a launcher for the build under test (`--antechamber`, default `dist/cli.js`).
+  The agent binary is `/bin/false`, so nothing is revived and the real store is never written.
+- PASS means a `[data-turn-id]` section rendered (OpenChamber 1.24 renders one per user-anchored turn). SKIP means the history has no user message. FAIL writes a screenshot and exits 1.
+- Roots only by default; `--children` adds subagent sessions and `--archived` adds archived ones. Point `--antechamber` at an installed `dist/cli.js` to get the "before" run.
+- The data is personal. Reports and screenshots stay on the machine; never commit them or paste transcript text into a PR.
+- It drives OpenChamber 1.24 (the installed `openchamber`). Use `--openchamber` to target another build.
 
 ## ANTI-PATTERNS
 - Asserting only that a request was accepted. Assert the feature's concrete effect.

@@ -61,7 +61,20 @@ Centrality measured by counting relative imports across src/test/contrib.
   Auth uses OpenCode's `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME`.
 - Commits follow Conventional Commits, scoped by area (`fix(session): ...`, `feat(tools): ...`). Add user-visible changes to `[Unreleased]` in `CHANGELOG.md`.
 
+## VERIFYING A FIX
+Green hermetic tests are not proof that a user-reported bug is fixed. Fixes for the mobile blank transcript (#15) and compaction shipped green and still failed on real sessions, for three reasons:
+the fake agent only does what we coded (`turn-omo.mjs` never cancelled a compaction or connected MCP late), the test data was tiny (3 messages vs. turns longer than 190), and a known-bad real-surface case was written off as acceptable.
+A fourth reason: the user's OpenChamber was still running an older adapter.
+
+For every bug report:
+1. **Reproduce on the reported session before changing code.** Use its ID, through the real surface (OpenChamber UI, or its HTTP API through the OpenChamber proxy), on a copy of the real data. A fix with no failing "before" has not been shown to fix anything.
+2. **Lock it with a hermetic test that fails without the fix.** Disable the fix once and watch the test fail. When the bug depends on OmO behaving differently from the fake agent, first teach the fixture that behavior (cite the OmO bundle file or log line), then test against it.
+3. **Show "after" on the same surface.** UI-visible bugs (transcript, cards, layout) need `npm run build && npm run replay -- --session <id>` before the fix and after it, plus a full `npm run replay` with no new FAIL before the PR. Never accept a degraded case (a button to tap, a partial render) as fixed; it is the next bug report.
+4. **Put the before/after evidence in the PR**: the command, the session ID (not its content) and PASS/FAIL. Say plainly what was not run live and why (for example, token cost).
+5. **After the release, check what is running.** `antechamber doctor` reports the installed, latest and running adapter versions. A WARN on `running` means OpenChamber must relaunch the adapter (`systemctl --user restart openchamber.service` for the user's deployment) before the fix is live. Do not tell the user a merged fix is live until doctor shows it running.
+
 ## ANTI-PATTERNS (THIS PROJECT)
+- Calling a bug fixed on hermetic tests alone, or on sessions other than the one reported. See VERIFYING A FIX.
 - Changing routes without updating `docs/api-surface.md`, or env vars without updating `docs/configuration.md`.
 - Fixed sleeps or polling in tests. Subscribe to the real signal first, then await it with a bounded timeout.
 - Relying on `contrib/` smokes to catch a regression that a unit test should catch.
@@ -85,6 +98,8 @@ npm run format                           # biome format --write
 npx tsx --test --import ./test/setup.ts test/fork-revert.test.ts   # one file; keep the setup import
                                          # (npm test -- --test-name-pattern does NOT filter)
 ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke   # live, costs tokens
+npm run build && npm run replay -- [--session ses_x]   # real sessions in a real OpenChamber; no tokens, local only
+antechamber doctor                       # includes installed vs latest vs running adapter versions
 ```
 CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extension, and no `test/`, `contrib/` or extension sources/tests.
 
