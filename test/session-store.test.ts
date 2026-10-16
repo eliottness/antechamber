@@ -86,7 +86,7 @@ test("native names beyond scanner head limits and appended renames agree in both
             message: { role: "user", content: [{ type: "text", text: "provisional" }] },
           }) +
           "\n" +
-          (JSON.stringify({ type: "custom", data: "x".repeat(2000) }) + "\n").repeat(220) +
+          `${JSON.stringify({ type: "custom", data: "x".repeat(2000) })}\n`.repeat(220) +
           JSON.stringify({ type: "session_info", name: "First native" }) +
           "\n" +
           JSON.stringify({ type: "session_info", name: "Latest native" }) +
@@ -96,7 +96,7 @@ test("native names beyond scanner head limits and appended renames agree in both
       );
       assert.equal(scanPiSessions(cwd)[0]?.title, "Latest native");
       assert.equal(scanAllPiSessions()[0]?.title, "Latest native");
-      appendFileSync(file, JSON.stringify({ type: "session_info", name: "Appended native" }) + "\n");
+      appendFileSync(file, `${JSON.stringify({ type: "session_info", name: "Appended native" })}\n`);
       assert.equal(scanPiSessions(cwd)[0]?.title, "Appended native");
       assert.equal(scanAllPiSessions()[0]?.title, "Appended native");
     });

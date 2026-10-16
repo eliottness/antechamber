@@ -90,7 +90,7 @@ function toOCModel(m: PiModelInfo): OCv2Model {
       toolcall: true,
       input: { text: modality("text"), audio: false, image: modality("image"), video: false, pdf: false },
       output: { text: true, audio: false, image: false, video: false, pdf: false },
-      interleaved: m.reasoning ? true : false,
+      interleaved: !!m.reasoning,
     },
     cost: {
       input: m.cost?.input ?? 0,

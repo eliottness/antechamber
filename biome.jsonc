@@ -47,5 +47,18 @@
         "noShadowRestrictedNames": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["test/**"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            // Tests reach private members as obj["name"]; TypeScript rejects obj.name for private fields.
+            "useLiteralKeys": "off"
+          }
+        }
+      }
+    }
+  ]
 }

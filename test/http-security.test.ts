@@ -55,7 +55,7 @@ for (const passwordEnv of ["OPENCODE_SERVER_PASSWORD", "ANTECHAMBER_SERVER_PASSW
     setting(t, "OPENCODE_SERVER_PASSWORD", undefined);
     setting(t, passwordEnv, "secret:with:colon");
     const { server } = await start(t);
-    const response = await fetch(server.url + "/global/health", {
+    const response = await fetch(`${server.url}/global/health`, {
       headers: { Authorization: basic("opencode", "secret:with:colon") },
     });
     assert.equal(response.status, 200);
@@ -74,7 +74,7 @@ test("OpenCode password takes precedence and username can be overridden", async 
   ] as const) {
     assert.equal(
       (
-        await fetch(server.url + "/global/health", {
+        await fetch(`${server.url}/global/health`, {
           headers: { Authorization: basic(user, password) },
         })
       ).status,
@@ -85,7 +85,7 @@ test("OpenCode password takes precedence and username can be overridden", async 
 
 test("passwordless same-origin loopback origin is echoed rather than wildcarded", async (t) => {
   const { server } = await start(t);
-  const response = await fetch(server.url + "/global/health", { headers: { Origin: server.url } });
+  const response = await fetch(`${server.url}/global/health`, { headers: { Origin: server.url } });
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("access-control-allow-origin"), server.url);
   assert.equal(response.headers.get("vary"), "Origin");
@@ -101,7 +101,7 @@ for (const origin of [
 ]) {
   test(`OpenCode-parity rule accepts passwordless cross-port loopback origin ${origin}`, async (t) => {
     const { server } = await start(t);
-    const response = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
+    const response = await fetch(`${server.url}/global/health`, { headers: { Origin: origin } });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("access-control-allow-origin"), origin);
   });
@@ -118,7 +118,7 @@ for (const origin of [
 ]) {
   test(`untrusted origin ${origin} is rejected`, async (t) => {
     const { server } = await start(t);
-    const response = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
+    const response = await fetch(`${server.url}/global/health`, { headers: { Origin: origin } });
     assert.equal(response.status, 403);
     assert.equal(response.headers.get("access-control-allow-origin"), null);
   });
@@ -129,7 +129,7 @@ test("OpenCode-parity rule accepts a passwordless POST /api/session from another
   const { server, directory } = await start(t);
   setting(t, "PI_CODING_AGENT_DIR", join(directory, "agent"));
   const origin = "http://127.0.0.1:5173";
-  const response = await fetch(server.url + "/api/session", {
+  const response = await fetch(`${server.url}/api/session`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
     body: "{}",
@@ -144,12 +144,12 @@ for (const origin of ["http://192.168.1.50:4096", "tauri://localhost"]) {
   test(`with a password, proxied origin ${origin} is served without CORS headers`, async (t) => {
     setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
     const { server } = await start(t);
-    const authorized = await fetch(server.url + "/global/health", {
+    const authorized = await fetch(`${server.url}/global/health`, {
       headers: { Origin: origin, Authorization: basic("opencode", "secret") },
     });
     assert.equal(authorized.status, 200);
     assert.equal(authorized.headers.get("access-control-allow-origin"), null);
-    const anonymous = await fetch(server.url + "/global/health", { headers: { Origin: origin } });
+    const anonymous = await fetch(`${server.url}/global/health`, { headers: { Origin: origin } });
     assert.equal(anonymous.status, 401);
   });
 }
@@ -158,19 +158,19 @@ test("allowlist and authorized preflight use explicit CORS origins", async (t) =
   setting(t, "ANTECHAMBER_ALLOWED_ORIGINS", " https://trusted.example, https://second.example ");
   setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
   const { server } = await start(t);
-  const response = await fetch(server.url + "/event", {
+  const response = await fetch(`${server.url}/event`, {
     method: "OPTIONS",
     headers: { Origin: "https://trusted.example", Authorization: basic("opencode", "secret") },
   });
   assert.equal(response.status, 204);
   assert.equal(response.headers.get("access-control-allow-origin"), "https://trusted.example");
   assert.match(response.headers.get("access-control-allow-headers") ?? "", /Authorization/i);
-  assert.equal((await fetch(server.url + "/event", { method: "OPTIONS" })).status, 401);
+  assert.equal((await fetch(`${server.url}/event`, { method: "OPTIONS" })).status, 401);
 });
 
 test("requests without Origin do not get wildcard CORS", async (t) => {
   const { server } = await start(t);
-  assert.equal((await fetch(server.url + "/global/health")).headers.get("access-control-allow-origin"), null);
+  assert.equal((await fetch(`${server.url}/global/health`)).headers.get("access-control-allow-origin"), null);
 });
 
 for (const body of ["{", "null", "[]", "true", '"text"', "42"]) {
@@ -192,7 +192,7 @@ test("Content-Length limit rejects before the client sends its body", { timeout:
   const { server } = await start(t);
   const status = await new Promise<number>((resolve, reject) => {
     const req = request(
-      server.url + "/api/project/example",
+      `${server.url}/api/project/example`,
       {
         method: "PATCH",
         headers: { "Content-Length": "17" },
@@ -213,7 +213,7 @@ test("chunked body limit rejects while streaming and leaves health working", { t
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "16");
   const { server } = await start(t);
   const status = await new Promise<number>((resolve, reject) => {
-    const req = request(server.url + "/api/project/example", { method: "PATCH" }, (res) => {
+    const req = request(`${server.url}/api/project/example`, { method: "PATCH" }, (res) => {
       res.resume();
       resolve(res.statusCode ?? 0);
     });
@@ -222,14 +222,14 @@ test("chunked body limit rejects while streaming and leaves health working", { t
     req.write(" ".repeat(17)); // No end: crossing the limit must produce the response.
   });
   assert.equal(status, 413);
-  assert.equal((await fetch(server.url + "/global/health")).status, 200);
+  assert.equal((await fetch(`${server.url}/global/health`)).status, 200);
 });
 
 test("empty and exact-limit object bodies remain valid", async (t) => {
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "2");
   const { server } = await start(t);
   for (const body of ["", "{}"]) {
-    const response = await fetch(server.url + "/api/project/example", { method: "PATCH", body });
+    const response = await fetch(`${server.url}/api/project/example`, { method: "PATCH", body });
     assert.equal(response.status, 400);
     assert.equal((await errorOf(response)).name, "UnsupportedError");
   }
@@ -238,7 +238,7 @@ test("empty and exact-limit object bodies remain valid", async (t) => {
 test("body limits count UTF-8 bytes rather than characters", async (t) => {
   setting(t, "ANTECHAMBER_MAX_BODY_BYTES", "16");
   const { server } = await start(t);
-  const response = await fetch(server.url + "/api/project/example", {
+  const response = await fetch(`${server.url}/api/project/example`, {
     method: "PATCH",
     body: JSON.stringify({ x: "\u00e9".repeat(5) }),
   });
@@ -258,14 +258,14 @@ test("SSE caps all protocol subscriptions and releases disconnected slots", { ti
     assert.ok(res);
     responses.push(res);
   }
-  const overflow = await fetch(server.url + "/global/event");
+  const overflow = await fetch(`${server.url}/global/event`);
   assert.equal(overflow.status, 503);
   const first = responses[0];
   assert.ok(first);
   const closed = once(first, "close");
   first.destroy();
   await closed;
-  const admitted = await fetch(server.url + "/api/event");
+  const admitted = await fetch(`${server.url}/api/event`);
   assert.equal(admitted.status, 200);
   assert.equal(clients.size, 64);
 });
@@ -297,7 +297,7 @@ for (const path of ["/event", "/api/event"]) {
 
 test("SSE drops a subscriber when HTTP framing takes its pending bytes over the cap", async (t) => {
   const { server } = await start(t);
-  const response = await fetch(server.url + "/event");
+  const response = await fetch(`${server.url}/event`);
   assert.equal(response.status, 200);
   const res = [...server["sseClients"].keys()][0];
   assert.ok(res);
@@ -317,16 +317,16 @@ test("file search stops beyond the maximum directory depth", async (t) => {
     mkdirSync(nested);
   }
   writeFileSync(join(nested, "too-deep.txt"), "");
-  const response = await fetch(server.url + "/find/file?query=too-deep&dirs=false");
+  const response = await fetch(`${server.url}/find/file?query=too-deep&dirs=false`);
   assert.deepEqual(await response.json(), []);
 });
 
 test("directory listing and requested file search results are capped", async (t) => {
   const { server, directory } = await start(t);
   for (let i = 0; i < 1010; i++) writeFileSync(join(directory, `match-${i}.txt`), "");
-  const listing = await listOf(await fetch(server.url + "/file"));
+  const listing = await listOf(await fetch(`${server.url}/file`));
   assert.equal(listing.length, 1000);
-  const matches = await listOf(await fetch(server.url + "/find/file?query=match&limit=99999"));
+  const matches = await listOf(await fetch(`${server.url}/find/file?query=match&limit=99999`));
   assert.equal(matches.length, 1000);
 });
 
@@ -341,7 +341,7 @@ test("file search bounds visited directories even when the result cap is not rea
       writeFileSync(join(child, "needle.txt"), "");
     }
   }
-  const matches = await listOf(await fetch(server.url + "/find/file?query=needle&dirs=false&limit=1000"));
+  const matches = await listOf(await fetch(`${server.url}/find/file?query=needle&dirs=false&limit=1000`));
   assert.ok(matches.length > 0);
   assert.ok(matches.length < 1000);
 });
@@ -368,7 +368,7 @@ test("debug logs are private and omit request query strings", async (t) => {
   const path = join(directory, "debug.log");
   setting(t, "ANTECHAMBER_DEBUG", "1");
   setting(t, "ANTECHAMBER_DEBUG_LOG", path);
-  await fetch(server.url + "/global/health?token=SECRET_QUERY");
+  await fetch(`${server.url}/global/health?token=SECRET_QUERY`);
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.ok(!readFileSync(path, "utf8").includes("SECRET_QUERY"));
   assert.ok(readFileSync(path, "utf8").includes("/global/health"));
@@ -450,7 +450,7 @@ for (const mode of ["opencode-password", "adapter-password", "insecure-env", "in
         once: true,
       });
     });
-    const response = await fetch(url + "/global/health?token=PRIVATE_QUERY", {
+    const response = await fetch(`${url}/global/health?token=PRIVATE_QUERY`, {
       headers: { Authorization: basic("opencode", "secret") },
     });
     assert.equal(response.status, 200);

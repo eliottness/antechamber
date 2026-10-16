@@ -29,12 +29,12 @@ let name = entries.filter((e) => e.type === "session_info").at(-1)?.name ?? proc
 let active;
 const queued = [];
 const commands = [];
-const send = (v) => process.stdout.write(JSON.stringify(v) + "\n");
+const send = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
 const record = (type, fields, time = 2000) => {
   const entry = { type, id: randomUUID(), parentId: leaf, timestamp: time, ...fields };
   entries.push(entry);
   leaf = entry.id;
-  appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
+  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
 };
 const user = (cmd) => {
   const message = {

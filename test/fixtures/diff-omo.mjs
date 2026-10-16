@@ -17,21 +17,21 @@ mkdirSync(sessionDirectory, { recursive: true });
 const sessionFile = join(sessionDirectory, `${sessionId}.jsonl`);
 writeFileSync(
   sessionFile,
-  JSON.stringify({
+  `${JSON.stringify({
     type: "session",
     version: 3,
     id: sessionId,
     cwd: process.cwd(),
     timestamp: new Date().toISOString(),
-  }) + "\n",
+  })}\n`,
 );
-const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
+const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let leaf = null;
 const entries = [];
 const record = (message) => {
   const id = randomUUID();
   const entry = { type: "message", id, parentId: leaf, timestamp: new Date().toISOString(), message };
-  appendFileSync(sessionFile, JSON.stringify(entry) + "\n");
+  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
   entries.push(entry);
   leaf = id;
 };

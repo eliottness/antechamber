@@ -606,10 +606,10 @@ for (const snapshot of ["descendant", "ancestor", "sibling", "missing-selection"
     if (snapshot === "ancestor")
       writeFileSync(
         s.piPath,
-        [header, ...tree.entries.slice(0, -1).map((entry) => JSON.stringify(entry))].join("\n") + "\n",
+        `${[header, ...tree.entries.slice(0, -1).map((entry) => JSON.stringify(entry))].join("\n")}\n`,
       );
-    else if (snapshot === "missing-selection") writeFileSync(s.piPath, header + "\n");
-    else writeFileSync(s.piPath, raw + JSON.stringify(appended) + "\n" + (snapshot === "torn-tail" ? '{"type":' : ""));
+    else if (snapshot === "missing-selection") writeFileSync(s.piPath, `${header}\n`);
+    else writeFileSync(s.piPath, `${raw}${JSON.stringify(appended)}\n${snapshot === "torn-tail" ? '{"type":' : ""}`);
 
     recordTurn(s);
 
@@ -624,7 +624,7 @@ for (const failure of ["missing", "corrupt"] as const)
     assert.ok(s.piPath);
     const before = structuredClone(s.tree);
     if (failure === "missing") rmSync(s.piPath);
-    else writeFileSync(s.piPath, readFileSync(s.piPath, "utf8") + "not-json\n{}\n");
+    else writeFileSync(s.piPath, `${readFileSync(s.piPath, "utf8")}not-json\n{}\n`);
 
     assert.throws(() => recordTurn(s), failure === "missing" ? { code: "ENOENT" } : /Malformed session line/);
 
@@ -1184,6 +1184,22 @@ test("fork stops before the selected live user and transfers the process away fr
   const fork = manager.get(child.id);
   assert.ok(fork?.pi);
   assert.equal(branchEntries(await getEntries(fork.pi)).filter((entry) => entry.message?.role === "user").length, 1);
+});
+
+test("fork before an assistant message keeps its prompt and drops the reply, as /btw requests", async (t) => {
+  const { manager, dir } = setup(t);
+  const { id } = await turns(manager, dir);
+  const replies = manager.messages(id)?.filter((m) => m.info.role === "assistant") ?? [];
+  const second = replies[1];
+  assert.ok(second);
+  const child = await manager.fork(id, second.info.id);
+  const copied = manager.messages(child.id) ?? [];
+  assert.deepEqual(
+    copied.filter((m) => m.info.role === "user").map((m) => (m.parts[0]?.type === "text" ? m.parts[0].text : "")),
+    ["turn-1", "turn-2"],
+  );
+  assert.equal(copied.filter((m) => m.info.role === "assistant").length, 1);
+  assert.equal(copied.at(-1)?.info.role, "user");
 });
 
 test("fork without messageID copies the complete leaf including the final reply", async (t) => {
