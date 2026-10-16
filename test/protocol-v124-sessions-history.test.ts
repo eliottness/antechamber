@@ -230,6 +230,40 @@ test("V124-006b: pages older messages through x-next-cursor and before", { timeo
   assert.equal(unknown.headers.get("x-next-cursor"), null);
 });
 
+test("V124-006c: a page without a prompt reaches back to its turn's user message", { timeout: 10_000 }, async (t) => {
+  const { directory, url } = await startServer(t);
+  const sessionID = await createSession(url, directory, "long turn");
+  const base = `${url}/session/${sessionID}/message?directory=${encodeURIComponent(directory)}`;
+  for (const text of ["normal", "steps"]) {
+    const sent = await fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    });
+    assert.equal(sent.status, 200);
+  }
+  const roles = (body: unknown): string[] =>
+    (Array.isArray(body) ? body : []).map((message) =>
+      isRecord(message) && isRecord(message.info) ? String(message.info.role) : "",
+    );
+  const all: unknown = await (await fetch(base)).json();
+  assert.deepEqual(roles(all), ["user", "assistant", "user", "assistant", "assistant"]);
+
+  // OpenChamber 1.24 widens a prompt-less page only up to 120 messages, then renders it blank.
+  const newest = await fetch(`${base}&limit=1`);
+  const page: unknown = await newest.json();
+  assert.deepEqual(roles(page), ["user", "assistant", "assistant"]);
+  assert.deepEqual(page, (all as unknown[]).slice(2));
+  const cursor = newest.headers.get("x-next-cursor");
+  assert.equal(cursor, (all as Array<{ info: { id: string } }>)[2]?.info.id);
+
+  // A page that already holds a prompt keeps its size.
+  const two: unknown = await (await fetch(`${base}&limit=3`)).json();
+  assert.deepEqual(roles(two), ["user", "assistant", "assistant"]);
+  const older: unknown = await (await fetch(`${base}&limit=1&before=${encodeURIComponent(cursor ?? "")}`)).json();
+  assert.deepEqual(roles(older), ["user", "assistant"]);
+});
+
 test("V124-007: returns a v1 message by id", { timeout: 10_000 }, async (t) => {
   const { directory, url } = await startServer(t);
   const sessionID = await createSession(url, directory, "lookup");

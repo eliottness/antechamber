@@ -13,6 +13,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
   "Compaction cancelled" when its MCP servers finished connecting right after the agent started.
 - List MCP servers for a directory whose sessions are all dormant, from the most recently used live session
   elsewhere, instead of showing none.
+- Keep OpenChamber 1.24's mobile transcript from opening blank after a long agent turn: a v1 message page with no
+  user message now reaches back to the prompt that opened its turn.
 
 ## [0.2.13] - 2026-10-16
 

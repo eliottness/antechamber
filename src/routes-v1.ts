@@ -193,7 +193,14 @@ export async function handleV1(
           json(res, 200, []);
           return;
         }
-        const start = limit === undefined ? 0 : Math.max(0, end - limit);
+        let start = limit === undefined ? 0 : Math.max(0, end - limit);
+        // OpenChamber 1.24 widens a page with no user message only up to 120 messages
+        // (150 on desktop), then renders it with no turn to anchor on: blank. A long agent
+        // turn outgrows that, so a page reaches back to the prompt that opened its turn.
+        if (!messages.slice(start, end).some((message) => message.info.role === "user")) {
+          const prompt = messages.findLastIndex((message, index) => index < start && message.info.role === "user");
+          if (prompt >= 0) start = prompt;
+        }
         const page = messages.slice(start, end);
         if (start > 0 && page[0] !== undefined) res.setHeader("x-next-cursor", page[0].info.id);
         json(res, 200, page);
