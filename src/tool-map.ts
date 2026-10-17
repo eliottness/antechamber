@@ -1,3 +1,4 @@
+import { ocIdFor } from "./session-store.js";
 import type { OCToolPart } from "./types.js";
 
 /** OmO arguments translated to OpenChamber's renderer contracts. */
@@ -183,6 +184,14 @@ export interface EvalAgent {
   agentType?: string;
 }
 
+/** "Explore Agent" for an agent type or category, "Subagent" when there is none. */
+function agentTitle(type: string): string {
+  return type === "subagent" ? "Subagent" : `${type.charAt(0).toUpperCase()}${type.slice(1)} Agent`;
+}
+
+/** The task id OmO puts in a `task` result: "[task_id: st_x" when it waited, "(st_x, running" in the background. */
+const TASK_ID = /\[task_id: (st_[A-Za-z0-9_-]+)|\((st_[A-Za-z0-9_-]+), running\b/;
+
 /** The prompt's first line, cut at a word boundary near 60 characters. */
 function shortPrompt(prompt: string): string | undefined {
   const line = prompt
@@ -228,7 +237,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
   details.toolCalls.forEach((entry: unknown, index) => {
     if (
       !record(entry) ||
-      (entry.name !== "monitor" && entry.name !== "__agent__") ||
+      (entry.name !== "monitor" && entry.name !== "__agent__" && entry.name !== "task") ||
       typeof entry.ok !== "boolean" ||
       typeof entry.durationMs !== "number" ||
       !Number.isFinite(entry.durationMs) ||
@@ -247,6 +256,18 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
         { description: `Monitor: ${label}`, prompt: command, type: "monitor" },
         sessionID,
       );
+    } else if (entry.name === "task") {
+      const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+      const prompt = text(args.prompt) ?? "";
+      const match = typeof entry.resultPreview === "string" ? TASK_ID.exec(entry.resultPreview) : null;
+      const taskID = match?.[1] ?? match?.[2];
+      const description = text(args.task_summary) ?? text(args.description) ?? shortPrompt(prompt) ?? "subagent";
+      const type = text(args.subagent_type) ?? text(args.category) ?? "subagent";
+      mapped = nestedSubagent(
+        { title: agentTitle(type), subtitle: description },
+        { description, prompt, type },
+        entry.ok && taskID !== undefined ? ocIdFor(taskID) : undefined,
+      );
     } else {
       const prompt = typeof args.prompt === "string" ? args.prompt : "";
       const found = entry.ok ? sessions.agent?.(args, claimed, start) : undefined;
@@ -261,7 +282,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       const type = text(args.agent) ?? found?.agentType ?? "subagent";
       mapped = nestedSubagent(
         {
-          title: type === "subagent" ? "Subagent" : `${type.charAt(0).toUpperCase()}${type.slice(1)} Agent`,
+          title: agentTitle(type),
           subtitle: description,
         },
         { description, prompt, type },

@@ -11,6 +11,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - Name a subagent card for an `agent()` call made inside eval after its agent type (for example "Explore Agent"),
   and describe it with the call's label, the task's summary, or the first line of its prompt, instead of a bare "agent".
+- Show subagents an eval cell starts with `tool.task(...)` as subagent cards that open their session, live and after
+  reloading history, including ones started in the background.
 
 ## [0.2.25] - 2026-10-17
 

@@ -12,7 +12,7 @@ import { bugHarness } from "./bug-harness.js";
 
 // Sanitized shapes from raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
 // The recorded cell calls agent() twice with the same prompt and label (once failing), plus bash,
-// read, task, monitor and a custom tool; only the subagents and a matched monitor become cards.
+// read, tool.task, monitor and a custom tool; only the subagents and a matched monitor become cards.
 const history = readFileSync(new URL("./fixtures/eval-nested.jsonl", import.meta.url), "utf8");
 
 function tools(messages: OCMessageWithParts[]): OCToolPart[] {
@@ -140,13 +140,18 @@ for (const via of ["end", "turn", "late"]) {
       ]),
       [
         ["task", "completed", ocIdFor("st_nested_a")],
+        ["task", "completed", ocIdFor("st_nested_t")],
         ["task", "error", undefined],
         ["task", "completed", ocIdFor("st_nested_b")],
       ],
     );
-    assert.ok(cards[1]?.state.status === "error");
-    assert.equal(cards[1].state.error, "agent() requires successful task details with a valid task_id");
-    assert.equal(cards[1].state.input.description, "node-2");
+    // A tool.task call names its card from its type and summary, and opens the task its result names.
+    assert.ok(cards[1]?.state.status === "completed");
+    assert.equal(cards[1].state.metadata?.agentTitle, "Quick Agent");
+    assert.equal(cards[1].state.metadata?.agentSubtitle, "QA ping subagent ALPHA");
+    assert.ok(cards[2]?.state.status === "error");
+    assert.equal(cards[2].state.error, "agent() requires successful task details with a valid task_id");
+    assert.equal(cards[2].state.input.description, "node-2");
     assert.equal(managed.toolByCallId.size, 0);
     await h.restart();
     const comparable = (part: OCToolPart) => {
@@ -185,11 +190,12 @@ test("JSONL history rebuilds subagent cards without shifting previously saved na
   managed.tree.messageParts = { msg_saved: ["prt_before", "prt_eval", "prt_sibling", "prt_after"] };
   const messages = parsePiSessionText(managed, "omo", history);
   const cards = nested(messages);
-  // Then: the three agent() calls keep their cards and positions; nothing else is rebuilt.
+  // Then: the agent() and tool.task calls keep their cards and positions; nothing else is rebuilt.
   assert.deepEqual(
     cards.map((part) => part.id),
     [
       "prt_ses_nested_nested_eval-parent:id:js-agent-1",
+      "prt_ses_nested_nested_eval-parent:id:js-nested-task",
       "prt_ses_nested_nested_eval-parent:id:js-agent-fail",
       "prt_ses_nested_nested_eval-parent:index:6",
     ],
@@ -258,6 +264,27 @@ test("an unlabelled agent() card takes its name and type from the resolved task 
   assert.equal(card.state.metadata?.agentSubtitle, "Audit the config loader");
   assert.equal(card.state.input.subagent_type, "librarian");
   assert.equal(card.state.metadata?.sessionID, "ses_child");
+});
+
+test("a background tool.task call inside eval opens the task its start notice names", () => {
+  // Shape from a preview session, 2026-10-17: run_in_background returns at once with the task id.
+  const [card] = nestedToolParts(parent, {
+    toolCalls: [
+      {
+        name: "task",
+        ok: true,
+        durationMs: 261,
+        callId: "bg",
+        args: { category: "quick", description: "qa-bg-alpha", prompt: "Reply ALPHA_BG_OK", run_in_background: true },
+        resultPreview:
+          "Started task QA background ping ALPHA (st_01a14c1d, running), the task host is still admitting it",
+      },
+    ],
+  });
+  assert.ok(card?.state.status === "completed");
+  assert.equal(card.state.metadata?.agentTitle, "Quick Agent");
+  assert.equal(card.state.metadata?.agentSubtitle, "qa-bg-alpha");
+  assert.equal(card.state.metadata?.sessionID, ocIdFor("st_01a14c1d"));
 });
 
 // Shapes from a raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the recorded
