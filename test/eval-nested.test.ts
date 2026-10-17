@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parsePiSessionText } from "../src/session-history.js";
 import type { ManagedSession } from "../src/sessions.js";
-import { mapTool, nestedToolParts } from "../src/tool-map.js";
+import { MONITOR_STATE_EVENT } from "../src/monitor-sessions.js";
+import { ocIdFor } from "../src/session-store.js";
+import { mapTool, NESTED_PREVIEW_LABEL, nestedToolParts } from "../src/tool-map.js";
 import type { OCMessageWithParts, OCToolPart } from "../src/types.js";
 import { bugHarness } from "./bug-harness.js";
 
@@ -65,7 +67,7 @@ test("finished nested bash cards arrive live while eval still runs", { timeout: 
   assert.equal(bash.tool, "bash");
   assert.equal(bash.state.input.command, command);
   assert.equal(bash.state.title, command);
-  assert.equal(bash.state.output, "NESTBASH 1 NESTBASH 2");
+  assert.equal(bash.state.output, `${NESTED_PREVIEW_LABEL}\nNESTBASH 1 NESTBASH 2`);
   assert.deepEqual(bash.state.metadata, { nested: true, parentCallID: "eval-parent", durationMs: 9116 });
   assert.equal(bash.state.time.end - bash.state.time.start, 9116);
   assert.equal(managed.toolByCallId.has(bash.callID), false);
@@ -83,7 +85,9 @@ test("finished nested bash cards arrive live while eval still runs", { timeout: 
   assert.equal(published.length, 2, "repeated snapshots update the same card");
   const success = h.frames.filter((frame) => frame.type === "session.tool.success" && frame.data.id === bash.callID);
   assert.equal(success.length, 1);
-  assert.deepEqual(success[0]?.data.content, [{ type: "text", text: "NESTBASH 1 NESTBASH 2" }]);
+  assert.deepEqual(success[0]?.data.content, [
+    { type: "text", text: `${NESTED_PREVIEW_LABEL}\nNESTBASH 1 NESTBASH 2` },
+  ]);
 });
 
 for (const via of ["end", "turn", "late"]) {
@@ -186,7 +190,7 @@ test("JSONL history rebuilds nested cards without shifting previously saved nati
   assert.equal(cards[6]?.id, "prt_ses_nested_nested_eval-parent:index:7");
   assert.ok(cards[0]?.state.status === "completed");
   assert.equal(cards[0].state.input.command, command);
-  assert.equal(cards[0].state.output, "NESTBASH 1 NESTBASH 2");
+  assert.equal(cards[0].state.output, `${NESTED_PREVIEW_LABEL}\nNESTBASH 1 NESTBASH 2`);
   assert.equal(cards[0].state.time.end - cards[0].state.time.start, 9116);
   managed.tree.messageParts.msg_saved = owner.parts.map((part) => part.id);
   assert.deepEqual(parsePiSessionText(managed, "omo", history), messages);
@@ -218,6 +222,93 @@ test("nested agent() calls are labelled by their label or prompt, failures keep 
   assert.equal(failed.state.error, "agent() requires a task_id");
   assert.ok(prompted?.state.status === "completed");
   assert.equal(prompted.state.title, "agent: First line");
+});
+
+// Shapes from a raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the recorded
+// monitor call keeps only its arguments; its watch arrives separately in terminal_monitor_state.
+const monitorCall = {
+  name: "monitor",
+  ok: true,
+  durationMs: 50,
+  callId: "js-monitor",
+  args: { description: "qa monitor", command: "for i in 1 2 3; do echo MONHIT $i; sleep 2; done", filter: "MONHIT" },
+  resultPreview: "Monitor started with ID: mon_ZFZ2W1Q5CP8H1GNQ",
+};
+const watch = {
+  id: "bash_3",
+  description: "qa monitor",
+  command: monitorCall.args.command,
+  filter: "MONHIT",
+  paused: false,
+  persistent: false,
+  startedAtMs: 1_760_000_000_000,
+  deadlineMs: null,
+  fireCount: 0,
+  lastFiredAtMs: null,
+};
+
+test("a monitor started inside eval becomes a subagent card that opens its monitor session", async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  const s = h.manager.get(info.id);
+  const pi = s?.pi;
+  assert.ok(s && pi);
+  const emit = async (frame: Record<string, unknown>): Promise<void> => {
+    const reply: { success: boolean } = await pi.command({ type: "emit", frame });
+    assert.equal(reply.success, true);
+  };
+  await emit({ type: "extension_event", name: MONITOR_STATE_EVENT, data: { activeCount: 1, monitors: [watch] } });
+  const childID = ocIdFor(`${info.id}/monitor/bash_3`);
+  assert.ok(h.manager.get(childID));
+  const call = {
+    type: "toolCall",
+    id: "eval-monitor",
+    name: "eval",
+    arguments: { language: "js", code: "await tool.monitor(...)" },
+  };
+  const message = {
+    role: "assistant",
+    content: [call],
+    provider: "fake",
+    model: "served",
+    timestamp: 1100,
+    stopReason: "toolUse",
+  };
+  await emit({ type: "message_start", message });
+  await emit({
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: call },
+  });
+  await emit({ type: "message_end", message });
+  await emit({ type: "tool_execution_start", toolCallId: call.id, toolName: "eval", args: call.arguments });
+  await emit({
+    type: "tool_execution_update",
+    toolCallId: call.id,
+    toolName: "eval",
+    args: call.arguments,
+    partialResult: { content: [{ type: "text", text: "1/1 cells running" }], details: { toolCalls: [monitorCall] } },
+  });
+  const card = nested(h.manager.messages(info.id) ?? [])[0];
+  assert.ok(card?.state.status === "completed");
+  assert.equal(card.tool, "task");
+  assert.equal(card.state.input.description, "Monitor: qa monitor");
+  assert.equal(card.state.metadata?.sessionID, childID);
+});
+
+test("an unmatched nested monitor keeps a plain card with its labelled preview", () => {
+  const parent: OCToolPart = {
+    id: "prt_eval",
+    messageID: "msg_eval",
+    sessionID: "ses_nested",
+    type: "tool",
+    tool: "eval",
+    callID: "parent",
+    state: { status: "running", input: {}, time: { start: 10 } },
+  };
+  const [plain] = nestedToolParts(parent, { toolCalls: [monitorCall] }, () => undefined);
+  assert.ok(plain?.state.status === "completed");
+  assert.equal(plain.tool, mapTool("monitor", monitorCall.args).tool);
+  assert.equal(plain.state.output, `${NESTED_PREVIEW_LABEL}\n${monitorCall.resultPreview}`);
 });
 
 test("nested extraction ignores unrelated and malformed details and namespaces call identities", () => {

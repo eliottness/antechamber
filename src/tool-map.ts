@@ -142,7 +142,28 @@ function nestedAgent(args: unknown): MappedTool {
 /** Finished eval calls, from the raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
  * RPC exposes only resultPreview, not the nested call's full output or start time.
  */
-export function nestedToolParts(parent: OCToolPart, details: unknown): OCToolPart[] {
+/** Shown above a nested call's preview so it does not read as broken output. */
+export const NESTED_PREVIEW_LABEL = "OmO preview (first 160 characters, line breaks removed):";
+
+/** A monitor started inside eval, as a subagent-style card that opens its monitor session. */
+function nestedMonitor(args: unknown, sessionID: string): MappedTool {
+  const input = record(args) ? args : {};
+  const command = typeof input.command === "string" ? input.command : "";
+  const label = typeof input.description === "string" && input.description !== "" ? input.description : command;
+  const description = `Monitor: ${label}`;
+  return {
+    tool: "task",
+    input: { description, prompt: command, subagent_type: "monitor" },
+    title: description.slice(0, 60),
+    metadata: { sessionID },
+  };
+}
+
+export function nestedToolParts(
+  parent: OCToolPart,
+  details: unknown,
+  monitorSession?: (args: Record<string, unknown>) => string | undefined,
+): OCToolPart[] {
   if (!record(details) || !Array.isArray(details.toolCalls)) return [];
   const parts: OCToolPart[] = [];
   const start = parent.state.status === "pending" ? 0 : parent.state.time.start;
@@ -159,11 +180,23 @@ export function nestedToolParts(parent: OCToolPart, details: unknown): OCToolPar
       return;
     const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
     const callID = `${encodeURIComponent(parent.callID)}:${key}`;
-    const mapped = entry.name === "__agent__" ? nestedAgent(entry.args) : mapTool(entry.name, entry.args);
+    const monitor =
+      entry.name === "monitor" && record(entry.args) && monitorSession !== undefined
+        ? monitorSession(entry.args)
+        : undefined;
+    const mapped =
+      monitor !== undefined
+        ? nestedMonitor(entry.args, monitor)
+        : entry.name === "__agent__"
+          ? nestedAgent(entry.args)
+          : mapTool(entry.name, entry.args);
     const state = {
       input: mapped.input,
       title: mapped.title,
-      output: typeof entry.resultPreview === "string" ? entry.resultPreview : "",
+      output:
+        typeof entry.resultPreview === "string" && entry.resultPreview !== ""
+          ? `${NESTED_PREVIEW_LABEL}\n${entry.resultPreview}`
+          : "",
       metadata: { ...mapped.metadata, nested: true, parentCallID: parent.callID, durationMs: entry.durationMs },
       time: { start, end: start + entry.durationMs },
     };

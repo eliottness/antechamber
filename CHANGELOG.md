@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Show completed calls made inside eval as individual tool cards, with their recorded previews, both live and after
+  reloading session history. A monitor started inside eval opens its monitor session like a subagent.
+
 ## [0.2.21] - 2026-10-17
 
 ### Fixed

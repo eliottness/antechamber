@@ -939,7 +939,7 @@ export class PiEventTranslator {
   }
 
   private onNestedTools(s: ManagedSession, parent: OCToolPart, details: unknown): void {
-    const nested = nestedToolParts(parent, details);
+    const nested = nestedToolParts(parent, details, (args) => this.services.monitors.findChild(s.info.id, args));
     if (nested.length === 0) return;
     const owner = s.messages?.find((message) => message.info.id === parent.messageID);
     if (owner === undefined) return;
