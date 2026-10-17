@@ -108,6 +108,8 @@ export function backgroundMessage(
 ): OCMessageWithParts {
   const messages = s.messages ?? [];
   let command = result.callID;
+  // The card that launched the command started it, so the finished card shows the real run time.
+  let started = entry.created;
   if (result.kind === "terminal") {
     for (const message of messages.toReversed()) {
       for (const part of message.parts) {
@@ -127,6 +129,7 @@ export function backgroundMessage(
               : undefined;
         if (typeof original === "string") {
           command += `\n${original}`;
+          started = Math.min(part.state.time.start, entry.created);
           break;
         }
       }
@@ -164,7 +167,7 @@ export function backgroundMessage(
           output: result.output,
           title: result.title,
           metadata: {},
-          time: { start: entry.created, end: entry.created },
+          time: { start: started, end: entry.created },
         },
       },
     ],
