@@ -15,6 +15,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
   created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
   to create session" with the original error hidden.
 
+### Added
+
+- Show the lines an OmO monitor matched in its monitor session, as they fire.
+
 ## [0.2.18] - 2026-10-17
 
 - test(endpoints): await the abort_bash dispatch instead of reading a flag (#27)

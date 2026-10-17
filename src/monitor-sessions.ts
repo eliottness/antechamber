@@ -11,6 +11,10 @@ import type { OCEvent, OCMessageWithParts, OCToolPart } from "./types.js";
 /** Names OmO's terminal extension passes to `pi.rpc.emit` (core/extensions/builtin/monitor-state-event.js). */
 export const MONITOR_STATE_EVENT = "terminal_monitor_state";
 export const MONITOR_ENDED_EVENT = "terminal_monitor_ended";
+/** customType of the custom message OmO sends with a watch's matched lines (raw RPC capture of installed omo-ai 5.1.33, 2026-10-17). */
+export const MONITOR_NOTIFICATION = "senpi-monitor:notification";
+/** Matched lines kept per watch; older lines are dropped. */
+const MAX_EVENT_LINES = 200;
 
 export interface MonitorSnapshot {
   id: string;
@@ -35,6 +39,7 @@ interface Watch {
   session: ManagedSession;
   monitor: MonitorSnapshot;
   ending?: MonitorEnding;
+  lines: string[];
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -128,6 +133,25 @@ export class MonitorSessions {
     if (!record(ev.data)) return;
     if (ev.name === MONITOR_STATE_EVENT && Array.isArray(ev.data.monitors)) this.applyState(parent, ev.data.monitors);
     else if (ev.name === MONITOR_ENDED_EVENT) this.applyEnded(parent, ev.data);
+  }
+
+  /** A hidden `senpi-monitor:notification` custom message: append its lines to each watch it names. */
+  notify(parent: ManagedSession, message: Record<string, unknown>): void {
+    if (typeof message.content !== "string" || !record(message.details) || !Array.isArray(message.details.monitors))
+      return;
+    const lines = message.content
+      .replaceAll(/<\/?system-reminder>/g, "")
+      .replace(/^Monitor event\([^\n]*?\):\s?/, "")
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+    if (lines.length === 0) return;
+    for (const entry of message.details.monitors) {
+      if (!record(entry) || typeof entry.id !== "string") continue;
+      const watch = this.watches.get(this.childID(parent, entry.id));
+      if (!watch) continue;
+      watch.lines = [...watch.lines, ...lines].slice(-MAX_EVENT_LINES);
+      this.publish(watch);
+    }
   }
 
   /** The agent process is gone: OmO's in-process watches died with it. */
@@ -224,7 +248,7 @@ export class MonitorSessions {
       hasPendingInteraction: () => false,
       hasRunningChildren: () => false,
     };
-    const watch: Watch = { session, monitor };
+    const watch: Watch = { session, monitor, lines: [] };
     this.watches.set(id, watch);
     this.sessions.set(id, session);
     this.emit(session.info.directory, { type: "session.created", properties: { info: session.info } });
@@ -232,7 +256,7 @@ export class MonitorSessions {
   }
 
   private publish(watch: Watch): void {
-    const { session, monitor, ending } = watch;
+    const { session, monitor, ending, lines } = watch;
     const directory = session.info.directory;
     const sessionID = session.info.id;
     const base = sessionID.replace(/^ses_/, "");
@@ -240,7 +264,8 @@ export class MonitorSessions {
     const started = monitor.startedAtMs;
     const command = monitor.command ?? monitor.description;
     const input = { command, description: monitor.description };
-    const output = monitorSummary(monitor, ending);
+    const summary = monitorSummary(monitor, ending);
+    const output = lines.length > 0 ? `${summary}\n\n${lines.join("\n")}` : summary;
     const tool: OCToolPart = {
       id: `prt_${base}_tool`,
       sessionID,
