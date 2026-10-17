@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-10-17
+
+- test(endpoints): await the abort_bash dispatch instead of reading a flag (#27)
+
 ## [0.2.17] - 2026-10-17
 
 ### Fixed
