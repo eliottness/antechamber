@@ -425,7 +425,11 @@ export class PiRpcClient extends EventEmitter {
       try {
         process.kill(target, sig);
       } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ESRCH") return;
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        if (code === "ESRCH") return;
+        // macOS returns EPERM, not ESRCH, when the group's only member is our unreaped leader;
+        // the pending "exit" event completes disposal.
+        if (code === "EPERM" && target < 0) return;
         throw error;
       }
     };

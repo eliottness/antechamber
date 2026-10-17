@@ -166,7 +166,7 @@ test("R-005: disposing an exited child never signals its former numeric process 
   assert.deepEqual(signals, [], "an exited leader cannot authorize a raw negative-PID signal");
 });
 
-function disposableChild(t: TestContext, processTable: ProcessTable) {
+function disposableChild(t: TestContext, processTable: ProcessTable, killError?: (pid: number) => string | undefined) {
   const proc = Object.assign(new ChildProcess(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -180,6 +180,8 @@ function disposableChild(t: TestContext, processTable: ProcessTable) {
   t.mock.method(childProcess, "spawn", () => proc);
   t.mock.method(process, "kill", (pid: number, signal: NodeJS.Signals | 0) => {
     signals.push([pid, signal]);
+    const code = killError?.(pid);
+    if (code !== undefined) throw Object.assign(new Error(`kill ${code}`), { code });
     return true;
   });
   syncBuiltinESMExports();
@@ -264,6 +266,19 @@ test("R-005: a leader exiting with no verifiable survivors ends disposal without
   const disposing = pi.dispose();
   exit();
   await disposing;
+
+  assert.deepEqual(signals, [[-424242, "SIGTERM"]]);
+});
+
+test("an exited but unreaped leader (macOS group EPERM) still completes disposal on exit", async (t) => {
+  const { pi, signals, exit } = disposableChild(t, { groupMembers: () => [], identity: () => undefined }, (pid) =>
+    pid < 0 ? "EPERM" : undefined,
+  );
+
+  const disposing = pi.dispose();
+  exit();
+  await disposing;
+  await pi.dispose();
 
   assert.deepEqual(signals, [[-424242, "SIGTERM"]]);
 });
