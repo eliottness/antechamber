@@ -9,6 +9,8 @@ import { SessionStore } from "../src/session-store.js";
 import { AdapterServer } from "../src/server.js";
 import { systemClock } from "../src/lifecycle.js";
 import type { OCModelRef } from "../src/types.js";
+import { compactSession } from "../src/session-commands.js";
+import { bugHarness } from "./bug-harness.js";
 
 function setup(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "antechamber-thinking-"));
@@ -224,6 +226,31 @@ test("user messages carry the applied thinking level live and after a cold resta
   t.after(() => second.stop());
   await second.start();
   assert.deepEqual(await userVariants(second.url, session.id), ["low", "high"]);
+});
+
+test("injected and compaction user messages carry the applied thinking level", { timeout: 15_000 }, async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal", { providerID: "fake", modelID: "served", variant: "high" });
+  const pi = h.manager.get(session.id)?.pi;
+  assert.ok(pi);
+  // A natively injected (steered/queued) input reaches the adapter only through agent events.
+  await pi.command({ type: "inject", message: "native-input" });
+  const injected = (h.manager.messages(session.id) ?? []).find(
+    (m) => m.info.role === "user" && m.parts.some((p) => p.type === "text" && p.text === "native-input"),
+  );
+  assert.equal(injected?.info.role === "user" ? injected.info.model.variant : "missing", "high");
+
+  assert.deepEqual(await compactSession(h.manager, session.id), { kind: "compacted" });
+  const compactionVariant = (): string | undefined => {
+    const user = (h.manager.messages(session.id) ?? []).find(
+      (m) => m.info.role === "user" && m.parts[0]?.type === "compaction",
+    );
+    return user?.info.role === "user" ? user.info.model.variant : "missing";
+  };
+  assert.equal(compactionVariant(), "high");
+  await h.restart();
+  assert.equal(compactionVariant(), "high");
 });
 
 for (const [route, body] of [
