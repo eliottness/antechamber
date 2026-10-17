@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop a fast subagent task from staying busy on macOS when its task record changes before the file watcher is
+  live.
+
 ## [0.2.16] - 2026-10-17
 
 ### Fixed
