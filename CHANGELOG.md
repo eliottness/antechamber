@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.23] - 2026-10-17
+
+- feat(monitors): show matched lines in monitor sessions (#32)
+
 ## [0.2.22] - 2026-10-17
 
 - fix(tools): stream live bash and eval output into OpenChamber cards (#29)
