@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep a session's thinking level when it is reopened. User messages now carry the level as `model.variant`, both
+  live and in history rebuilt from OmO's session file. Without it OpenChamber fell back to the agent's default effort
+  and sent that with the next prompt, which reset the level and broke the prompt cache.
+
 ## [0.2.20] - 2026-10-17
 
 ### Fixed

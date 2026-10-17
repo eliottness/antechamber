@@ -16,7 +16,7 @@ import {
   type PiRpcResponse,
 } from "./pi-rpc.js";
 import { stopSessionHosts } from "./session-hosts.js";
-import { setThinkingLevel, type ModelSelection, type ThinkingState } from "./thinking-levels.js";
+import { setThinkingLevel, userMessageModel, type ModelSelection, type ThinkingState } from "./thinking-levels.js";
 import { SessionLifecycle, type LifecycleOptions } from "./lifecycle.js";
 import { ApprovalBridge, extensionUiRequestFrom, type PendingPermission, type PendingQuestion } from "./approvals.js";
 import { getAgentName, getExposedAgentNames } from "./agent-name.js";
@@ -1066,7 +1066,7 @@ export class SessionManager {
       role: "user",
       time: { created: Date.now() },
       agent: getAgentName(),
-      model: s.model ?? model ?? { providerID: "unknown", modelID: "unknown" },
+      model: userMessageModel(s.model ?? model ?? { providerID: "unknown", modelID: "unknown" }, s.thinkingLevel),
       ...(context ? { synthetic: true } : {}),
       ...(metadata !== undefined ? { metadata } : {}),
     };

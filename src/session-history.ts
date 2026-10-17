@@ -12,6 +12,7 @@ import {
   resultText,
 } from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
+import { userMessageModel } from "./thinking-levels.js";
 import { contextMessageID } from "./prompt-parts.js";
 import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree.js";
 import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
@@ -29,6 +30,8 @@ interface PiFileEntry {
   timestamp?: string | number;
   provider?: string;
   modelId?: string;
+  /** `thinking_level_change` entries */
+  thinkingLevel?: string;
   message?: PiFileMessage;
   customType?: string;
   details?: unknown;
@@ -189,6 +192,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
   const out: OCMessageWithParts[] = [];
   const toolParts = new Map<string, OCToolPart[]>();
   let currentModel: OCModelRef = { providerID: "unknown", modelID: "unknown" };
+  let currentThinkingLevel: string | undefined;
   let lastUserId = "";
   // Like live agent_end, a new user turn closes the previous run: its own
   // unresolved provider cards end with that run's stop reason.
@@ -208,9 +212,22 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       currentModel = { providerID: e.provider, modelID: e.modelId };
       continue;
     }
+    if (e.type === "thinking_level_change" && typeof e.thinkingLevel === "string") {
+      currentThinkingLevel = e.thinkingLevel;
+      continue;
+    }
     if (e.type === "compaction" && typeof e.summary === "string" && typeof e.firstKeptEntryId === "string") {
       // Not a run boundary: an automatic compaction can sit between steps of one turn.
-      out.push(...compactionMessages(s, e.id ?? `r${indexOf.get(e) ?? 0}`, e.summary, entryTime(e), currentModel));
+      out.push(
+        ...compactionMessages(
+          s,
+          e.id ?? `r${indexOf.get(e) ?? 0}`,
+          e.summary,
+          entryTime(e),
+          currentModel,
+          currentThinkingLevel,
+        ),
+      );
       continue;
     }
     const contextID = contextMessageID(e);
@@ -230,7 +247,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
           role: "user",
           time: { created: time },
           agent: agentName,
-          model: currentModel,
+          model: userMessageModel(currentModel, currentThinkingLevel),
           synthetic: true,
         },
         parts: [
@@ -268,7 +285,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         role: "user",
         time: { created },
         agent: agentName,
-        model: currentModel,
+        model: userMessageModel(currentModel, currentThinkingLevel),
       };
       const parts: OCPart[] = [
         {
@@ -543,7 +560,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         role: "user",
         time: { created: entryTime(entry) },
         agent: agentName,
-        model: currentModel,
+        model: userMessageModel(currentModel, currentThinkingLevel),
       },
       parts: [{ id: `prt_${messageID}_pending`, sessionID, messageID, type: "text", text }],
     });
