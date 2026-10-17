@@ -3,15 +3,7 @@
 import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCAssistantMessage, OCMessageWithParts, OCModelRef, OCPart, OCToolPart, OCUserMessage } from "./types.js";
-import {
-  applyProviderToolResults,
-  finishProviderToolParts,
-  mapTool,
-  providerToolParts,
-  resultMetadata,
-  resultText,
-  toolFailed,
-} from "./tool-map.js";
+import { applyProviderToolResults, finishProviderToolParts, mapTool, providerToolParts } from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
 import { userMessageModel } from "./thinking-levels.js";
 import { contextMessageID } from "./prompt-parts.js";
@@ -20,13 +12,11 @@ import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
 import { compactionMessages, piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
 import {
-  backgroundCommands,
   backgroundID,
   backgroundMessage,
   backgroundResult,
-  backgroundWaits,
   completeBackgroundEval,
-  holdForBackground,
+  finishToolPart,
   releaseBackground,
   settleBackground,
 } from "./background-results.js";
@@ -498,38 +488,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         updateTaskParts(matching, m, true, created);
         continue;
       }
-      const text = resultText(m.content) ?? "";
-      const startedAt = part.state.status !== "pending" ? part.state.time.start : created;
-      const input = part.state.input ?? {};
-      const metadata = {
-        ...(part.state.status !== "pending" ? part.state.metadata : {}),
-        ...resultMetadata(part.tool, m),
-        ...backgroundCommands(m),
-      };
-      const title =
-        part.state.status === "running" || part.state.status === "completed"
-          ? (part.state.title ?? part.tool)
-          : part.tool;
-      part.state = toolFailed(m)
-        ? {
-            status: "error",
-            input,
-            error: text !== "" ? text : `tool ${part.tool} failed`,
-            metadata,
-            time: { start: startedAt, end: created },
-          }
-        : {
-            status: "completed",
-            input,
-            output: text,
-            title,
-            metadata,
-            time: { start: startedAt, end: created },
-          };
-      if (callID !== undefined) {
-        const waits = backgroundWaits(callID, text, m);
-        if (waits.length > 0) holdForBackground(part, waits, { output: text, failed: toolFailed(m) });
-      }
+      if (callID !== undefined) finishToolPart(part, m, callID, created);
     }
     // system / custom entries are not rendered
   }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts, OCModelRef, OCToolPart } from "./types.js";
-import { resultText, type ToolResult } from "./tool-map.js";
+import { resultMetadata, resultText, toolFailed, type ToolResult } from "./tool-map.js";
 
 export interface BackgroundResult {
   /** Content hash; identical notifications are told apart by `backgroundID`'s occurrence index. */
@@ -47,7 +47,7 @@ export function backgroundResult(customType: unknown, content: unknown): Backgro
 }
 
 /** Retain only the command needed to label a later terminal completion. */
-export function backgroundCommands(result: ToolResult): Record<string, unknown> {
+export function backgroundCommands(result: ToolResult): { backgroundCommands?: Record<string, string> } {
   const details = result.details;
   if (details === null || typeof details !== "object" || !("toolCalls" in details)) return {};
   if (!Array.isArray(details.toolCalls)) return {};
@@ -75,11 +75,10 @@ export function launchedShells(text: string): string[] {
  * What a tool result leaves running: the background shells it started, and the eval cell
  * itself when it detached. The card keeps running until each one reports finishing.
  */
-export function backgroundWaits(callID: string, text: string, result?: ToolResult): string[] {
+export function backgroundWaits(callID: string, text: string, commands: Record<string, unknown> = {}): string[] {
   const waits = new Set<string>();
   for (const id of launchedShells(text)) waits.add(id);
-  const commands = result === undefined ? undefined : backgroundCommands(result).backgroundCommands;
-  if (commands !== null && typeof commands === "object") for (const id of Object.keys(commands)) waits.add(id);
+  for (const id of Object.keys(commands)) waits.add(id);
   if (/^Eval cell \S+ detached and is running/.test(text)) waits.add(callID);
   return [...waits];
 }
@@ -183,6 +182,26 @@ export function completeBackgroundEval(
     return part;
   }
   return undefined;
+}
+
+/** A tool result finishes its card at `at`; a result that left work running keeps it running. */
+export function finishToolPart(part: OCToolPart, result: ToolResult, callID: string, at: number): void {
+  const state = part.state;
+  const text = resultText(result.content);
+  const commands = backgroundCommands(result);
+  const metadata = {
+    ...(state.status !== "pending" ? state.metadata : {}),
+    ...resultMetadata(part.tool, result),
+    ...commands,
+  };
+  const time = { start: state.status !== "pending" ? state.time.start : at, end: at };
+  const title = state.status === "running" || state.status === "completed" ? (state.title ?? part.tool) : part.tool;
+  const failed = toolFailed(result);
+  part.state = failed
+    ? { status: "error", input: state.input ?? {}, error: text || `tool ${part.tool} failed`, metadata, time }
+    : { status: "completed", input: state.input ?? {}, output: text, title, metadata, time };
+  const waits = backgroundWaits(callID, text, commands.backgroundCommands);
+  if (waits.length > 0) holdForBackground(part, waits, { output: text, failed });
 }
 
 /**

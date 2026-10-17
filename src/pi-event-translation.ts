@@ -23,7 +23,6 @@ import {
   finishProviderToolParts,
   mapTool,
   providerToolParts,
-  resultMetadata,
   resultText,
   toolFailed,
 } from "./tool-map.js";
@@ -35,13 +34,11 @@ import { userMessageModel } from "./thinking-levels.js";
 import { debugLog } from "./misc-routes.js";
 import { envSetting } from "./config.js";
 import {
-  backgroundCommands,
   backgroundID,
   backgroundMessage,
   backgroundResult,
-  backgroundWaits,
   completeBackgroundEval,
-  holdForBackground,
+  finishToolPart,
   releaseBackground,
   settleBackground,
 } from "./background-results.js";
@@ -973,38 +970,7 @@ export class PiEventTranslator {
       if (!part || callID === undefined) continue;
       s.toolByCallId.delete(callID);
       s.todoBridge?.finish(part, toolFailed(tr));
-      const text = resultText(tr.content);
-      const startedAt = part.state.status !== "pending" ? part.state.time.start : Date.now();
-      const input = part.state.input ?? {};
-      const metadata = {
-        ...(part.state.status !== "pending" ? part.state.metadata : {}),
-        ...resultMetadata(part.tool, tr),
-        ...backgroundCommands(tr),
-      };
-      const title =
-        part.state.status === "running" || part.state.status === "completed"
-          ? (part.state.title ?? part.tool)
-          : part.tool;
-      if (toolFailed(tr)) {
-        part.state = {
-          status: "error",
-          input,
-          error: text || `tool ${part.tool} failed`,
-          metadata,
-          time: { start: startedAt, end: Date.now() },
-        };
-      } else {
-        part.state = {
-          status: "completed",
-          input,
-          output: text,
-          title,
-          metadata,
-          time: { start: startedAt, end: Date.now() },
-        };
-      }
-      const waits = backgroundWaits(callID, text, tr);
-      if (waits.length > 0) holdForBackground(part, waits, { output: text, failed: part.state.status === "error" });
+      finishToolPart(part, tr, callID, Date.now());
       if (touchedFiles([part]).length > 0) this.services.dirtyDiffs.add(s.info.id);
       this.emitPart(s, part);
       const owner = s.messages?.find((m) => m.info.id === part.messageID);
