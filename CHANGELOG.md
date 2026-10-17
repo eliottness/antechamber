@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show saved child-task errors when no transcript is available, and label missing runtime, token and cost statistics
+  as unknown instead of zero.
+
 ## [0.2.14] - 2026-10-16
 
 ### Fixed
