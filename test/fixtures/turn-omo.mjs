@@ -27,6 +27,7 @@ let entries = readFileSync(sessionFile, "utf8").trim().split("\n").map(JSON.pars
 let leaf = entries.at(-1)?.id ?? null;
 let name = entries.filter((e) => e.type === "session_info").at(-1)?.name ?? process.env.ANTECHAMBER_TEST_NATIVE_TITLE;
 let active;
+let thinkingLevel = entries.filter((e) => e.type === "thinking_level_change").at(-1)?.thinkingLevel ?? "medium";
 // OmO cancels a compaction when its tool set changes (e.g. MCP servers connecting after startup).
 let cancelledCompacts = Number(process.env.ANTECHAMBER_TEST_CANCELLED_COMPACTS ?? 0);
 let heldCompact;
@@ -142,8 +143,15 @@ createInterface({ input: process.stdin })
         sessionFile,
         sessionName: name,
         model: { provider: "fake", id: "served" },
+        thinkingLevel,
         isStreaming: !!active,
       };
+    // Real OmO appends the change as a tree entry on the active branch.
+    if (cmd.type === "set_thinking_level") {
+      thinkingLevel = cmd.level;
+      record("thinking_level_change", { thinkingLevel });
+      send({ type: "thinking_level_changed", level: thinkingLevel });
+    }
     if (cmd.type === "get_entries") data = { entries, leafId: leaf };
     if (cmd.type === "navigate_tree") {
       const entry = entries.find((entry) => entry.id === cmd.targetId);
