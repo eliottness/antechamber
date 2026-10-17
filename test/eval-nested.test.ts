@@ -141,7 +141,7 @@ for (const via of ["end", "turn", "late"]) {
       [
         ["task", "completed", ocIdFor("st_nested_a")],
         ["task", "completed", ocIdFor("st_nested_t")],
-        ["task", "error", undefined],
+        ["agent", "error", undefined],
         ["task", "completed", ocIdFor("st_nested_b")],
       ],
     );
@@ -301,6 +301,8 @@ test("an agent() call OmO recorded as ok but started no task for is a failed car
   };
   const [refused] = nestedToolParts(parent, { toolCalls: [call] }, { agent: () => undefined });
   assert.ok(refused?.state.status === "error");
+  // Not a task card: OpenChamber would draw that like a success and hide the error.
+  assert.equal(refused.tool, "agent");
   assert.match(refused.state.error, /OmO started no subagent/);
   assert.equal(refused.state.metadata?.agentSubtitle, "qa-alpha");
 });

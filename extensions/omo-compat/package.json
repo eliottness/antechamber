@@ -26,6 +26,11 @@
           "match": "task",
           "title": "{metadata.agentTitle}",
           "subtitle": "{metadata.agentSubtitle}"
+        },
+        {
+          "match": "agent",
+          "title": "{metadata.agentTitle}",
+          "subtitle": "{metadata.agentSubtitle}"
         }
       ]
     }

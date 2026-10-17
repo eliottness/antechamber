@@ -302,21 +302,23 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       metadata: { ...mapped.metadata, nested: true, parentCallID: parent.callID, durationMs: entry.durationMs },
       time: { start, end: start + entry.durationMs },
     };
+    const failed = !entry.ok || failure !== undefined;
     parts.push({
       id: `prt_${parent.sessionID}_nested_${callID}`,
       sessionID: parent.sessionID,
       messageID: parent.messageID,
       type: "tool",
       callID: `nested:${callID}`,
-      tool: mapped.tool,
-      state:
-        entry.ok && failure === undefined
-          ? { ...state, status: "completed" }
-          : {
-              ...state,
-              status: "error",
-              error: failure ?? (typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed"),
-            },
+      // OpenChamber 1.24 never styles a task card as failed or shows its error (ToolPart.tsx isTaskTool),
+      // and a failed spawn has no session to open, so it goes out as a plain card that does both.
+      tool: failed && mapped.tool === "task" ? "agent" : mapped.tool,
+      state: !failed
+        ? { ...state, status: "completed" }
+        : {
+            ...state,
+            status: "error",
+            error: failure ?? (typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed"),
+          },
     });
   });
   return parts;
