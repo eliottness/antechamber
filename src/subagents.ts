@@ -690,10 +690,17 @@ export class SubagentBridge {
       typeof data.model === "string"
         ? data.model
         : `${resolved.provider ?? "unknown"}/${resolved.model_id ?? "unknown"}`;
+    const finalResponse = stripTaskSuffix(typeof data.final_response === "string" ? data.final_response : "");
+    const error =
+      terminal(data.status) && data.status !== "completed" && typeof data.error_message === "string"
+        ? data.error_message
+        : undefined;
+    const runtime = stats.runtime_ms ?? data.duration_ms;
     const text = [
-      stripTaskSuffix(typeof data.final_response === "string" ? data.final_response : ""),
-      `Model: ${model}\nRuntime: ${stats.runtime_ms ?? data.duration_ms ?? 0} ms\nTokens: ${stats.total_tokens ?? 0}\nCost: $${stats.cost_usd ?? 0}`,
-      "Full transcript was not retained by OmO.",
+      finalResponse,
+      error && !finalResponse.includes(error) ? error : "",
+      `Model: ${model}\nRuntime: ${runtime === undefined ? "unknown" : `${runtime} ms`}\nTokens: ${stats.total_tokens ?? "unknown"}\nCost: ${stats.cost_usd === undefined ? "unknown" : `$${stats.cost_usd}`}`,
+      "Full transcript is unavailable.",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -717,6 +724,7 @@ export class SubagentBridge {
         role: "assistant",
         provider: resolved.provider ?? model.split("/")[0],
         model: resolved.model_id ?? model.split("/").slice(1).join("/"),
+        ...(error ? { stopReason: "error", errorMessage: error } : {}),
         // run_stats tokens are totals across the whole run (every model call),
         // not one request's context, so only the cost is carried as usage; the
         // totals stay in the text above. Token counts here read as context fill.

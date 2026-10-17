@@ -413,7 +413,64 @@ test("live store history is archived even when no prior archive exists", (t) => 
   assert.ok(existsSync(join(state, "children", "st_child.jsonl")));
 });
 
-test("missing transcript renders final response usage and retention notice", (t) => {
+for (const status of ["error", "failed"]) {
+  test(`missing transcript preserves ${status} details alongside a final response`, (t) => {
+    const { manager, parent } = setup(t);
+    const error = "open_failed: startup-sentinel";
+    const response = status === "error" ? "" : "partial-result-sentinel";
+    start(manager, parent, { task_summary: "Failed child", prompt: "child-request-sentinel" });
+    result(manager, parent, { task_id: "st_failed", status, model: "anthropic/haiku", error_message: error }, response);
+
+    const messages = manager.messages(ocIdFor("st_failed"));
+    const request = messages?.find((message) => message.info.role === "user");
+    const reply = messages?.find((message) => message.info.role === "assistant");
+    assert.ok(reply?.info.role === "assistant");
+    assert.equal(reply.info.parentID, request?.info.id);
+    assert.equal(reply.info.finish, "error");
+    assert.equal(reply.info.error?.data.message, error);
+    assert.ok(texts(messages).includes(error));
+    if (response) assert.ok(texts(messages).includes(response));
+  });
+}
+
+test("failed fallback does not repeat an error already in its final response", (t) => {
+  const { manager, parent } = setup(t);
+  const error = "open_failed: duplicate-sentinel";
+  start(manager, parent, { task_summary: "Failed child" });
+  result(manager, parent, { task_id: "st_failed", status: "error", error_message: error }, error);
+  assert.equal(texts(manager.messages(ocIdFor("st_failed"))).split(error).length - 1, 1);
+});
+
+test("saved startup failure survives restart through the message route without a transcript", async (t) => {
+  const { manager, parent, store, directory } = setup(t);
+  const error = "open_failed: persisted-sentinel";
+  // DAG startup failures can have no task tool result, host_session, transcript or run_stats.
+  // Observed in OmO's task_start_failed event for a failed open_session.
+  put(join(store, "tasks", "st_failed.json"), {
+    task_id: "st_failed",
+    parent_session_id: "parent-pi",
+    status: "error",
+    error_message: error,
+    failure_kind: "session_unavailable",
+    failure_reason: "open_failed",
+    model: "anthropic/haiku",
+  });
+  assert.equal(manager.get(ocIdFor("st_failed"))?.info.parentID, parent.info.id);
+  await manager.disposeAll();
+  const server = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
+  await server.start();
+  t.after(() => server.stop());
+
+  const response = await fetch(`${server.url}/session/${ocIdFor("st_failed")}/message`);
+  assert.equal(response.status, 200);
+  const messages = (await response.json()) as OCMessageWithParts[];
+  const reply = messages.find((message) => message.info.role === "assistant");
+  assert.ok(reply?.info.role === "assistant");
+  assert.equal(reply.info.error?.data.message, error);
+  assert.ok(texts(messages).includes(error));
+});
+
+test("missing transcript renders final response and recorded usage", (t) => {
   const { manager, parent } = setup(t);
   start(manager, parent, { task_summary: "Evicted child" });
   result(
@@ -436,7 +493,6 @@ test("missing transcript renders final response usage and retention notice", (t)
   const messages = manager.messages(ocIdFor("st_missing"));
   assert.equal(messages?.filter((message) => message.info.role === "assistant").length, 1);
   assert.match(texts(messages), /preserved result/);
-  assert.match(texts(messages), /Full transcript was not retained by OmO\./);
   const info = messages?.find((message) => message.info.role === "assistant")?.info;
   assert.ok(info?.role === "assistant");
   assert.equal(info.parentID, messages?.find((message) => message.info.role === "user")?.info.id);
