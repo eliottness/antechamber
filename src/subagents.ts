@@ -22,6 +22,10 @@ import type { ManagedSession } from "./sessions.js";
 import type { OCEvent, OCMessageWithParts, OCSession, OCToolPart } from "./types.js";
 import { ADAPTER_VERSION } from "./version.js";
 
+// macOS watches directories through FSEvents, which goes live asynchronously after
+// watch() returns; a task record replaced inside that window raises no event.
+const FSEVENTS_STARTUP_RECHECK_MS = 1_000;
+
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -553,6 +557,11 @@ export class SubagentBridge {
       child.watchers.delete(dir);
     });
     child.watchers.set(dir, watcher);
+    if (process.platform === "darwin") {
+      setTimeout(() => {
+        if (child.watchers.get(dir) === watcher) this.refresh(child, true);
+      }, FSEVENTS_STARTUP_RECHECK_MS).unref();
+    }
   }
 
   private refresh(child: Child, publish: boolean, useRecord = true): void {
