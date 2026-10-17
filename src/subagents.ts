@@ -674,8 +674,6 @@ export class SubagentBridge {
         for (const part of message.parts) this.emitPart(child.session, part);
       }
     }
-    // Status transitions go out even on a quiet refresh (adoption, first transcript read):
-    // later refreshes see no transition, so OpenChamber would never learn the child is busy.
     if (state.previousStatus !== child.session.status.type) {
       this.emit(child.session.info.directory, {
         type: "session.status",

@@ -704,7 +704,6 @@ test("a running task spawned without a task tool call announces busy when the li
   const childID = ocIdFor("st_running");
   assert.ok(manager.list(directory).some((session) => session.id === childID));
   assert.deepEqual(manager.statuses()[childID], { type: "busy" });
-  // OpenChamber lights the parent's running dot from this event; later refreshes see no transition.
   assert.ok(
     events.some(
       (event) =>
