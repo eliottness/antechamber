@@ -24,7 +24,11 @@ import {
   backgroundID,
   backgroundMessage,
   backgroundResult,
+  backgroundWaits,
   completeBackgroundEval,
+  holdForBackground,
+  releaseBackground,
+  settleBackground,
 } from "./background-results.js";
 
 // ----------------------------------------------------------------------
@@ -215,7 +219,9 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     runAssistant = undefined;
   };
 
+  let lastAt = 0;
   for (const e of chain) {
+    lastAt = Math.max(lastAt, entryTime(e));
     if (e.type === "model_change" && typeof e.provider === "string" && typeof e.modelId === "string") {
       currentModel = { providerID: e.provider, modelID: e.modelId };
       continue;
@@ -240,6 +246,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     }
     if (e.type === "custom_message") {
       const result = backgroundResult(e.customType, e.content);
+      if (result?.kind === "terminal") releaseBackground(out, result.callID, entryTime(e));
       if (result !== undefined && completeBackgroundEval(out, result, entryTime(e)) === undefined) {
         const message = backgroundMessage({ info: s.info, messages: out }, result, {
           id: backgroundID(out, result),
@@ -519,6 +526,10 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
             metadata,
             time: { start: startedAt, end: created },
           };
+      if (callID !== undefined) {
+        const waits = backgroundWaits(callID, text, m);
+        if (waits.length > 0) holdForBackground(part, waits, { output: text, failed: toolFailed(m) });
+      }
     }
     // system / custom entries are not rendered
   }
@@ -604,5 +615,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       if (identity !== undefined) part.id = identity;
     }
   }
+  // The agent that ran these shells is gone by the time history is rebuilt.
+  settleBackground(out, lastAt);
   return out;
 }

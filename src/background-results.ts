@@ -61,6 +61,97 @@ export function backgroundCommands(result: ToolResult): Record<string, unknown> 
   return Object.keys(commands).length === 0 ? {} : { backgroundCommands: commands };
 }
 
+/** Background shells a result says it left running (raw RPC capture, 2026-10-17). */
+const LAUNCHED = /\b(?:running in background|auto-detached to background) with ID:\s*(bash_\d+)\b/g;
+
+/**
+ * What a tool result leaves running: the background shells it started, and the eval cell
+ * itself when it detached. The card keeps running until each one reports finishing.
+ */
+export function backgroundWaits(callID: string, text: string, result?: ToolResult): string[] {
+  const waits = new Set<string>();
+  for (const match of text.matchAll(LAUNCHED)) if (match[1] !== undefined) waits.add(match[1]);
+  const commands = result === undefined ? undefined : backgroundCommands(result).backgroundCommands;
+  if (commands !== null && typeof commands === "object") for (const id of Object.keys(commands)) waits.add(id);
+  if (/^Eval cell \S+ detached and is running/.test(text)) waits.add(callID);
+  return [...waits];
+}
+
+interface Final {
+  output: string;
+  failed: boolean;
+}
+
+function waitsOf(part: OCToolPart): string[] {
+  const waits = part.state.status === "running" ? part.state.metadata?.backgroundWaits : undefined;
+  return Array.isArray(waits) ? waits.filter((id): id is string => typeof id === "string") : [];
+}
+
+/** Keep a finished card running, with its result already shown, until `waits` report finishing. */
+export function holdForBackground(part: OCToolPart, waits: string[], final: Final): void {
+  const state = part.state;
+  if (state.status === "pending" || waits.length === 0) return;
+  const title = state.status === "running" || state.status === "completed" ? state.title : undefined;
+  part.state = {
+    status: "running",
+    input: state.input,
+    ...(title !== undefined ? { title } : {}),
+    metadata: { ...state.metadata, output: final.output, backgroundWaits: waits, backgroundFinal: final },
+    time: { start: state.time.start },
+  };
+}
+
+function finish(part: OCToolPart, final: Final, at: number): void {
+  const state = part.state;
+  if (state.status === "pending") return;
+  const { backgroundWaits: _waits, backgroundFinal: _final, output: _output, ...metadata } = state.metadata ?? {};
+  const time = { start: state.time.start, end: Math.max(at, state.time.start) };
+  const title = state.status === "running" || state.status === "completed" ? (state.title ?? part.tool) : part.tool;
+  part.state = final.failed
+    ? { status: "error", input: state.input, error: final.output || `tool ${part.tool} failed`, metadata, time }
+    : { status: "completed", input: state.input, output: final.output, title, metadata, time };
+}
+
+function finalOf(part: OCToolPart): Final | undefined {
+  const final = part.state.status === "running" ? part.state.metadata?.backgroundFinal : undefined;
+  if (final === null || typeof final !== "object" || !("output" in final) || !("failed" in final)) return undefined;
+  return { output: String(final.output), failed: final.failed === true };
+}
+
+/** `id` finished at `at`: drop it from every card waiting on it; cards left with nothing to wait on end. */
+export function releaseBackground(messages: readonly OCMessageWithParts[], id: string, at: number): OCToolPart[] {
+  const changed: OCToolPart[] = [];
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "tool" || part.state.status !== "running") continue;
+      const waits = waitsOf(part);
+      if (!waits.includes(id)) continue;
+      const left = waits.filter((wait) => wait !== id);
+      const final = finalOf(part);
+      if (left.length > 0 || final === undefined)
+        part.state.metadata = { ...part.state.metadata, backgroundWaits: left };
+      else finish(part, final, at);
+      changed.push(part);
+    }
+  }
+  return changed;
+}
+
+/** Nothing can still be running (the agent exited, or history is rebuilt): end every waiting card. */
+export function settleBackground(messages: readonly OCMessageWithParts[], at: number): OCToolPart[] {
+  const changed: OCToolPart[] = [];
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "tool") continue;
+      const final = finalOf(part);
+      if (final === undefined) continue;
+      finish(part, final, at);
+      changed.push(part);
+    }
+  }
+  return changed;
+}
+
 export function completeBackgroundEval(
   messages: readonly OCMessageWithParts[],
   result: BackgroundResult,
@@ -72,19 +163,17 @@ export function completeBackgroundEval(
       (part): part is OCToolPart => part.type === "tool" && part.callID === result.callID,
     );
     if (part === undefined) continue;
-    const state = part.state;
-    const time = { start: state.status === "pending" ? completed : state.time.start, end: completed };
-    const metadata = state.status === "pending" ? {} : (state.metadata ?? {});
-    part.state = result.failed
-      ? { status: "error", input: state.input, error: result.output, metadata, time }
-      : {
-          status: "completed",
-          input: state.input,
-          output: result.output,
-          title: "title" in state ? (state.title ?? "eval") : "eval",
-          metadata,
-          time,
-        };
+    const final = { output: result.output, failed: result.failed };
+    // The cell is done; shells it moved to the background may still run.
+    const waits = [
+      ...waitsOf(part).filter((wait) => wait !== result.callID),
+      ...backgroundWaits(result.callID, result.output),
+    ];
+    const remaining = [...new Set(waits)];
+    if (part.state.status !== "pending" && remaining.length > 0) {
+      holdForBackground(part, remaining, final);
+      if (part.state.status === "running") part.state.metadata = { ...part.state.metadata, backgroundWaits: remaining };
+    } else finish(part, final, completed);
     return part;
   }
   return undefined;
