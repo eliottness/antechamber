@@ -305,3 +305,78 @@ test("v1 paging keeps completion cards and their user anchor beyond 190 results 
   assert.deepEqual([...older, ...page], all);
   assert.equal(new Set(all.map((message) => message.info.id)).size, all.length);
 });
+
+function card(messages: readonly OCMessageWithParts[] | undefined, callID: string): OCToolPart {
+  const part = tools(messages ?? []).find((candidate) => candidate.callID === callID);
+  assert.ok(part, `card ${callID}`);
+  return part;
+}
+
+test("a card that started background work keeps running until that work reports finishing", async (t) => {
+  // Given: a turn whose cells left bash_2, bash_20 and a detached cell running; the turn has ended.
+  const { h, s, pi } = await started(t);
+  for (const callID of ["background-launch", "direct-launch", "detached-cell"]) {
+    const part = card(h.manager.messages(s.info.id), callID);
+    assert.equal(part.state.status, "running", `${callID} waits for its background work past the turn`);
+  }
+  const launch = card(h.manager.messages(s.info.id), "background-launch");
+  assert.ok(launch.state.status === "running");
+  assert.deepEqual(launch.state.metadata?.backgroundWaits, ["bash_2"]);
+  assert.equal(launch.state.metadata?.output, "Command running in background with ID: bash_2\n\nfirst line");
+  const finished = h.wait(
+    (event) =>
+      event.type === "message.part.updated" &&
+      event.properties.part.type === "tool" &&
+      event.properties.part.callID === "background-launch" &&
+      event.properties.part.state.status === "completed",
+  );
+  // When: bash_2 reports finishing.
+  await pi.command(terminal);
+  await finished;
+  // Then: only its launcher ends, at the notice's time, with the result it already showed.
+  const done = card(h.manager.messages(s.info.id), "background-launch");
+  assert.ok(done.state.status === "completed");
+  assert.equal(done.state.output, "Command running in background with ID: bash_2\n\nfirst line");
+  // The fake agent's clock is behind the adapter's; the JSONL test checks the end against the notice.
+  assert.ok(done.state.time.end >= done.state.time.start);
+  assert.equal(done.state.metadata?.backgroundWaits, undefined);
+  assert.equal(card(h.manager.messages(s.info.id), "direct-launch").state.status, "running");
+  assert.equal(s.status.type, "idle");
+});
+
+test("cards still waiting end when the agent process exits", async (t) => {
+  const { h, s, pi } = await started(t);
+  const exited = h.wait(
+    (event) =>
+      event.type === "message.part.updated" &&
+      event.properties.part.type === "tool" &&
+      event.properties.part.callID === "direct-launch" &&
+      event.properties.part.state.status === "completed",
+  );
+  pi.notify({ type: "exit" });
+  await exited;
+  assert.equal(card(h.manager.messages(s.info.id), "direct-launch").state.status, "completed");
+});
+
+test("history rebuild ends every waiting card, at its finish notice when there is one", async (t) => {
+  const { s, pi } = await started(t);
+  assert.ok(s.piPath);
+  const tree = await getEntries(pi);
+  const notice = {
+    type: "custom_message",
+    id: "terminal-done",
+    parentId: tree.leafId,
+    timestamp: "2026-10-17T16:47:04.648Z",
+    customType: terminal.customType,
+    content: terminal.content,
+    display: false,
+  };
+  const raw = `${readFileSync(s.piPath, "utf8")}${JSON.stringify(notice)}\n`;
+  const history = parsePiSessionText(restoredSession(s), "test", raw);
+  const launch = card(history, "background-launch");
+  assert.ok(launch.state.status === "completed");
+  assert.equal(launch.state.time.end, Date.parse(notice.timestamp));
+  const direct = card(history, "direct-launch");
+  assert.ok(direct.state.status === "completed", "no notice, but nothing can still run after a rebuild");
+  assert.equal(direct.state.output, "Command running in background with ID: bash_20");
+});

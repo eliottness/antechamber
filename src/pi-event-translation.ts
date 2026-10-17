@@ -37,7 +37,11 @@ import {
   backgroundID,
   backgroundMessage,
   backgroundResult,
+  backgroundWaits,
   completeBackgroundEval,
+  holdForBackground,
+  releaseBackground,
+  settleBackground,
 } from "./background-results.js";
 
 export interface PiUsage {
@@ -386,6 +390,9 @@ export class PiEventTranslator {
     const unbound = messages.findLast(
       (message) => message.info.id.startsWith(prefix) && s.tree.messageEntries[message.info.id] === undefined,
     );
+    // A finished shell also ends the wait of the card that launched it (once, from the live message).
+    if (result.kind === "terminal" && source === "message")
+      for (const waiting of releaseBackground(messages, result.callID, created)) this.emitPart(s, waiting);
     if (part !== undefined) this.emitPart(s, part);
     else if (source === "entry" && unbound !== undefined) {
       // The live custom message already created this card; the entry only supplies its native ID.
@@ -959,6 +966,8 @@ export class PiEventTranslator {
           time: { start: startedAt, end: Date.now() },
         };
       }
+      const waits = backgroundWaits(callID, text, tr);
+      if (waits.length > 0) holdForBackground(part, waits, { output: text, failed: part.state.status === "error" });
       if (touchedFiles([part]).length > 0) this.services.dirtyDiffs.add(s.info.id);
       this.emitPart(s, part);
       const owner = s.messages?.find((m) => m.info.id === part.messageID);
@@ -966,6 +975,11 @@ export class PiEventTranslator {
       this.completeSettled(s, owner.info);
       this.services.emit(s.info.directory, { type: "message.updated", properties: { info: owner.info } });
     }
+  }
+
+  /** The agent process is gone, and its background shells with it: end cards still waiting on them. */
+  settleBackground(s: ManagedSession): void {
+    for (const part of settleBackground(s.messages ?? [], Date.now())) this.emitPart(s, part);
   }
 
   /** Complete an ended assistant message whose completion waited on its tools; true when it changed. */

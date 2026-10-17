@@ -13,6 +13,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
   created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
   to create session" with the original error hidden.
 - Show completed background bash output and detached eval results in OpenChamber, including after reloading history.
+  A card that started background work keeps running until that work finishes.
 
 ## [0.2.18] - 2026-10-17
 

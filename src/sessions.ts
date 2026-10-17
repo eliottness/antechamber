@@ -368,6 +368,7 @@ export class SessionManager {
         this.reportPersistenceError(s, error);
       }
       delete s.interruptRequested;
+      this.events.settleBackground(s);
       this.subagents.stopParent(s.info.id);
       this.monitors.stopParent(s.info.id);
       void this.lifecycle
