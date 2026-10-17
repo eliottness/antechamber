@@ -58,6 +58,13 @@ the panel runs in a browser iframe. It shares the root toolchain:
 (`panel/main.js`, `service/main.js`) are gitignored but listed in the
 package's `files`. See [extensions/omo-dag/README.md](../extensions/omo-dag/README.md).
 
+`extensions/omo-compat/` holds the OmO Compatibility extension: a manifest with
+no code. It declares OpenChamber display rules (`contributes.tools`) for tool
+calls antechamber maps from OmO, such as the eval card header read from
+`metadata.evalTitle`/`evalSubtitle`. Display behavior that only an extension can
+add goes there, not in OmO Graph. See
+[extensions/omo-compat/README.md](../extensions/omo-compat/README.md).
+
 ## Testing
 
 ```bash

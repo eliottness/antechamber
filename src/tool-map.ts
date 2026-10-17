@@ -28,6 +28,25 @@ function generic(tool: string, input: Record<string, unknown>): MappedTool {
   return { tool, input, title: (hint ?? tool).slice(0, 60) };
 }
 
+function terminalTool(name: string, args: Record<string, unknown>): MappedTool {
+  const target = typeof args.bash_id === "string" ? ` ${args.bash_id}` : args.all === true ? " all" : "";
+  let command = `${name}${target}`;
+  if (name === "bash_input") {
+    if (typeof args.input === "string") command += ` ${JSON.stringify(args.input)}`;
+    if (Array.isArray(args.keys)) {
+      const keys = args.keys.filter((key): key is string => typeof key === "string").join(" ");
+      if (keys !== "") command += ` ${keys}`;
+    }
+  }
+  if (name === "bash_resize" && typeof args.cols === "number" && typeof args.rows === "number") {
+    command += ` ${args.cols}x${args.rows}`;
+  }
+  return { tool: "bash", input: { command, description: command }, title: command.slice(0, 60) };
+}
+
+/** Display names for codemode's kernel ids. */
+const EVAL_LANGUAGES: Record<string, string> = { js: "JS", py: "Python" };
+
 /** Mutable registry: todos 6/7 can assign handlers for `todo` and `task`. */
 export const toolMappers: Record<string, ToolMapper> = {
   read: (args) =>
@@ -68,14 +87,22 @@ export const toolMappers: Record<string, ToolMapper> = {
           title: args.command.slice(0, 60),
         }
       : generic("bash", args),
-  eval: (args) =>
-    typeof args.code === "string"
-      ? {
-          tool: "eval",
-          input: { language: args.language, code: args.code, description: args.summary },
-          title: typeof args.summary === "string" ? args.summary : "eval",
-        }
-      : generic("eval", args),
+  eval: (args) => {
+    const language = typeof args.language === "string" && args.language !== "" ? args.language : "js";
+    const summary = typeof args.summary === "string" && args.summary !== "" ? args.summary : "eval";
+    const name = `${EVAL_LANGUAGES[language] ?? language.toUpperCase()} Eval`;
+    const command =
+      typeof args.code === "string" && args.code !== ""
+        ? args.code
+        : ["eval", args.action, args.cell_id].filter((value): value is string => typeof value === "string").join(" ");
+    // Read by the OmO Compatibility extension's `bash` header rule; plain shell cards lack them and keep the default header.
+    const metadata = { evalTitle: name, evalSubtitle: summary };
+    return { tool: "bash", input: { command, description: `${name}: ${summary}` }, title: summary, metadata };
+  },
+  bash_output: (args) => terminalTool("bash_output", args),
+  bash_input: (args) => terminalTool("bash_input", args),
+  kill_bash: (args) => terminalTool("kill_bash", args),
+  bash_resize: (args) => terminalTool("bash_resize", args),
   ask_user_question: (args) => {
     if (!Array.isArray(args.questions) || !args.questions.every(record)) return generic("ask_user_question", args);
     const questions = args.questions.map((question) => ({
@@ -95,6 +122,14 @@ export const toolMappers: Record<string, ToolMapper> = {
     return { tool: "task", input, title: typeof input.description === "string" ? input.description : "task" };
   },
 };
+
+/**
+ * A failed result. Codemode leaves a failed eval cell's top-level isError false and sets
+ * details.isError instead (senpi-codemode src/tool/render-result.ts:42).
+ */
+export function toolFailed(result: ToolResult): boolean {
+  return result.isError === true || (record(result.details) && result.details.isError === true);
+}
 
 /** Text blocks only; images and structured details are not tool output text. */
 export function resultText(content: unknown): string {

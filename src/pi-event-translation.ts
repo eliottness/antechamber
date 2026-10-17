@@ -25,6 +25,7 @@ import {
   providerToolParts,
   resultMetadata,
   resultText,
+  toolFailed,
 } from "./tool-map.js";
 import { TodoBridge, type TodoUpdated } from "./todo-bridge.js";
 import { readSessionTree, recordTurn } from "./session-tree.js";
@@ -474,6 +475,21 @@ export class PiEventTranslator {
           return;
         const part = typeof ev.toolCallId === "string" ? s.toolByCallId.get(ev.toolCallId) : undefined;
         if (part === undefined || part.state.status !== "running") return;
+        const partial = ev.partialResult;
+        let output = resultText(
+          partial !== null && typeof partial === "object" && "content" in partial ? partial.content : undefined,
+        );
+        if (ev.toolName === "eval") {
+          // raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17:
+          // eval prefixes cumulative stdout with status lines, unlike its final result.
+          const header = /^\d+\/(\d+) cells? (?:running|complete)\b[^\n]*(?:\n|$)/.exec(output);
+          if (header !== null) {
+            output = output.slice(header[0].length);
+            if (header[1] === "1") output = output.replace(/^\[1\] \S+ [^\n]* (?:running|complete)(?:\r?\n|$)/, "");
+          }
+          if (/^waiting for the \w+ kernel to be ready$/.test(output.trim())) output = "";
+        }
+        if (output.trim() !== "") part.state.metadata = { ...part.state.metadata, output };
         this.emitPart(s, part);
         return;
       }
@@ -887,7 +903,7 @@ export class PiEventTranslator {
       const part = callID !== undefined ? s.toolByCallId.get(callID) : undefined;
       if (!part || callID === undefined) continue;
       s.toolByCallId.delete(callID);
-      s.todoBridge?.finish(part, tr.isError === true);
+      s.todoBridge?.finish(part, toolFailed(tr));
       const text = resultText(tr.content);
       const startedAt = part.state.status !== "pending" ? part.state.time.start : Date.now();
       const input = part.state.input ?? {};
@@ -899,7 +915,7 @@ export class PiEventTranslator {
         part.state.status === "running" || part.state.status === "completed"
           ? (part.state.title ?? part.tool)
           : part.tool;
-      if (tr.isError === true) {
+      if (toolFailed(tr)) {
         part.state = {
           status: "error",
           input,
