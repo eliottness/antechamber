@@ -91,6 +91,21 @@ test("doctor compares installed and running versions with the latest release", (
   assert.deepEqual(checks(ADAPTER_VERSION), ["PASS version", "PASS running"]);
 });
 
+test("doctor ignores a dead recorded server on macOS too", (t) => {
+  const { home, settings, ctx } = fixture(t);
+  const state = join(home, "state");
+  recordRunningServer(
+    state,
+    { pid: 2 ** 22 + 1, version: "0.0.1", url: "http://127.0.0.1:2", started: "2026-10-16T00:00:00.000Z" },
+    fs,
+  );
+  const report = doctor(
+    { settings },
+    { ...ctx, platform: "darwin", env: { ...ctx.env, ANTECHAMBER_STATE_DIR: state } },
+  );
+  assert.equal(report.checks.find((check) => check.name === "running")?.status, "INFO");
+});
+
 test("doctor fails when backend cannot be resolved", (t) => {
   const { home, settings, ctx } = fixture(t);
   fs.unlinkSync(join(home, "omo"));

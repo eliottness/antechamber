@@ -29,6 +29,16 @@ interface DoctorReport {
   readonly exitCode: 0 | 1;
 }
 
+/** Signal 0 probes existence on every platform; EPERM means it exists under another user. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+}
+
 /** Checks capabilities with access/stat only, never creating state or config files. */
 export function doctor(
   options: SettingsOptions = {},
@@ -81,9 +91,7 @@ export function doctor(
     add("version", "WARN", `${ADAPTER_VERSION} installed; ${latest} is released: run antechamber upgrade`);
   else add("version", "PASS", ADAPTER_VERSION);
   // A released fix is live only once OpenChamber relaunches the adapter.
-  const running = readRunningServers(stateDir, ctx.fs, (pid) =>
-    ctx.platform === "linux" ? ctx.fs.existsSync(`/proc/${pid}`) : true,
-  );
+  const running = readRunningServers(stateDir, ctx.fs, processAlive);
   if (running.length === 0) add("running", "INFO", `no running antechamber server recorded in ${stateDir}`);
   for (const server of running) {
     const target = latest !== undefined && isNewerVersion(latest, ADAPTER_VERSION) ? latest : ADAPTER_VERSION;
