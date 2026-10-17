@@ -7,6 +7,15 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Name a subagent card for an `agent()` call made inside eval after its agent type (for example "Explore Agent"),
+  and describe it with the call's label, the task's summary, or the first line of its prompt, instead of a bare "agent".
+- Show subagents an eval cell starts with `tool.task(...)` as subagent cards that open their session, live and after
+  reloading history, including ones started in the background.
+- Show an `agent()` call that OmO refused (for example one with no agent type) as a failed subagent card. OmO
+  records it as a success but starts no task.
+
 ## [0.2.25] - 2026-10-17
 
 - feat(tools): show subagents and monitors started inside eval (#30)

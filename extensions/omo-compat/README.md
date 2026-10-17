@@ -6,6 +6,10 @@ extension declare. It has no panel, page, service or permissions.
 
 What it does today:
 
+- **Subagent card headers.** A subagent an eval cell started with `agent()` is shown as a `task` card. Its header
+  reads the agent type and a short description (the call's label, the task's summary, or the prompt's first line)
+  instead of the generic "Agent Task".
+
 - **Eval cell headers.** OpenChamber 1.24 streams live output only for shell
   cards, so antechamber shows OmO eval cells as shell cards. With this extension
   their header reads `JS Eval` (or `Python Eval`) and the cell's summary instead

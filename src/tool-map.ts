@@ -1,3 +1,4 @@
+import { ocIdFor } from "./session-store.js";
 import type { OCToolPart } from "./types.js";
 
 /** OmO arguments translated to OpenChamber's renderer contracts. */
@@ -171,17 +172,59 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
 export interface NestedSessions {
   /** The monitor child session for a recorded `monitor` call. */
   monitor?: (args: Record<string, unknown>) => string | undefined;
-  /** The subagent session for a recorded `agent()` call; `claimed` keeps repeated calls apart. */
-  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => string | undefined;
+  /** The subagent a recorded `agent()` call started; `claimed` keeps repeated calls apart. */
+  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => EvalAgent | null | undefined;
 }
 
-/** A subagent-style card, as OpenChamber draws `task`: it opens `sessionID` when there is one. */
-function nestedSubagent(description: string, prompt: string, type: string, sessionID: string | undefined): MappedTool {
+/** The task record behind an `agent()` call made inside eval. */
+export interface EvalAgent {
+  sessionID: string;
+  name?: string;
+  summary?: string;
+  agentType?: string;
+}
+
+/** "Explore Agent" for an agent type or category, "Subagent" when there is none. */
+function agentTitle(type: string): string {
+  return type === "subagent" ? "Subagent" : `${type.charAt(0).toUpperCase()}${type.slice(1)} Agent`;
+}
+
+/**
+ * The task id OmO puts in a `task` result: "[task_id: st_x - " when it waited, "(st_x, running" in the
+ * background. The preview is capped at 160 code points, so only an id followed by its delimiter is whole.
+ */
+const TASK_ID = /\[task_id: (st_[A-Za-z0-9_-]+) - |\((st_[A-Za-z0-9_-]+), running\b/;
+
+/** The prompt's first line, cut at a word boundary near 60 characters. */
+function shortPrompt(prompt: string): string | undefined {
+  const line = prompt
+    .split("\n")
+    .find((text) => text.trim() !== "")
+    ?.trim();
+  if (line === undefined || line.length <= 60) return line;
+  const cut = line.slice(0, 60);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 30 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/**
+ * A subagent-style card, as OpenChamber draws `task`: it opens `sessionID` when there is one.
+ * `agentTitle`/`agentSubtitle` feed the OmO Compatibility extension's `task` header rule.
+ */
+function nestedSubagent(
+  heading: { title: string; subtitle: string },
+  input: { description: string; prompt: string; type: string },
+  sessionID: string | undefined,
+): MappedTool {
   return {
     tool: "task",
-    input: { description, prompt, subagent_type: type },
-    title: description.slice(0, 60),
-    metadata: sessionID !== undefined ? { sessionID } : {},
+    input: { description: input.description, prompt: input.prompt, subagent_type: input.type },
+    title: input.description.slice(0, 60),
+    metadata: {
+      agentTitle: heading.title,
+      agentSubtitle: heading.subtitle,
+      ...(sessionID !== undefined ? { sessionID } : {}),
+    },
   };
 }
 
@@ -195,9 +238,10 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
   const start = parent.state.status === "pending" ? 0 : parent.state.time.start;
   const claimed = new Set<string>();
   details.toolCalls.forEach((entry: unknown, index) => {
+    let failure: string | undefined;
     if (
       !record(entry) ||
-      (entry.name !== "monitor" && entry.name !== "__agent__") ||
+      (entry.name !== "monitor" && entry.name !== "__agent__" && entry.name !== "task") ||
       typeof entry.ok !== "boolean" ||
       typeof entry.durationMs !== "number" ||
       !Number.isFinite(entry.durationMs) ||
@@ -211,15 +255,56 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       if (sessionID === undefined) return; // nothing to open; the cell's code already shows the call
       const command = typeof args.command === "string" ? args.command : "";
       const label = typeof args.description === "string" && args.description !== "" ? args.description : command;
-      mapped = nestedSubagent(`Monitor: ${label}`, command, "monitor", sessionID);
+      mapped = nestedSubagent(
+        { title: "Monitor", subtitle: label },
+        { description: `Monitor: ${label}`, prompt: command, type: "monitor" },
+        sessionID,
+      );
+    } else if (entry.name === "task") {
+      const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+      const prompt = text(args.prompt) ?? "";
+      const match = typeof entry.resultPreview === "string" ? TASK_ID.exec(entry.resultPreview) : null;
+      const taskID = match?.[1] ?? match?.[2];
+      if (taskID !== undefined) claimed.add(taskID);
+      // A long reply pushes the id out of the preview; the task record still names the session.
+      const sessionID = !entry.ok
+        ? undefined
+        : taskID !== undefined
+          ? ocIdFor(taskID)
+          : (
+              sessions.agent?.({ prompt, ...(text(args.name) ? { label: args.name } : {}) }, claimed, start) ??
+              undefined
+            )?.sessionID;
+      const description = text(args.task_summary) ?? text(args.description) ?? shortPrompt(prompt) ?? "subagent";
+      const type = text(args.subagent_type) ?? text(args.category) ?? "subagent";
+      mapped = nestedSubagent(
+        { title: agentTitle(type), subtitle: description },
+        { description, prompt, type },
+        sessionID,
+      );
     } else {
       const prompt = typeof args.prompt === "string" ? args.prompt : "";
-      const label = [args.label, args.description, prompt.split("\n")[0]].find(
-        (value): value is string => typeof value === "string" && value !== "",
+      const found = entry.ok ? sessions.agent?.(args, claimed, start) : undefined;
+      const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+      const description =
+        text(args.label) ??
+        text(args.description) ??
+        found?.summary ??
+        found?.name ??
+        shortPrompt(prompt) ??
+        "subagent";
+      const type = text(args.agent) ?? found?.agentType ?? "subagent";
+      mapped = nestedSubagent(
+        {
+          title: agentTitle(type),
+          subtitle: description,
+        },
+        { description, prompt, type },
+        found?.sessionID,
       );
-      const sessionID = entry.ok ? sessions.agent?.(args, claimed, start) : undefined;
-      const type = typeof args.agent === "string" && args.agent !== "" ? args.agent : "subagent";
-      mapped = nestedSubagent(label ?? "subagent", prompt, type, sessionID);
+      // OmO writes the task record before agent() returns, but records a refused spawn as ok with no record.
+      if (entry.ok && found === null)
+        failure = "OmO started no subagent for this call (agent() needs an agent type or a category)";
     }
     const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
     const callID = `${encodeURIComponent(parent.callID)}:${key}`;
@@ -230,19 +315,22 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       metadata: { ...mapped.metadata, nested: true, parentCallID: parent.callID, durationMs: entry.durationMs },
       time: { start, end: start + entry.durationMs },
     };
+    const failed = !entry.ok || failure !== undefined;
     parts.push({
       id: `prt_${parent.sessionID}_nested_${callID}`,
       sessionID: parent.sessionID,
       messageID: parent.messageID,
       type: "tool",
       callID: `nested:${callID}`,
-      tool: mapped.tool,
-      state: entry.ok
+      // OpenChamber 1.24 never styles a task card as failed or shows its error (ToolPart.tsx isTaskTool),
+      // and a failed spawn has no session to open, so it goes out as a plain card that does both.
+      tool: failed && mapped.tool === "task" ? "agent" : mapped.tool,
+      state: !failed
         ? { ...state, status: "completed" }
         : {
             ...state,
             status: "error",
-            error: typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed",
+            error: failure ?? (typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed"),
           },
     });
   });
