@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-10-17
+
 ### Fixed
 
 - Report the real agent startup failure on macOS instead of `kill EPERM`. When OmO exited while a session was being
