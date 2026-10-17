@@ -56,7 +56,8 @@ for (const file of readdirSync(fixtures).filter((name) => name.endsWith(".json")
       if (fixture.tool === "eval") {
         assert.equal(mapped.tool, "bash");
         assert.equal(mapped.title, sample.arguments.summary);
-        assert.equal(mapped.input.command, sample.arguments.code);
+        assert.ok(String(mapped.input.command).endsWith(`\n${sample.arguments.code}`));
+        assert.equal(mapped.metadata?.evalSubtitle, sample.arguments.summary);
       }
       if (fixture.tool === "task") {
         assert.equal(
@@ -122,13 +123,16 @@ test("bash and questions use native renderer contracts", () => {
 test("eval uses a bash renderer with its code and language summary", () => {
   assert.deepEqual(mapTool("eval", { code: 'print("hello")', language: "py", summary: "Print hello" }), {
     tool: "bash",
-    input: { command: 'print("hello")', description: "py eval: Print hello" },
+    input: { command: '# py eval: Print hello\nprint("hello")', description: "py eval: Print hello" },
     title: "Print hello",
+    metadata: { evalTitle: "py eval", evalSubtitle: "Print hello" },
   });
+  assert.deepEqual(mapTool("eval", { code: "print(1)", summary: "One" }).input.command, "// js eval: One\nprint(1)");
   assert.deepEqual(mapTool("eval", {}), {
     tool: "bash",
     input: { command: "eval", description: "js eval: eval" },
     title: "eval",
+    metadata: { evalTitle: "js eval", evalSubtitle: "eval" },
   });
   assert.equal(mapTool("eval", { action: "peek", cell_id: "cell_1" }).input.command, "eval peek cell_1");
 });
@@ -416,6 +420,13 @@ for (const [name, args] of [
     assert.deepEqual(reloaded.state.input, part.state.input);
     assert.equal(reloaded.state.title, part.state.title);
     assert.equal(reloaded.state.output, part.state.output);
+    if (name === "eval") {
+      // The OmO Graph extension heads eval cards from these fields, live and after reload.
+      for (const state of [part.state, reloaded.state]) {
+        assert.equal(state.metadata?.evalTitle, "js eval");
+        assert.equal(state.metadata?.evalSubtitle, "Print hello");
+      }
+    }
     restored.messages = undefined;
     assert.deepEqual(manager["ensureMessages"](restored), history);
   });

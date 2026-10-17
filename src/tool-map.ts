@@ -87,11 +87,15 @@ export const toolMappers: Record<string, ToolMapper> = {
   eval: (args) => {
     const language = typeof args.language === "string" && args.language !== "" ? args.language : "js";
     const summary = typeof args.summary === "string" && args.summary !== "" ? args.summary : "eval";
+    const label = `${language} eval: ${summary}`;
+    // OpenChamber 1.24 heads a bash card with the command's first line; lead with the cell's label.
     const command =
       typeof args.code === "string" && args.code !== ""
-        ? args.code
+        ? `${language === "py" ? "#" : "//"} ${label}\n${args.code}`
         : ["eval", args.action, args.cell_id].filter((value): value is string => typeof value === "string").join(" ");
-    return { tool: "bash", input: { command, description: `${language} eval: ${summary}` }, title: summary };
+    // Read by the OmO Graph extension's `bash` header rule; plain shell cards lack them and keep the default header.
+    const metadata = { evalTitle: `${language} eval`, evalSubtitle: summary };
+    return { tool: "bash", input: { command, description: label }, title: summary, metadata };
   },
   bash_output: (args) => terminalTool("bash_output", args),
   bash_input: (args) => terminalTool("bash_input", args),

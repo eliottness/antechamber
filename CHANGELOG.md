@@ -30,7 +30,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
   created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
   to create session" with the original error hidden.
 - Show live bash and eval output in OpenChamber 1.24, and display eval and terminal controls as shell cards with
-  their final results retained after history reload.
+  their final results retained after history reload. Eval cards start with a `// js eval: <summary>` line, and the
+  OmO Graph extension heads them with the language and summary.
 
 ## [0.2.18] - 2026-10-17
 
