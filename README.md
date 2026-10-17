@@ -234,6 +234,18 @@ OpenChamber clones the repository root, which is antechamber itself, not the
 extension, and refuses it as an invalid manifest. Details:
 [extensions/omo-dag/README.md](extensions/omo-dag/README.md).
 
+## OpenChamber extension: OmO Compatibility
+
+`extensions/omo-compat` is a second, code-free extension for OpenChamber 1.24
+or newer. It tells OpenChamber how to display OmO tool calls that antechamber
+maps onto OpenChamber's cards; today it heads eval cells with `JS Eval` or
+`Python Eval` and the cell's summary. Add it the same way as OmO Graph: the
+folder `antechamber setup` prints (`.../extensions/omo-compat`, no build
+needed), or the release archive
+`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-compat.zip`.
+It asks for no permissions. Details:
+[extensions/omo-compat/README.md](extensions/omo-compat/README.md).
+
 ## Configuration
 
 Connector settings use the `ANTECHAMBER_` prefix; the deprecated `OCPI_`

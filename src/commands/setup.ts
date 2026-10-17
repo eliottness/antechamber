@@ -45,6 +45,12 @@ function omoGraphExtensionDir(ctx: CommandContext): string | undefined {
   return built ? dir : undefined;
 }
 
+/** The bundled OmO Compatibility extension folder; it is a manifest only, so it needs no build. */
+function omoCompatExtensionDir(ctx: CommandContext): string | undefined {
+  const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "omo-compat");
+  return ctx.fs.existsSync(join(dir, "package.json")) ? dir : undefined;
+}
+
 /** Plan all inputs before applying changes; dependencies are injected for hermetic tests. */
 export function setup(options: SetupOptions, ctx: CommandContext = createContext()): string[] {
   const lines: string[] = [];
@@ -197,6 +203,12 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
   if (extension !== undefined) {
     report(
       `Optional OmO Graph extension: in OpenChamber, Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${extension}`,
+    );
+  }
+  const compat = omoCompatExtensionDir(ctx);
+  if (compat !== undefined) {
+    report(
+      `Optional OmO Compatibility extension (eval card headers): Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${compat}`,
     );
   }
   return lines;

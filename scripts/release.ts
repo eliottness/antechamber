@@ -86,10 +86,12 @@ function main(argv: readonly string[]): void {
   rootPackage.version = version;
   writeJson(lockPath, lock);
 
-  const extPath = join(root, "extensions", "omo-dag", "package.json");
-  const ext = readJson(extPath);
-  ext.version = version;
-  writeJson(extPath, ext);
+  for (const extension of ["omo-dag", "omo-compat"]) {
+    const extPath = join(root, "extensions", extension, "package.json");
+    const ext = readJson(extPath);
+    ext.version = version;
+    writeJson(extPath, ext);
+  }
 
   const changelogPath = join(root, "CHANGELOG.md");
   const fallback = notesFromSubjects(subjectsSinceLastTag(root));

@@ -95,7 +95,7 @@ export const toolMappers: Record<string, ToolMapper> = {
       typeof args.code === "string" && args.code !== ""
         ? args.code
         : ["eval", args.action, args.cell_id].filter((value): value is string => typeof value === "string").join(" ");
-    // Read by the OmO Graph extension's `bash` header rule; plain shell cards lack them and keep the default header.
+    // Read by the OmO Compatibility extension's `bash` header rule; plain shell cards lack them and keep the default header.
     const metadata = { evalTitle: name, evalSubtitle: summary };
     return { tool: "bash", input: { command, description: `${name}: ${summary}` }, title: summary, metadata };
   },

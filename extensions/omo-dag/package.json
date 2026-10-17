@@ -21,13 +21,6 @@
         "entry": "panel/index.html",
         "title": "OmO Graph"
       },
-      "tools": [
-        {
-          "match": "bash",
-          "title": "{metadata.evalTitle}",
-          "subtitle": "{metadata.evalSubtitle}"
-        }
-      ],
       "capabilities": [
         "sessions"
       ],
