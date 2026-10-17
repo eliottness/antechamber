@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-10-17
+
+- fix(tools): stream live bash and eval output into OpenChamber cards (#29)
+
 ## [0.2.21] - 2026-10-17
 
 ### Fixed
