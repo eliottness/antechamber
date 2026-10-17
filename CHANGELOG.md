@@ -41,6 +41,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - OmO Compatibility, a second bundled OpenChamber extension (1.24 or newer) with no code or permissions. It heads
   eval cards with `JS Eval` or `Python Eval` and the cell's summary.
 
+### Added
+
+- Show the lines an OmO monitor matched in its monitor session, as they fire.
+
 ## [0.2.18] - 2026-10-17
 
 - test(endpoints): await the abort_bash dispatch instead of reading a flag (#27)

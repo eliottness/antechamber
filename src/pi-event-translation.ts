@@ -17,7 +17,7 @@ import type { ManagedSession } from "./sessions.js";
 import type { PiFileMessage } from "./session-history.js";
 import type { SessionStore } from "./session-store.js";
 import type { SubagentBridge } from "./subagents.js";
-import type { MonitorSessions } from "./monitor-sessions.js";
+import { MONITOR_NOTIFICATION, type MonitorSessions } from "./monitor-sessions.js";
 import {
   applyProviderToolResults,
   finishProviderToolParts,
@@ -508,6 +508,11 @@ export class PiEventTranslator {
     switch (ev.type) {
       case "message_start": {
         if (this.reconcileUser(s, ev)) return;
+        const custom = ev.message as Record<string, unknown> | undefined;
+        if (custom?.role === "custom" && custom.customType === MONITOR_NOTIFICATION) {
+          this.services.monitors.notify(s, custom);
+          return;
+        }
         const msg = ev.message as
           | { role?: string; provider?: unknown; model?: unknown; responseModel?: unknown }
           | undefined;
