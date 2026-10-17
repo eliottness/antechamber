@@ -16,12 +16,13 @@ import type {
 import type { ManagedSession } from "./sessions.js";
 import type { PiFileMessage } from "./session-history.js";
 import type { SessionStore } from "./session-store.js";
-import type { SubagentBridge } from "./subagents.js";
+import { evalAgentSession, type SubagentBridge } from "./subagents.js";
 import { MONITOR_NOTIFICATION, type MonitorSessions } from "./monitor-sessions.js";
 import {
   applyProviderToolResults,
   finishProviderToolParts,
   mapTool,
+  nestedToolParts,
   providerToolParts,
   resultText,
   toolFailed,
@@ -543,6 +544,11 @@ export class PiEventTranslator {
         }
         if (output.trim() !== "") part.state.metadata = { ...part.state.metadata, output };
         this.emitPart(s, part);
+        this.onNestedTools(
+          s,
+          part,
+          partial !== null && typeof partial === "object" && "details" in partial ? partial.details : undefined,
+        );
         return;
       }
       case "tool_execution_end": {
@@ -852,11 +858,14 @@ export class PiEventTranslator {
       const indices = new Map(
         [...streaming.parts].map(([index, part]) => [part.type === "tool" ? part.callID : part.id, index]),
       );
-      owner.parts.sort(
-        (a, b) =>
-          (indices.get(a.type === "tool" ? a.callID : a.id) ?? Infinity) -
-          (indices.get(b.type === "tool" ? b.callID : b.id) ?? Infinity),
-      );
+      const order = (part: OCPart) => {
+        const parent =
+          part.type === "tool" && part.state.status !== "pending" ? part.state.metadata?.parentCallID : undefined;
+        return (
+          indices.get(typeof parent === "string" ? parent : part.type === "tool" ? part.callID : part.id) ?? Infinity
+        );
+      };
+      owner.parts.sort((a, b) => order(a) - order(b));
     }
   }
 
@@ -967,6 +976,12 @@ export class PiEventTranslator {
         continue;
       }
       const part = callID !== undefined ? s.toolByCallId.get(callID) : undefined;
+      const parent =
+        part ??
+        s.messages
+          ?.flatMap((message) => message.parts)
+          .find((item): item is OCToolPart => item.type === "tool" && item.callID === callID);
+      if (parent !== undefined) this.onNestedTools(s, parent, tr.details);
       if (!part || callID === undefined) continue;
       s.toolByCallId.delete(callID);
       s.todoBridge?.finish(part, toolFailed(tr));
@@ -983,6 +998,22 @@ export class PiEventTranslator {
   /** The agent process is gone, and its background shells with it: end cards still waiting on them. */
   settleBackground(s: ManagedSession): void {
     for (const part of settleBackground(s.messages ?? [], Date.now())) this.emitPart(s, part);
+  }
+
+  private onNestedTools(s: ManagedSession, parent: OCToolPart, details: unknown): void {
+    const nested = nestedToolParts(parent, details, {
+      monitor: (args) => this.services.monitors.findChild(s.info.id, args),
+      agent: (args, claimed, after) => evalAgentSession(s.piSessionId ?? s.restored?.piSessionId, args, claimed, after),
+    });
+    if (nested.length === 0) return;
+    const owner = s.messages?.find((message) => message.info.id === parent.messageID);
+    if (owner === undefined) return;
+    for (const [index, part] of nested.entries()) {
+      const existing = owner.parts.findIndex((item) => item.id === part.id);
+      if (existing >= 0) owner.parts.splice(existing, 1);
+      owner.parts.splice(owner.parts.indexOf(parent) + 1 + index, 0, part);
+      this.emitPart(s, part);
+    }
   }
 
   /** Complete an ended assistant message whose completion waited on its tools; true when it changed. */
