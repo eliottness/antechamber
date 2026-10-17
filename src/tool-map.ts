@@ -235,6 +235,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
   const start = parent.state.status === "pending" ? 0 : parent.state.time.start;
   const claimed = new Set<string>();
   details.toolCalls.forEach((entry: unknown, index) => {
+    let failure: string | undefined;
     if (
       !record(entry) ||
       (entry.name !== "monitor" && entry.name !== "__agent__" && entry.name !== "task") ||
@@ -288,6 +289,9 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
         { description, prompt, type },
         found?.sessionID,
       );
+      // OmO writes the task record before agent() returns, but records a refused spawn as ok with no record.
+      if (entry.ok && sessions.agent !== undefined && found === undefined)
+        failure = "OmO started no subagent for this call (agent() needs an agent type or a category)";
     }
     const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
     const callID = `${encodeURIComponent(parent.callID)}:${key}`;
@@ -305,13 +309,14 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       type: "tool",
       callID: `nested:${callID}`,
       tool: mapped.tool,
-      state: entry.ok
-        ? { ...state, status: "completed" }
-        : {
-            ...state,
-            status: "error",
-            error: typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed",
-          },
+      state:
+        entry.ok && failure === undefined
+          ? { ...state, status: "completed" }
+          : {
+              ...state,
+              status: "error",
+              error: failure ?? (typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed"),
+            },
     });
   });
   return parts;

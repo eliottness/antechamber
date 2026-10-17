@@ -206,8 +206,10 @@ test("JSONL history rebuilds subagent cards without shifting previously saved na
     owner.parts.map((part) => part.id),
     ["prt_before", "prt_eval", ...cards.map((part) => part.id), "prt_sibling", "prt_after"],
   );
-  assert.ok(cards[0]?.state.status === "completed");
-  assert.equal(cards[0].state.metadata?.sessionID, undefined, "no task record, so nothing to open");
+  // No task record: OmO started no subagent, so the card is failed and opens nothing.
+  assert.ok(cards[0]?.state.status === "error");
+  assert.match(cards[0].state.error, /OmO started no subagent/);
+  assert.equal(cards[0].state.metadata?.sessionID, undefined);
   assert.equal(cards[0].state.time.end - cards[0].state.time.start, 284);
   managed.tree.messageParts.msg_saved = owner.parts.map((part) => part.id);
   assert.deepEqual(parsePiSessionText(managed, "omo", history), messages);
@@ -285,6 +287,22 @@ test("a background tool.task call inside eval opens the task its start notice na
   assert.equal(card.state.metadata?.agentTitle, "Quick Agent");
   assert.equal(card.state.metadata?.agentSubtitle, "qa-bg-alpha");
   assert.equal(card.state.metadata?.sessionID, ocIdFor("st_01a14c1d"));
+});
+
+test("an agent() call OmO recorded as ok but started no task for is a failed card", () => {
+  // Shape from a preview session, 2026-10-17: agent() without an agent type is refused inside OmO's task
+  // tool, yet codemode records the call as ok and no task record is written.
+  const call = {
+    name: "__agent__",
+    ok: true,
+    durationMs: 9,
+    callId: "a",
+    args: { prompt: "Reply ALPHA_OK", label: "qa-alpha" },
+  };
+  const [refused] = nestedToolParts(parent, { toolCalls: [call] }, { agent: () => undefined });
+  assert.ok(refused?.state.status === "error");
+  assert.match(refused.state.error, /OmO started no subagent/);
+  assert.equal(refused.state.metadata?.agentSubtitle, "qa-alpha");
 });
 
 // Shapes from a raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the recorded
