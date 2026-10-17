@@ -30,6 +30,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
   created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
   to create session" with the original error hidden.
 
+### Added
+
+- Show completed calls made inside eval as individual tool cards, with their recorded previews, both live and after
+  reloading session history.
+
 ## [0.2.18] - 2026-10-17
 
 - test(endpoints): await the abort_bash dispatch instead of reading a flag (#27)

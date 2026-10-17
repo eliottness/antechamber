@@ -129,6 +129,53 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
   };
 }
 
+/** Finished eval calls, from the raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
+ * RPC exposes only resultPreview, not the nested call's full output or start time.
+ */
+export function nestedToolParts(parent: OCToolPart, details: unknown): OCToolPart[] {
+  if (!record(details) || !Array.isArray(details.toolCalls)) return [];
+  const parts: OCToolPart[] = [];
+  const start = parent.state.status === "pending" ? 0 : parent.state.time.start;
+  details.toolCalls.forEach((entry: unknown, index) => {
+    if (
+      !record(entry) ||
+      typeof entry.name !== "string" ||
+      entry.name === "task" ||
+      typeof entry.ok !== "boolean" ||
+      typeof entry.durationMs !== "number" ||
+      !Number.isFinite(entry.durationMs) ||
+      entry.durationMs < 0
+    )
+      return;
+    const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
+    const callID = `${encodeURIComponent(parent.callID)}:${key}`;
+    const mapped = mapTool(entry.name, entry.args);
+    const state = {
+      input: mapped.input,
+      title: mapped.title,
+      output: typeof entry.resultPreview === "string" ? entry.resultPreview : "",
+      metadata: { ...mapped.metadata, nested: true, parentCallID: parent.callID, durationMs: entry.durationMs },
+      time: { start, end: start + entry.durationMs },
+    };
+    parts.push({
+      id: `prt_${parent.sessionID}_nested_${callID}`,
+      sessionID: parent.sessionID,
+      messageID: parent.messageID,
+      type: "tool",
+      callID: `nested:${callID}`,
+      tool: mapped.tool,
+      state: entry.ok
+        ? { ...state, status: "completed" }
+        : {
+            ...state,
+            status: "error",
+            error: typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed",
+          },
+    });
+  });
+  return parts;
+}
+
 /** JSON first, then the literal-only Python repr used by older session files.
  * Never execute provider content; invalid or incomplete literals are skipped.
  */

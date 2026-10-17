@@ -28,6 +28,7 @@ let leaf = entries.at(-1)?.id ?? null;
 let name = entries.filter((e) => e.type === "session_info").at(-1)?.name ?? process.env.ANTECHAMBER_TEST_NATIVE_TITLE;
 let active;
 let thinkingLevel = entries.filter((e) => e.type === "thinking_level_change").at(-1)?.thinkingLevel ?? "medium";
+let nestedEntries;
 // OmO cancels a compaction when its tool set changes (e.g. MCP servers connecting after startup).
 let cancelledCompacts = Number(process.env.ANTECHAMBER_TEST_CANCELLED_COMPACTS ?? 0);
 let heldCompact;
@@ -74,6 +75,45 @@ const start = (cmd) => {
   active = cmd;
   send({ type: "agent_start" });
   user(cmd);
+  if (cmd.message === "nested-eval" || cmd.message === "nested-final") {
+    // Frame shapes: raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
+    // Nested calls have no execution frames of their own; previews arrive after each call finishes.
+    nestedEntries = readFileSync(new URL("./eval-nested.jsonl", import.meta.url), "utf8")
+      .trim()
+      .split("\n")
+      .map(JSON.parse);
+    const message = nestedEntries.find((entry) => entry.id === "nested-assistant").message;
+    send({ type: "message_start", message, clientMessageId: cmd.clientMessageId });
+    for (const [contentIndex, block] of message.content.entries()) {
+      send({
+        type: "message_update",
+        assistantMessageEvent:
+          block.type === "toolCall"
+            ? { type: "toolcall_end", contentIndex, toolCall: block }
+            : { type: "text_end", contentIndex, content: block.text },
+      });
+    }
+    record("message", { message }, 2000);
+    send({ type: "message_end", message });
+    const args = message.content[1].arguments;
+    send({ type: "tool_execution_start", toolCallId: "eval-parent", toolName: "eval", args });
+    if (cmd.message === "nested-eval") {
+      const result = nestedEntries.find((entry) => entry.id === "nested-result").message;
+      const partialResult = {
+        content: [{ type: "text", text: "1/1 cells running\n[1] js Nested calls running" }],
+        details: {
+          ...result.details,
+          durationMs: 0,
+          toolCallCount: 2,
+          toolCalls: result.details.toolCalls.slice(0, 2),
+          cells: result.details.cells.map((cell) => ({ ...cell, status: "running", output: "", durationMs: 0 })),
+        },
+      };
+      for (let update = 0; update < 2; update++)
+        send({ type: "tool_execution_update", toolCallId: "eval-parent", toolName: "eval", args, partialResult });
+    }
+    return;
+  }
   if (cmd.message === "interrupted-work") {
     const message = {
       role: "assistant",
@@ -176,6 +216,28 @@ createInterface({ input: process.stdin })
       if (active) assistant("stop", active);
       active = undefined;
       for (const next of queued.splice(0)) start(next);
+      send({ type: "agent_end" });
+      send({ type: "agent_idle" });
+    }
+    if (cmd.type === "nested_finish" && nestedEntries) {
+      const result = nestedEntries.find((entry) => entry.id === "nested-result").message;
+      const sibling = nestedEntries.find((entry) => entry.id === "sibling-result").message;
+      if (cmd.via !== "turn") {
+        const { details, ...withoutDetails } = result;
+        send({
+          type: "tool_execution_end",
+          toolCallId: result.toolCallId,
+          toolName: result.toolName,
+          result: cmd.via === "late" ? withoutDetails : result,
+          isError: false,
+        });
+      }
+      record("message", { message: result }, 12000);
+      record("message", { message: sibling }, 12001);
+      send({ type: "turn_end", toolResults: [result, sibling] });
+      assistant("stop", active);
+      active = undefined;
+      nestedEntries = undefined;
       send({ type: "agent_end" });
       send({ type: "agent_idle" });
     }
