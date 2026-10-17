@@ -666,13 +666,16 @@ export class SubagentBridge {
   }
 
   private publishRefresh(child: Child, state: RefreshState, publish: boolean): void {
-    if (!publish) return;
-    const before = new Map(state.previousMessages.map((message) => [message.info.id, JSON.stringify(message)]));
-    for (const message of child.session.messages ?? []) {
-      if (before.get(message.info.id) === JSON.stringify(message)) continue;
-      this.emit(child.session.info.directory, { type: "message.updated", properties: { info: message.info } });
-      for (const part of message.parts) this.emitPart(child.session, part);
+    if (publish) {
+      const before = new Map(state.previousMessages.map((message) => [message.info.id, JSON.stringify(message)]));
+      for (const message of child.session.messages ?? []) {
+        if (before.get(message.info.id) === JSON.stringify(message)) continue;
+        this.emit(child.session.info.directory, { type: "message.updated", properties: { info: message.info } });
+        for (const part of message.parts) this.emitPart(child.session, part);
+      }
     }
+    // Status transitions go out even on a quiet refresh (adoption, first transcript read):
+    // later refreshes see no transition, so OpenChamber would never learn the child is busy.
     if (state.previousStatus !== child.session.status.type) {
       this.emit(child.session.info.directory, {
         type: "session.status",

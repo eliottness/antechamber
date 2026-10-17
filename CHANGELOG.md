@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show a session as running in OpenChamber while a subagent it started from `eval` (such as an OmO Graph run) is
+  still working. The adapter marked such a child busy without announcing it, so the parent's running dot stayed off.
+
 ## [0.2.19] - 2026-10-17
 
 ### Fixed

@@ -698,6 +698,23 @@ test("task spawned without a task tool call is listed and announced before any d
   assert.ok(events.some((event) => event.type === "session.created" && event.properties.info.id === wokenID));
 });
 
+test("a running task spawned without a task tool call announces busy when the list adopts it", (t) => {
+  const { manager, store, directory, events } = setup(t);
+  liveRecord(store, "st_running", "running", "still working");
+  const childID = ocIdFor("st_running");
+  assert.ok(manager.list(directory).some((session) => session.id === childID));
+  assert.deepEqual(manager.statuses()[childID], { type: "busy" });
+  // OpenChamber lights the parent's running dot from this event; later refreshes see no transition.
+  assert.ok(
+    events.some(
+      (event) =>
+        event.type === "session.status" &&
+        event.properties.sessionID === childID &&
+        event.properties.status.type === "busy",
+    ),
+  );
+});
+
 test("after a restart a wake reaches a registry-only child and nested eval tasks find their parent", async (t) => {
   const { manager, store, state, directory } = setup(t);
   liveRecord(store, "st_outer", "running", "outer child");
