@@ -425,7 +425,12 @@ export class PiRpcClient extends EventEmitter {
       try {
         process.kill(target, sig);
       } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ESRCH") return;
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        if (code === "ESRCH") return;
+        // macOS answers a group whose only member is an exited, not yet reaped leader with EPERM,
+        // not ESRCH. The leader shares our uid, so a live one is always signalable: EPERM on our
+        // own group means nothing is left alive, and the pending "exit" event completes disposal.
+        if (code === "EPERM" && target < 0) return;
         throw error;
       }
     };

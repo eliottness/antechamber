@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Report the real agent startup failure on macOS instead of `kill EPERM`. When OmO exited while a session was being
+  created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
+  to create session" with the original error hidden.
+
 ## [0.2.18] - 2026-10-17
 
 - test(endpoints): await the abort_bash dispatch instead of reading a flag (#27)
