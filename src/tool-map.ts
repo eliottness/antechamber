@@ -171,17 +171,48 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
 export interface NestedSessions {
   /** The monitor child session for a recorded `monitor` call. */
   monitor?: (args: Record<string, unknown>) => string | undefined;
-  /** The subagent session for a recorded `agent()` call; `claimed` keeps repeated calls apart. */
-  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => string | undefined;
+  /** The subagent a recorded `agent()` call started; `claimed` keeps repeated calls apart. */
+  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => EvalAgent | undefined;
 }
 
-/** A subagent-style card, as OpenChamber draws `task`: it opens `sessionID` when there is one. */
-function nestedSubagent(description: string, prompt: string, type: string, sessionID: string | undefined): MappedTool {
+/** The task record behind an `agent()` call made inside eval. */
+export interface EvalAgent {
+  sessionID: string;
+  name?: string;
+  summary?: string;
+  agentType?: string;
+}
+
+/** The prompt's first line, cut at a word boundary near 60 characters. */
+function shortPrompt(prompt: string): string | undefined {
+  const line = prompt
+    .split("\n")
+    .find((text) => text.trim() !== "")
+    ?.trim();
+  if (line === undefined || line.length <= 60) return line;
+  const cut = line.slice(0, 60);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 30 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/**
+ * A subagent-style card, as OpenChamber draws `task`: it opens `sessionID` when there is one.
+ * `agentTitle`/`agentSubtitle` feed the OmO Compatibility extension's `task` header rule.
+ */
+function nestedSubagent(
+  heading: { title: string; subtitle: string },
+  input: { description: string; prompt: string; type: string },
+  sessionID: string | undefined,
+): MappedTool {
   return {
     tool: "task",
-    input: { description, prompt, subagent_type: type },
-    title: description.slice(0, 60),
-    metadata: sessionID !== undefined ? { sessionID } : {},
+    input: { description: input.description, prompt: input.prompt, subagent_type: input.type },
+    title: input.description.slice(0, 60),
+    metadata: {
+      agentTitle: heading.title,
+      agentSubtitle: heading.subtitle,
+      ...(sessionID !== undefined ? { sessionID } : {}),
+    },
   };
 }
 
@@ -211,15 +242,31 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       if (sessionID === undefined) return; // nothing to open; the cell's code already shows the call
       const command = typeof args.command === "string" ? args.command : "";
       const label = typeof args.description === "string" && args.description !== "" ? args.description : command;
-      mapped = nestedSubagent(`Monitor: ${label}`, command, "monitor", sessionID);
+      mapped = nestedSubagent(
+        { title: "Monitor", subtitle: label },
+        { description: `Monitor: ${label}`, prompt: command, type: "monitor" },
+        sessionID,
+      );
     } else {
       const prompt = typeof args.prompt === "string" ? args.prompt : "";
-      const label = [args.label, args.description, prompt.split("\n")[0]].find(
-        (value): value is string => typeof value === "string" && value !== "",
+      const found = entry.ok ? sessions.agent?.(args, claimed, start) : undefined;
+      const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+      const description =
+        text(args.label) ??
+        text(args.description) ??
+        found?.summary ??
+        found?.name ??
+        shortPrompt(prompt) ??
+        "subagent";
+      const type = text(args.agent) ?? found?.agentType ?? "subagent";
+      mapped = nestedSubagent(
+        {
+          title: type === "subagent" ? "Subagent" : `${type.charAt(0).toUpperCase()}${type.slice(1)} Agent`,
+          subtitle: description,
+        },
+        { description, prompt, type },
+        found?.sessionID,
       );
-      const sessionID = entry.ok ? sessions.agent?.(args, claimed, start) : undefined;
-      const type = typeof args.agent === "string" && args.agent !== "" ? args.agent : "subagent";
-      mapped = nestedSubagent(label ?? "subagent", prompt, type, sessionID);
     }
     const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
     const callID = `${encodeURIComponent(parent.callID)}:${key}`;

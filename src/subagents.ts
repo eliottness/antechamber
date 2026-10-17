@@ -17,7 +17,7 @@ import { basename, dirname, join } from "node:path";
 import { piAgentDir } from "./agent-dir.js";
 import { syncSessionCost } from "./pi-event-translation.js";
 import { ocIdFor, SessionPersistenceError, type SessionStore } from "./session-store.js";
-import { mapTool, resultText, toolMappers, type ToolResult } from "./tool-map.js";
+import { type EvalAgent, mapTool, resultText, toolMappers, type ToolResult } from "./tool-map.js";
 import type { ManagedSession } from "./sessions.js";
 import type { OCEvent, OCMessageWithParts, OCSession, OCToolPart } from "./types.js";
 import { ADAPTER_VERSION } from "./version.js";
@@ -225,9 +225,9 @@ export function evalAgentSession(
   args: Record<string, unknown>,
   claimed: Set<string>,
   after: number,
-): string | undefined {
+): EvalAgent | undefined {
   if (parentPiId === undefined || typeof args.prompt !== "string") return undefined;
-  let best: { id: string; created: number } | undefined;
+  let best: { id: string; created: number; data: Record<string, unknown> } | undefined;
   for (const { id, path } of taskFiles()) {
     if (claimed.has(id)) continue;
     const data = childRecord(id, path);
@@ -238,11 +238,21 @@ export function evalAgentSession(
     const created = typeof data.created_at === "string" ? Date.parse(data.created_at) : Number.NaN;
     // The cell's start is taken when its card opens, a moment after OmO starts it.
     if (!Number.isFinite(created) || created < after - 5_000) continue;
-    if (best === undefined || created < best.created) best = { id, created };
+    if (best === undefined || created < best.created) best = { id, created, data };
   }
   if (best === undefined) return undefined;
   claimed.add(best.id);
-  return ocIdFor(best.id);
+  const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+  // OmO names an unlabelled task after its id, which says nothing.
+  const name = text(best.data.name);
+  const summary = text(best.data.task_summary);
+  const agentType = text(best.data.agent_type);
+  return {
+    sessionID: ocIdFor(best.id),
+    ...(name !== undefined && name !== best.id ? { name } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+    ...(agentType !== undefined ? { agentType } : {}),
+  };
 }
 
 export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {

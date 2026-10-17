@@ -99,6 +99,8 @@ test("a subagent started inside eval becomes a subagent card live, and other inn
   assert.ok(card?.state.status === "completed");
   assert.equal(card.tool, "task");
   assert.deepEqual(card.state.input, { description: "node-1", prompt: "Reply NODE 1", subagent_type: "explore" });
+  assert.equal(card.state.metadata?.agentTitle, "Explore Agent");
+  assert.equal(card.state.metadata?.agentSubtitle, "node-1");
   assert.equal(card.state.metadata?.sessionID, ocIdFor("st_nested_a"));
   assert.equal(card.state.output, "");
   assert.equal(managed.toolByCallId.has(card.callID), false);
@@ -206,18 +208,56 @@ test("JSONL history rebuilds subagent cards without shifting previously saved na
   assert.equal(managed.toolByCallId.size, 0);
 });
 
-test("agent() cards are labelled by their label, then description, then the prompt's first line", () => {
-  const [labelled, described, prompted] = nestedToolParts(parent, {
+test("agent() cards name the type from the agent, and describe from label, description or prompt", () => {
+  const long = "Investigate the failing background shell and report what the finish notice carried";
+  const [typed, described, prompted] = nestedToolParts(parent, {
     toolCalls: [
-      { name: "__agent__", ok: true, durationMs: 5, callId: "a", args: { prompt: "Reply OK", label: "graph-node-1" } },
+      {
+        name: "__agent__",
+        ok: true,
+        durationMs: 5,
+        callId: "a",
+        args: { prompt: "Reply OK", label: "graph-node-1", agent: "explore" },
+      },
       { name: "__agent__", ok: true, durationMs: 5, callId: "b", args: { prompt: "x", description: "Check docs" } },
-      { name: "__agent__", ok: true, durationMs: 5, callId: "c", args: { prompt: "First line\nsecond" } },
+      { name: "__agent__", ok: true, durationMs: 5, callId: "c", args: { prompt: `${long}\nsecond` } },
     ],
   });
-  assert.equal(labelled?.state.status === "completed" && labelled.state.title, "graph-node-1");
-  assert.equal(described?.state.status === "completed" && described.state.title, "Check docs");
-  assert.equal(prompted?.state.status === "completed" && prompted.state.title, "First line");
-  assert.equal(labelled?.state.input.subagent_type, "subagent");
+  // The agent type heads the card; the label, description or first prompt line describes it.
+  assert.ok(
+    typed?.state.status === "completed" &&
+      described?.state.status === "completed" &&
+      prompted?.state.status === "completed",
+  );
+  assert.equal(typed.state.metadata?.agentTitle, "Explore Agent");
+  assert.equal(typed.state.metadata?.agentSubtitle, "graph-node-1");
+  assert.equal(typed.state.input.subagent_type, "explore");
+  assert.equal(described.state.metadata?.agentTitle, "Subagent");
+  assert.equal(described.state.metadata?.agentSubtitle, "Check docs");
+  // A bare prompt is cut at a word boundary near 60 characters.
+  assert.equal(prompted.state.metadata?.agentSubtitle, "Investigate the failing background shell and report what…");
+  assert.equal(prompted.state.input.subagent_type, "subagent");
+});
+
+test("an unlabelled agent() card takes its name and type from the resolved task record", () => {
+  const [card] = nestedToolParts(
+    parent,
+    { toolCalls: [{ name: "__agent__", ok: true, durationMs: 5, callId: "a", args: { prompt: "Do the thing" } }] },
+    {
+      agent: () => ({
+        sessionID: "ses_child",
+        name: "graph-node-2",
+        summary: "Audit the config loader",
+        agentType: "librarian",
+      }),
+    },
+  );
+  // The record's summary describes the card and its agent type heads it; the session opens.
+  assert.ok(card?.state.status === "completed");
+  assert.equal(card.state.metadata?.agentTitle, "Librarian Agent");
+  assert.equal(card.state.metadata?.agentSubtitle, "Audit the config loader");
+  assert.equal(card.state.input.subagent_type, "librarian");
+  assert.equal(card.state.metadata?.sessionID, "ses_child");
 });
 
 // Shapes from a raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the recorded
@@ -288,6 +328,8 @@ test("a monitor started inside eval becomes a subagent card that opens its monit
   assert.ok(card?.state.status === "completed");
   assert.equal(card.tool, "task");
   assert.equal(card.state.input.description, "Monitor: qa monitor");
+  assert.equal(card.state.metadata?.agentTitle, "Monitor");
+  assert.equal(card.state.metadata?.agentSubtitle, "qa monitor");
   assert.equal(card.state.metadata?.sessionID, childID);
   assert.equal(card.state.output, "");
 });

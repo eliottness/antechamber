@@ -21,6 +21,11 @@
           "match": "bash",
           "title": "{metadata.evalTitle}",
           "subtitle": "{metadata.evalSubtitle}"
+        },
+        {
+          "match": "task",
+          "title": "{metadata.agentTitle}",
+          "subtitle": "{metadata.agentSubtitle}"
         }
       ]
     }
