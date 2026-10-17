@@ -7,6 +7,7 @@ import type { ManagedSession } from "../src/sessions.js";
 import { MONITOR_STATE_EVENT } from "../src/monitor-sessions.js";
 import { ocIdFor } from "../src/session-store.js";
 import { nestedToolParts } from "../src/tool-map.js";
+import { evalAgentSession } from "../src/subagents.js";
 import type { OCMessageWithParts, OCToolPart } from "../src/types.js";
 import { bugHarness } from "./bug-harness.js";
 
@@ -46,7 +47,7 @@ function session(): ManagedSession {
 }
 
 /** A task record as OmO writes it for agent() inside eval (senpi-task/tasks/st_*.json, 2026-10-17). */
-function writeTask(root: string, id: string, parentPiId: string, createdAt: string): void {
+function writeTask(root: string, id: string, parentPiId: string, createdAt: string, prompt = "Reply NODE 1"): void {
   const dir = join(root, "agent", "projects", "nested-project", "senpi-task", "tasks");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -58,7 +59,7 @@ function writeTask(root: string, id: string, parentPiId: string, createdAt: stri
       name: "node-1",
       agent_type: "explore",
       created_at: createdAt,
-      spawn_spec: { prompt: "Reply NODE 1" },
+      spawn_spec: { prompt },
     }),
   );
 }
@@ -206,9 +207,8 @@ test("JSONL history rebuilds subagent cards without shifting previously saved na
     owner.parts.map((part) => part.id),
     ["prt_before", "prt_eval", ...cards.map((part) => part.id), "prt_sibling", "prt_after"],
   );
-  // No task record: OmO started no subagent, so the card is failed and opens nothing.
-  assert.ok(cards[0]?.state.status === "error");
-  assert.match(cards[0].state.error, /OmO started no subagent/);
+  // No parent identity to search records with: the card cannot be linked, but nothing proves it failed.
+  assert.ok(cards[0]?.state.status === "completed");
   assert.equal(cards[0].state.metadata?.sessionID, undefined);
   assert.equal(cards[0].state.time.end - cards[0].state.time.start, 284);
   managed.tree.messageParts.msg_saved = owner.parts.map((part) => part.id);
@@ -299,12 +299,80 @@ test("an agent() call OmO recorded as ok but started no task for is a failed car
     callId: "a",
     args: { prompt: "Reply ALPHA_OK", label: "qa-alpha" },
   };
-  const [refused] = nestedToolParts(parent, { toolCalls: [call] }, { agent: () => undefined });
+  const [refused] = nestedToolParts(parent, { toolCalls: [call] }, { agent: () => null });
   assert.ok(refused?.state.status === "error");
   // Not a task card: OpenChamber would draw that like a success and hide the error.
   assert.equal(refused.tool, "agent");
   assert.match(refused.state.error, /OmO started no subagent/);
   assert.equal(refused.state.metadata?.agentSubtitle, "qa-alpha");
+});
+
+test("an agent() lookup that cannot run keeps a completed card instead of calling the spawn failed", () => {
+  const call = { name: "__agent__", ok: true, durationMs: 9, callId: "a", args: { prompt: "Reply OK", label: "x" } };
+  const [unknown] = nestedToolParts(parent, { toolCalls: [call] }, { agent: () => undefined });
+  assert.equal(unknown?.tool, "task");
+  assert.equal(unknown?.state.status, "completed");
+});
+
+test("task records match prompts codemode cut at 512 code points or extended with schema instructions", async (t) => {
+  // senpi-codemode call-capture.ts caps recorded strings and appends "…"; agent-bridge.ts appends schema
+  // instructions to the prompt it sends. Both records belong to calls that did start a subagent.
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  const piId = h.manager.get(info.id)?.piSessionId;
+  assert.ok(piId);
+  const now = Date.now();
+  const long = "x".repeat(600);
+  writeTask(h.root, "st_long", piId, new Date(now).toISOString(), long);
+  writeTask(
+    h.root,
+    "st_schema",
+    piId,
+    new Date(now).toISOString(),
+    "Classify\n\nRespond ONLY with JSON matching this JSON-Schema:\n{}",
+  );
+  const claimed = new Set<string>();
+  const cut = evalAgentSession(piId, { prompt: `${long.slice(0, 512)}…`, label: "node-1" }, claimed, now);
+  assert.equal(cut?.sessionID, ocIdFor("st_long"));
+  assert.equal(
+    evalAgentSession(piId, { prompt: "Classify", label: "node-1" }, claimed, now)?.sessionID,
+    ocIdFor("st_schema"),
+  );
+  assert.equal(
+    evalAgentSession(piId, { prompt: "Classify", label: "node-1" }, claimed, now),
+    null,
+    "both records claimed",
+  );
+  assert.equal(evalAgentSession(undefined, { prompt: "Classify" }, new Set(), now), undefined);
+});
+
+test("a tool.task preview cut inside or before its task id links through the task record instead", () => {
+  // OmO keeps 160 code points of the result, so a long reply can drop or split "[task_id: st_x - ".
+  const entry = (preview: string) => ({
+    name: "task",
+    ok: true,
+    durationMs: 9,
+    callId: "t",
+    args: { category: "quick", prompt: "Reply ALPHA_OK" },
+    resultPreview: preview,
+  });
+  const lookups: Record<string, unknown>[] = [];
+  const sessions = {
+    agent: (args: Record<string, unknown>) => {
+      lookups.push(args);
+      return { sessionID: "ses_from_record" };
+    },
+  };
+  const [split] = nestedToolParts(parent, { toolCalls: [entry(`${"y".repeat(140)} [task_id: st_01a1…`)] }, sessions);
+  const [dropped] = nestedToolParts(parent, { toolCalls: [entry(`${"y".repeat(159)}…`)] }, sessions);
+  const [whole] = nestedToolParts(parent, { toolCalls: [entry("OK [task_id: st_01a14c1a - continue")] }, sessions);
+  assert.ok(
+    split?.state.status === "completed" && dropped?.state.status === "completed" && whole?.state.status === "completed",
+  );
+  assert.equal(split.state.metadata?.sessionID, "ses_from_record");
+  assert.equal(dropped.state.metadata?.sessionID, "ses_from_record");
+  assert.equal(whole.state.metadata?.sessionID, ocIdFor("st_01a14c1a"));
+  assert.deepEqual(lookups, [{ prompt: "Reply ALPHA_OK" }, { prompt: "Reply ALPHA_OK" }]);
 });
 
 // Shapes from a raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the recorded

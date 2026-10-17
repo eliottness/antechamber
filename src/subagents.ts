@@ -216,16 +216,28 @@ export function findTaskBySession(sessionId: string): { path: string; data: Reco
 }
 
 /**
+ * Whether a recorded argument names a task record's value. Codemode caps recorded strings at 512 code
+ * points and ends a cut one with "…" (call-capture.ts), and a schema agent() call sends its prompt with
+ * JSON instructions appended (agent-bridge.ts toTaskParams), so both match as prefixes.
+ */
+function recordedMatch(recorded: string, stored: unknown): boolean {
+  if (typeof stored !== "string") return false;
+  if (stored === recorded) return true;
+  return recorded.endsWith("…") ? stored.startsWith(recorded.slice(0, -1)) : stored.startsWith(`${recorded}\n\n`);
+}
+
+/**
  * The session of a subagent an eval cell started with `agent()`. The recorded call keeps only its
  * arguments, so the task record is found by parent, prompt and label: the oldest one created since
- * the cell started and not yet claimed by an earlier call of the same cell.
+ * the cell started and not yet claimed by an earlier call of the same cell. `null` means the parent
+ * was searched and no record matched; `undefined` means it could not be searched.
  */
 export function evalAgentSession(
   parentPiId: string | undefined,
   args: Record<string, unknown>,
   claimed: Set<string>,
   after: number,
-): EvalAgent | undefined {
+): EvalAgent | null | undefined {
   if (parentPiId === undefined || typeof args.prompt !== "string") return undefined;
   let best: { id: string; created: number; data: Record<string, unknown> } | undefined;
   for (const { id, path } of taskFiles()) {
@@ -233,14 +245,14 @@ export function evalAgentSession(
     const data = childRecord(id, path);
     if (data?.parent_session_id !== parentPiId) continue;
     const spec = record(data.spawn_spec) ? data.spawn_spec : {};
-    if (spec.prompt !== args.prompt) continue;
-    if (typeof args.label === "string" && data.name !== args.label) continue;
+    if (!recordedMatch(args.prompt, spec.prompt)) continue;
+    if (typeof args.label === "string" && !recordedMatch(args.label, data.name)) continue;
     const created = typeof data.created_at === "string" ? Date.parse(data.created_at) : Number.NaN;
     // The cell's start is taken when its card opens, a moment after OmO starts it.
     if (!Number.isFinite(created) || created < after - 5_000) continue;
     if (best === undefined || created < best.created) best = { id, created, data };
   }
-  if (best === undefined) return undefined;
+  if (best === undefined) return null;
   claimed.add(best.id);
   const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
   // OmO names an unlabelled task after its id, which says nothing.

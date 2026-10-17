@@ -173,7 +173,7 @@ export interface NestedSessions {
   /** The monitor child session for a recorded `monitor` call. */
   monitor?: (args: Record<string, unknown>) => string | undefined;
   /** The subagent a recorded `agent()` call started; `claimed` keeps repeated calls apart. */
-  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => EvalAgent | undefined;
+  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => EvalAgent | null | undefined;
 }
 
 /** The task record behind an `agent()` call made inside eval. */
@@ -189,8 +189,11 @@ function agentTitle(type: string): string {
   return type === "subagent" ? "Subagent" : `${type.charAt(0).toUpperCase()}${type.slice(1)} Agent`;
 }
 
-/** The task id OmO puts in a `task` result: "[task_id: st_x" when it waited, "(st_x, running" in the background. */
-const TASK_ID = /\[task_id: (st_[A-Za-z0-9_-]+)|\((st_[A-Za-z0-9_-]+), running\b/;
+/**
+ * The task id OmO puts in a `task` result: "[task_id: st_x - " when it waited, "(st_x, running" in the
+ * background. The preview is capped at 160 code points, so only an id followed by its delimiter is whole.
+ */
+const TASK_ID = /\[task_id: (st_[A-Za-z0-9_-]+) - |\((st_[A-Za-z0-9_-]+), running\b/;
 
 /** The prompt's first line, cut at a word boundary near 60 characters. */
 function shortPrompt(prompt: string): string | undefined {
@@ -262,12 +265,22 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       const prompt = text(args.prompt) ?? "";
       const match = typeof entry.resultPreview === "string" ? TASK_ID.exec(entry.resultPreview) : null;
       const taskID = match?.[1] ?? match?.[2];
+      if (taskID !== undefined) claimed.add(taskID);
+      // A long reply pushes the id out of the preview; the task record still names the session.
+      const sessionID = !entry.ok
+        ? undefined
+        : taskID !== undefined
+          ? ocIdFor(taskID)
+          : (
+              sessions.agent?.({ prompt, ...(text(args.name) ? { label: args.name } : {}) }, claimed, start) ??
+              undefined
+            )?.sessionID;
       const description = text(args.task_summary) ?? text(args.description) ?? shortPrompt(prompt) ?? "subagent";
       const type = text(args.subagent_type) ?? text(args.category) ?? "subagent";
       mapped = nestedSubagent(
         { title: agentTitle(type), subtitle: description },
         { description, prompt, type },
-        entry.ok && taskID !== undefined ? ocIdFor(taskID) : undefined,
+        sessionID,
       );
     } else {
       const prompt = typeof args.prompt === "string" ? args.prompt : "";
@@ -290,7 +303,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
         found?.sessionID,
       );
       // OmO writes the task record before agent() returns, but records a refused spawn as ok with no record.
-      if (entry.ok && sessions.agent !== undefined && found === undefined)
+      if (entry.ok && found === null)
         failure = "OmO started no subagent for this call (agent() needs an agent type or a category)";
     }
     const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
