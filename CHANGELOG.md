@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep subagent sessions archived after an adapter restart. Archiving a parent with its subagents left the
+  subagents active as orphans once the adapter restarted.
+
 ## [0.2.15] - 2026-10-17
 
 ### Fixed

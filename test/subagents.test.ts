@@ -638,6 +638,37 @@ test("restart resolves archived children by id through real session and message 
   );
 });
 
+test("a child archived through the session route stays archived after a restart", async (t) => {
+  const { manager, parent, store, directory } = setup(t);
+  liveRecord(store, "st_child", "completed", "archived later");
+  start(manager, parent, { task_summary: "Archived child" });
+  result(manager, parent, { task_id: "st_child", status: "completed" });
+  await manager.disposeAll();
+  const childID = ocIdFor("st_child");
+  const query = `directory=${encodeURIComponent(directory)}`;
+  const first = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
+  await first.start();
+  const patched = await fetch(`${first.url}/session/${childID}?${query}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ time: { archived: 1234 } }),
+  });
+  assert.equal(patched.status, 200);
+  await first.stop();
+  const second = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
+  await second.start();
+  t.after(() => second.stop());
+  const listed = (await fetch(`${second.url}/session?${query}`).then((response) => response.json())) as Array<{
+    id: string;
+    time: { archived?: number };
+  }>;
+  assert.equal(listed.find((session) => session.id === childID)?.time.archived, 1234);
+  const active = (await fetch(`${second.url}/session?${query}&archived=false`).then((response) =>
+    response.json(),
+  )) as Array<{ id: string }>;
+  assert.ok(!active.some((session) => session.id === childID));
+});
+
 test("task spawned without a task tool call resolves from its record under the parent", (t) => {
   const { manager, parent, store, state } = setup(t);
   liveRecord(store, "st_eval", "completed", "spawned from eval");
