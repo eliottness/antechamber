@@ -3,12 +3,18 @@
 import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCAssistantMessage, OCMessageWithParts, OCModelRef, OCPart, OCToolPart, OCUserMessage } from "./types.js";
-import { applyProviderToolResults, finishProviderToolParts, mapTool, providerToolParts } from "./tool-map.js";
+import {
+  applyProviderToolResults,
+  finishProviderToolParts,
+  mapTool,
+  nestedToolParts,
+  providerToolParts,
+} from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
 import { userMessageModel } from "./thinking-levels.js";
 import { contextMessageID } from "./prompt-parts.js";
 import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree.js";
-import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
+import { evalAgentSession, taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
 import { compactionMessages, piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
 import {
@@ -489,6 +495,18 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         continue;
       }
       if (callID !== undefined) finishToolPart(part, m, callID, created);
+      const nested = nestedToolParts(part, m.details, {
+        agent: (args, claimed, after) =>
+          evalAgentSession(s.piSessionId ?? s.restored?.piSessionId, args, claimed, after),
+      });
+      const owner = out.find((message) => message.info.id === part.messageID);
+      if (owner !== undefined) {
+        for (const card of nested) {
+          const existing = owner.parts.findIndex((item) => item.id === card.id);
+          if (existing >= 0) owner.parts.splice(existing, 1);
+        }
+        owner.parts.splice(owner.parts.indexOf(part) + 1, 0, ...nested);
+      }
     }
     // system / custom entries are not rendered
   }
@@ -568,8 +586,15 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         sessionID,
         messageID: message.info.id,
       }));
-    const identities = s.tree.messageParts?.[message.info.id];
-    for (const [index, part] of message.parts.entries()) {
+    const nestedIDs = new Set(
+      message.parts.flatMap((part) =>
+        part.type === "tool" && part.state.status !== "pending" && part.state.metadata?.nested === true
+          ? [part.id]
+          : [],
+      ),
+    );
+    const identities = s.tree.messageParts?.[message.info.id]?.filter((identity) => !nestedIDs.has(identity));
+    for (const [index, part] of message.parts.filter((part) => !nestedIDs.has(part.id)).entries()) {
       const identity = identities?.[index];
       if (identity !== undefined) part.id = identity;
     }

@@ -154,6 +154,22 @@ export class MonitorSessions {
     }
   }
 
+  /**
+   * The child session of the newest watch a parent started with these monitor arguments.
+   * A monitor call recorded inside eval keeps only its arguments, not the `bash_N` id the
+   * child is keyed by, so command and description identify it.
+   */
+  findChild(parentID: string, args: Record<string, unknown>): string | undefined {
+    let found: Watch | undefined;
+    for (const watch of this.watches.values()) {
+      const { monitor } = watch;
+      if (watch.session.info.parentID !== parentID || monitor.command !== args.command) continue;
+      if (typeof args.description === "string" && monitor.description !== args.description) continue;
+      if (found === undefined || monitor.startedAtMs > found.monitor.startedAtMs) found = watch;
+    }
+    return found?.session.info.id;
+  }
+
   /** The agent process is gone: OmO's in-process watches died with it. */
   stopParent(parentID: string): void {
     for (const watch of this.watches.values()) {

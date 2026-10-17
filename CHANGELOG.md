@@ -12,6 +12,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Show completed background bash output and detached eval results in OpenChamber, including after reloading history.
   A card that started background work keeps running until that work finishes.
 
+### Added
+
+- Show subagents and monitors started inside an eval cell as subagent cards that open their session, live and after
+  reloading history. A failed `agent()` call keeps its error.
+
 ## [0.2.23] - 2026-10-17
 
 - feat(monitors): show matched lines in monitor sessions (#32)

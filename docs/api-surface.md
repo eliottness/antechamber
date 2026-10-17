@@ -368,7 +368,7 @@ OpenCode events with no adapter source are not emitted.
 |---|---|
 | `message_update` / `assistantMessageEvent: text_delta` | `message.part.delta` followed by `message.part.updated` snapshot |
 | `assistantMessageEvent: toolcall_start/delta/end` | `message.part.updated` (tool part; pending `{raw}` accumulates streamed JSON, running carries renderer inputs; eval and terminal controls use `bash` cards). Execution updates carry live `metadata.output`; completion supplies `output`. |
-| `turn_end` (`toolResults[]`) | `message.part.updated` (tool part, completed `{output}` or error per `isError`, matched by `toolCallId`) |
+| `turn_end` (`toolResults[]`) | `message.part.updated` (tool part, completed `{output}` or error per `isError`, matched by `toolCallId`; monitors and `agent()` calls in eval `details.toolCalls` also produce subagent cards, as on execution updates) |
 | `bash_execution_update` | unmapped; folded into tool parts above |
 | turn start / turn end | `session.status` (busy) / `session.idle` |
 | `extension_ui_request` (confirm/select/input) | `permission.asked` / `question.asked`, bridged through the approvals module (`src/approvals.ts`) |

@@ -215,6 +215,36 @@ export function findTaskBySession(sessionId: string): { path: string; data: Reco
   return undefined;
 }
 
+/**
+ * The session of a subagent an eval cell started with `agent()`. The recorded call keeps only its
+ * arguments, so the task record is found by parent, prompt and label: the oldest one created since
+ * the cell started and not yet claimed by an earlier call of the same cell.
+ */
+export function evalAgentSession(
+  parentPiId: string | undefined,
+  args: Record<string, unknown>,
+  claimed: Set<string>,
+  after: number,
+): string | undefined {
+  if (parentPiId === undefined || typeof args.prompt !== "string") return undefined;
+  let best: { id: string; created: number } | undefined;
+  for (const { id, path } of taskFiles()) {
+    if (claimed.has(id)) continue;
+    const data = childRecord(id, path);
+    if (data?.parent_session_id !== parentPiId) continue;
+    const spec = record(data.spawn_spec) ? data.spawn_spec : {};
+    if (spec.prompt !== args.prompt) continue;
+    if (typeof args.label === "string" && data.name !== args.label) continue;
+    const created = typeof data.created_at === "string" ? Date.parse(data.created_at) : Number.NaN;
+    // The cell's start is taken when its card opens, a moment after OmO starts it.
+    if (!Number.isFinite(created) || created < after - 5_000) continue;
+    if (best === undefined || created < best.created) best = { id, created };
+  }
+  if (best === undefined) return undefined;
+  claimed.add(best.id);
+  return ocIdFor(best.id);
+}
+
 export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {
   if (!taskId(id)) return undefined;
   for (const store of taskStores()) {
