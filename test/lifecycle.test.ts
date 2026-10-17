@@ -18,6 +18,7 @@ import { branchEntries, getEntries } from "../src/session-tree.js";
 
 const fixture = resolve("test/fixtures/fake-omo.mjs");
 const deadline = () => AbortSignal.timeout(10_000);
+const linuxOnly = process.platform !== "linux";
 
 class Clock implements LifecycleClock {
   time = 0;
@@ -179,6 +180,7 @@ test("dispose terminates the process group and is idempotent", { timeout: 15_000
 
 for (const restarted of [false, true])
   test(`F2 B4 shutdown owns private session shards${restarted ? " after restart" : ""} but leaves another session host alive`, {
+    skip: linuxOnly,
     timeout: 20_000,
   }, async (t) => {
     const { manager: initial, store, dir } = setup(t);
@@ -221,6 +223,7 @@ for (const restarted of [false, true])
   });
 
 test("F2 S1 failed private-host teardown is reported but local state is still released", {
+  skip: linuxOnly,
   timeout: 20_000,
 }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-s1-"));
@@ -300,6 +303,7 @@ test("hung OmO receives SIGKILL at the injected five second deadline", { timeout
 });
 
 test("F2 B4 private hosts in the connector service cgroup stop while shared LSP survives", {
+  skip: linuxOnly,
   timeout: 20_000,
 }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-service-host-"));
@@ -515,7 +519,11 @@ test("shutdown joins an already started group disposal", async (t) => {
   await disposing;
 });
 
-test("connector SIGKILL closes stdin and fake OmO reaps its sleep child", { timeout: 15_000 }, async (t) => {
+test("connector SIGKILL closes stdin and fake OmO reaps its sleep child", {
+  // The supervisor uses prctl(PR_SET_CHILD_SUBREAPER).
+  skip: linuxOnly,
+  timeout: 15_000,
+}, async (t) => {
   const { dir } = setup(t);
   // Linux subreaper adopts OmO after its connector dies. waitpid is the exact
   // kernel exit signal, and also reaps the orphan before checking PID absence.

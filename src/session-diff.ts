@@ -47,7 +47,10 @@ async function git(directory: string, args: string[]): Promise<string> {
 /** A removed file may be absent, but neither traversal nor symlinks may escape. */
 async function confinedFile(directory: string, path: string): Promise<string | undefined> {
   const root = await realpath(directory);
-  const absolute = resolve(root, path);
+  // Map paths spelled through a symlinked workspace (macOS /var -> /private/var) onto the canonical root.
+  const lexical = relative(resolve(directory), resolve(directory, path));
+  const insideLexical = lexical !== ".." && !lexical.startsWith(`..${sep}`) && !isAbsolute(lexical);
+  const absolute = insideLexical ? resolve(root, lexical) : resolve(root, path);
   const rel = relative(root, absolute);
   if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;
   let ancestor = absolute;

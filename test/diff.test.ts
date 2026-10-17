@@ -105,6 +105,20 @@ test("non-git files list without hunks and escaping paths never disclose content
   assert.equal(diff[0]?.additions, 0);
 });
 
+test("absolute paths spelled through a symlinked workspace stay in the diff", async (t) => {
+  const base = temp(t);
+  const real = join(base, "real");
+  const link = join(base, "link");
+  mkdirSync(real);
+  symlinkSync(real, link);
+  writeFileSync(join(real, "new.txt"), "created\n");
+  const diff = await sessionDiff(link, messages(join(link, "new.txt")));
+  assert.deepEqual(
+    diff.map((d) => d.file),
+    ["new.txt"],
+  );
+});
+
 test("connector patches ignore external diff for tracked and untracked files", async (t) => {
   const dir = temp(t);
   git(dir, "init", "-q");

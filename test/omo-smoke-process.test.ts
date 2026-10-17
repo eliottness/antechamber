@@ -60,6 +60,8 @@ test("F2 B4 ordinary RPC survivors fail even when fallback cleanup could termina
 });
 
 test("F2 B4 live private survivor fails shutdown even when harness cleanup can kill it", {
+  // SmokeContext discovers owned processes through /proc.
+  skip: process.platform !== "linux",
   timeout: 10_000,
 }, async (t) => {
   const source = mkdtempSync(join(tmpdir(), "antechamber-smoke-source-"));
@@ -84,6 +86,9 @@ test("F2 B4 live private survivor fails shutdown even when harness cleanup can k
     },
   );
   const exited = once(child, "exit");
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
   assert.ok(child.stdout);
   await once(child.stdout, "data", { signal: AbortSignal.timeout(5_000) });
   const pid = child.pid;

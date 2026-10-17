@@ -9,6 +9,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Keep files in the session diff when the agent reports their absolute path through a symlinked workspace, such as
+  a macOS temporary directory under `/var`.
+- Make `antechamber doctor` skip running-server records whose process has exited on macOS, not only on Linux.
 - Stop a fast subagent task from staying busy on macOS when its task record changes before the file watcher is
   live.
 

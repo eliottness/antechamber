@@ -248,11 +248,14 @@ test("body limits count UTF-8 bytes rather than characters", async (t) => {
 test("SSE caps all protocol subscriptions and releases disconnected slots", { timeout: 10_000 }, async (t) => {
   const { server } = await start(t);
   const responses: ServerResponse[] = [];
+  // Hold the client streams: Node 26 fetch cancels the body of a collected Response, freeing its slot.
+  const streams: Response[] = [];
   const clients = server["sseClients"];
   for (let i = 0; i < 64; i++) {
     const path = i % 2 === 0 ? "/event" : "/api/event";
     const response = await fetch(server.url + path, { signal: AbortSignal.timeout(10_000) });
     assert.equal(response.status, 200);
+    streams.push(response);
     // Capture the real server response so slot release can be awaited without polling.
     const res = [...clients.keys()].at(-1);
     assert.ok(res);
@@ -268,6 +271,8 @@ test("SSE caps all protocol subscriptions and releases disconnected slots", { ti
   const admitted = await fetch(`${server.url}/api/event`);
   assert.equal(admitted.status, 200);
   assert.equal(clients.size, 64);
+  // streams[0] was destroyed server-side above; release the live ones.
+  await Promise.all(streams.slice(1).map((stream) => stream.body?.cancel()));
 });
 
 for (const path of ["/event", "/api/event"]) {
