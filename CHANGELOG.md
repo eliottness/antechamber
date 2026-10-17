@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-10-17
+
 ### Fixed
 
 - Keep files in the session diff when the agent reports their absolute path through a symlinked workspace, such as
