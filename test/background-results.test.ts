@@ -81,9 +81,17 @@ test("background terminal completion emits a visible bash card and survives rest
   assert.equal(s.tree.messageEntries[message.info.id], "terminal-done");
   const live = structuredClone(message);
   await h.restart();
+  // The fake agent's clock differs from the adapter's, so the launch time is compared in the JSONL test.
+  const untimed = (value: OCMessageWithParts | undefined) =>
+    value && {
+      ...value,
+      parts: value.parts.map((part) =>
+        part.type === "tool" ? { ...part, state: { ...part.state, time: undefined } } : part,
+      ),
+    };
   assert.deepEqual(
-    h.manager.messages(s.info.id)?.find((message) => message.info.id === live.info.id),
-    live,
+    untimed(h.manager.messages(s.info.id)?.find((message) => message.info.id === live.info.id)),
+    untimed(live),
   );
 });
 
@@ -248,7 +256,14 @@ for (const notification of [terminal, evaluation]) {
     assert.equal(part.state.status, "completed");
     if (part.state.status !== "completed") return;
     assert.equal(part.state.output, notification === terminal ? "first line\nlast line" : "cell output\n");
-    if (notification === terminal) assert.equal(part.state.input.command, "bash_2\necho nested");
+    if (notification === terminal) {
+      assert.equal(part.state.input.command, "bash_2\necho nested");
+      // The card spans the command's run: from the card that launched it to the notification.
+      const launch = tools(history).find((candidate) => candidate.callID === "background-launch");
+      assert.ok(launch && launch.state.status !== "pending");
+      assert.equal(part.state.time.start, launch.state.time.start);
+      assert.ok(part.state.time.end > part.state.time.start);
+    }
 
     const before = restoredSession(s);
     before.tree.leafId = tree.leafId;
