@@ -263,6 +263,12 @@ for (const notification of [terminal, evaluation]) {
       assert.ok(launch && launch.state.status !== "pending");
       assert.equal(part.state.time.start, launch.state.time.start);
       assert.ok(part.state.time.end > part.state.time.start);
+      // A waiting card ends at its finish notice, or at the rebuild when it has none.
+      assert.ok(launch.state.status === "completed");
+      assert.equal(launch.state.time.end, Date.parse(entry.timestamp));
+      const direct = card(history, "direct-launch");
+      assert.ok(direct.state.status === "completed");
+      assert.equal(direct.state.output, "Command running in background with ID: bash_20");
     }
 
     const before = restoredSession(s);
@@ -356,29 +362,6 @@ test("cards still waiting end when the agent process exits", async (t) => {
   pi.notify({ type: "exit" });
   await exited;
   assert.equal(card(h.manager.messages(s.info.id), "direct-launch").state.status, "completed");
-});
-
-test("history rebuild ends every waiting card, at its finish notice when there is one", async (t) => {
-  const { s, pi } = await started(t);
-  assert.ok(s.piPath);
-  const tree = await getEntries(pi);
-  const notice = {
-    type: "custom_message",
-    id: "terminal-done",
-    parentId: tree.leafId,
-    timestamp: "2026-10-17T16:47:04.648Z",
-    customType: terminal.customType,
-    content: terminal.content,
-    display: false,
-  };
-  const raw = `${readFileSync(s.piPath, "utf8")}${JSON.stringify(notice)}\n`;
-  const history = parsePiSessionText(restoredSession(s), "test", raw);
-  const launch = card(history, "background-launch");
-  assert.ok(launch.state.status === "completed");
-  assert.equal(launch.state.time.end, Date.parse(notice.timestamp));
-  const direct = card(history, "direct-launch");
-  assert.ok(direct.state.status === "completed", "no notice, but nothing can still run after a rebuild");
-  assert.equal(direct.state.output, "Command running in background with ID: bash_20");
 });
 
 test("a reused shell id is matched to its own launch, and a trimmed detach hint still makes the cell wait", () => {

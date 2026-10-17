@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show completed background bash output and detached eval results in OpenChamber, including after reloading history.
+  A card that started background work keeps running until that work finishes.
+
 ## [0.2.23] - 2026-10-17
 
 - feat(monitors): show matched lines in monitor sessions (#32)
@@ -39,8 +44,6 @@ and this project uses [Semantic Versioning](https://semver.org/).
   to create session" with the original error hidden.
 - Show live bash and eval output in OpenChamber 1.24, and display eval and terminal controls as shell cards with
   their final results retained after history reload. A failed cell shows as a failed card.
-- Show completed background bash output and detached eval results in OpenChamber, including after reloading history.
-  A card that started background work keeps running until that work finishes.
 
 ### Added
 

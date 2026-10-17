@@ -39,7 +39,6 @@ const record = (type, fields, time = 2000) => {
   entries.push(entry);
   leaf = entry.id;
   appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
-  return entry;
 };
 const user = (cmd) => {
   const message = {
