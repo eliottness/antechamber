@@ -465,7 +465,7 @@ export class SessionManager {
     await this.lifecycle.dormant(s);
     const piPath =
       this.subagents.owns(sessionId) || this.monitors.owns(sessionId) ? undefined : (s.piPath ?? s.restored?.piPath);
-    this.subagents.remove(sessionId);
+    const child = this.subagents.remove(sessionId);
     this.monitors.remove(sessionId);
     if (piPath !== undefined) {
       try {
@@ -474,7 +474,8 @@ export class SessionManager {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
     }
-    this.store.remove(sessionId);
+    // A deleted child keeps its tombstone; OmO still holds the task record that would list it again.
+    if (!child) this.store.remove(sessionId);
     return true;
   }
 
@@ -1481,6 +1482,7 @@ export class SessionManager {
   /** Resolve a bare session id (e.g. deep link after restart) via known directories. */
   private resolveRestored(sessionId: string): ManagedSession | undefined {
     const reg = this.store.get(sessionId);
+    if (reg?.deleted) return undefined;
     if (reg && existsSync(reg.piPath)) {
       return this.adopt({
         piSessionId: reg.piSessionId,

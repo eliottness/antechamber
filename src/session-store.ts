@@ -66,6 +66,8 @@ export type TitleSource = "user" | "native" | "fallback" | "generated";
 export interface SessionRegistryEntry {
   /** Created by this connector, rather than discovered from another OmO client. */
   connectorOwned?: true;
+  /** A child the user deleted; kept so its task record or parent history cannot list it again. */
+  deleted?: true;
   tree?: SessionTreeState;
   parentID?: string | undefined;
   parentMessageID?: string;
@@ -434,6 +436,7 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
   )
     return false;
   if (value.connectorOwned !== undefined && value.connectorOwned !== true) return false;
+  if (value.deleted !== undefined && value.deleted !== true) return false;
   if (value.tree !== undefined && !sessionTreeState(value.tree)) return false;
   if (value.parentID !== undefined && typeof value.parentID !== "string") return false;
   if (value.parentMessageID !== undefined && typeof value.parentMessageID !== "string") return false;

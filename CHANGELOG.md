@@ -9,6 +9,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Keep deleted subagent sessions deleted. They came back when their parent's history was read again or when the
+  adapter restarted, because OmO still holds their task record.
 - Keep subagent sessions archived after an adapter restart. Archiving a parent with its subagents left the
   subagents active as orphans once the adapter restarted.
 
