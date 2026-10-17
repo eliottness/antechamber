@@ -558,7 +558,6 @@ export class SubagentBridge {
     });
     child.watchers.set(dir, watcher);
     if (process.platform === "darwin") {
-      // Re-read once after FSEvents startup so an early change cannot leave the child busy.
       setTimeout(() => {
         if (child.watchers.get(dir) === watcher) this.refresh(child, true);
       }, FSEVENTS_STARTUP_RECHECK_MS).unref();
