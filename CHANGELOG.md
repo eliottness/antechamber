@@ -31,7 +31,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
   to create session" with the original error hidden.
 - Show live bash and eval output in OpenChamber 1.24, and display eval and terminal controls as shell cards with
   their final results retained after history reload. The OmO Graph extension heads eval cards with `JS Eval` or
-  `Python Eval` and the cell's summary.
+  `Python Eval` and the cell's summary. A failed cell shows as a failed card.
 
 ## [0.2.18] - 2026-10-17
 

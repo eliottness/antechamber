@@ -25,6 +25,7 @@ import {
   providerToolParts,
   resultMetadata,
   resultText,
+  toolFailed,
 } from "./tool-map.js";
 import { TodoBridge, type TodoUpdated } from "./todo-bridge.js";
 import { readSessionTree, recordTurn } from "./session-tree.js";
@@ -902,7 +903,7 @@ export class PiEventTranslator {
       const part = callID !== undefined ? s.toolByCallId.get(callID) : undefined;
       if (!part || callID === undefined) continue;
       s.toolByCallId.delete(callID);
-      s.todoBridge?.finish(part, tr.isError === true);
+      s.todoBridge?.finish(part, toolFailed(tr));
       const text = resultText(tr.content);
       const startedAt = part.state.status !== "pending" ? part.state.time.start : Date.now();
       const input = part.state.input ?? {};
@@ -914,7 +915,7 @@ export class PiEventTranslator {
         part.state.status === "running" || part.state.status === "completed"
           ? (part.state.title ?? part.tool)
           : part.tool;
-      if (tr.isError === true) {
+      if (toolFailed(tr)) {
         part.state = {
           status: "error",
           input,

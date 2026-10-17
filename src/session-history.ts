@@ -10,6 +10,7 @@ import {
   providerToolParts,
   resultMetadata,
   resultText,
+  toolFailed,
 } from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
 import { userMessageModel } from "./thinking-levels.js";
@@ -481,23 +482,22 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         part.state.status === "running" || part.state.status === "completed"
           ? (part.state.title ?? part.tool)
           : part.tool;
-      part.state =
-        m.isError === true
-          ? {
-              status: "error",
-              input,
-              error: text !== "" ? text : `tool ${part.tool} failed`,
-              metadata,
-              time: { start: startedAt, end: created },
-            }
-          : {
-              status: "completed",
-              input,
-              output: text,
-              title,
-              metadata,
-              time: { start: startedAt, end: created },
-            };
+      part.state = toolFailed(m)
+        ? {
+            status: "error",
+            input,
+            error: text !== "" ? text : `tool ${part.tool} failed`,
+            metadata,
+            time: { start: startedAt, end: created },
+          }
+        : {
+            status: "completed",
+            input,
+            output: text,
+            title,
+            metadata,
+            time: { start: startedAt, end: created },
+          };
     }
     // system / custom entries are not rendered
   }

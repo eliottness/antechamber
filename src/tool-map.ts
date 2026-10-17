@@ -123,6 +123,14 @@ export const toolMappers: Record<string, ToolMapper> = {
   },
 };
 
+/**
+ * A failed result. Codemode leaves a failed eval cell's top-level isError false and sets
+ * details.isError instead (senpi-codemode src/tool/render-result.ts:42).
+ */
+export function toolFailed(result: ToolResult): boolean {
+  return result.isError === true || (record(result.details) && result.details.isError === true);
+}
+
 /** Text blocks only; images and structured details are not tool output text. */
 export function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";

@@ -664,3 +664,56 @@ for (const resultEvent of ["tool_execution_end", "turn_end"]) {
     assert.deepEqual(part.state.metadata, { filediff: { file: "x" } });
   });
 }
+
+test("a failed eval cell, flagged only in details.isError, is an error card live and after reload", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-eval-failed-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const args = {
+    code: 'print("BEFORE"); throw new Error("CELL_FAILED_ON_PURPOSE")',
+    language: "js",
+    summary: "fail check",
+  };
+  const { s, manager, part, call } = runningTool("eval", args);
+  s.piPath = join(dir, "session.jsonl");
+  const message = {
+    role: "assistant",
+    content: [{ type: "toolCall", ...call }],
+    stopReason: "toolUse",
+    timestamp: 1000,
+  };
+  manager["onPiEvent"](s, { type: "message_end", message });
+  // Captured from a live OmO session, 2026-10-17: top-level isError stays false.
+  const result = {
+    role: "toolResult",
+    toolCallId: call.id,
+    toolName: "eval",
+    content: [{ type: "text", text: "BEFORE\nCELL_FAILED_ON_PURPOSE" }],
+    details: { language: "js", summary: "fail check", isError: true },
+    isError: false,
+    timestamp: 1001,
+  };
+  writeFileSync(
+    s.piPath,
+    [
+      { type: "message", id: "call-entry", parentId: null, timestamp: 1000, message },
+      { type: "message", id: "result-entry", parentId: "call-entry", timestamp: 1001, message: result },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n"),
+  );
+  manager["onPiEvent"](s, {
+    type: "tool_execution_end",
+    toolCallId: call.id,
+    toolName: "eval",
+    result,
+    isError: false,
+  });
+  assert.ok(part.state.status === "error");
+  assert.equal(part.state.error, "BEFORE\nCELL_FAILED_ON_PURPOSE");
+  const restored = session(s.piPath);
+  restored.tree = structuredClone(s.tree);
+  restored.messages = undefined;
+  const reloaded = manager["ensureMessages"](restored)[0]?.parts[0];
+  assert.ok(reloaded?.type === "tool" && reloaded.state.status === "error");
+  assert.equal(reloaded.state.error, "BEFORE\nCELL_FAILED_ON_PURPOSE");
+});
