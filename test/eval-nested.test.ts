@@ -193,6 +193,33 @@ test("JSONL history rebuilds nested cards without shifting previously saved nati
   assert.equal(managed.toolByCallId.size, 0);
 });
 
+test("nested agent() calls are labelled by their label or prompt, failures keep the error", () => {
+  const parent: OCToolPart = {
+    id: "prt_eval",
+    messageID: "msg_eval",
+    sessionID: "ses_nested",
+    type: "tool",
+    tool: "eval",
+    callID: "parent",
+    state: { status: "running", input: {}, time: { start: 10 } },
+  };
+  // Shape from a persisted OmO toolResult (details.toolCalls) for agent() inside eval, 2026-10-17.
+  const [labelled, failed, prompted] = nestedToolParts(parent, {
+    toolCalls: [
+      { name: "__agent__", ok: true, durationMs: 5, callId: "a", args: { prompt: "Reply OK", label: "graph-node-1" } },
+      { name: "__agent__", ok: false, durationMs: 8, callId: "b", error: "agent() requires a task_id", args: {} },
+      { name: "__agent__", ok: true, durationMs: 5, callId: "c", args: { prompt: "First line\nsecond" } },
+    ],
+  });
+  assert.ok(labelled?.state.status === "completed");
+  assert.equal(labelled.tool, "agent");
+  assert.equal(labelled.state.title, "agent: graph-node-1");
+  assert.ok(failed?.state.status === "error");
+  assert.equal(failed.state.error, "agent() requires a task_id");
+  assert.ok(prompted?.state.status === "completed");
+  assert.equal(prompted.state.title, "agent: First line");
+});
+
 test("nested extraction ignores unrelated and malformed details and namespaces call identities", () => {
   // Given: one eval card and untrusted tool result details.
   const parent: OCToolPart = {

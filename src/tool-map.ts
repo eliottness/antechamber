@@ -129,6 +129,16 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
   };
 }
 
+/** Codemode records `agent()` calls as `__agent__`; label them by what they were asked to do. */
+function nestedAgent(args: unknown): MappedTool {
+  const input = record(args) ? args : {};
+  const prompt = typeof input.prompt === "string" ? input.prompt.split("\n")[0] : undefined;
+  const hint = [input.label, input.description, prompt].find(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
+  return { tool: "agent", input, title: `agent: ${hint ?? "subagent"}`.slice(0, 60) };
+}
+
 /** Finished eval calls, from the raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
  * RPC exposes only resultPreview, not the nested call's full output or start time.
  */
@@ -149,7 +159,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown): OCToolPar
       return;
     const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
     const callID = `${encodeURIComponent(parent.callID)}:${key}`;
-    const mapped = mapTool(entry.name, entry.args);
+    const mapped = entry.name === "__agent__" ? nestedAgent(entry.args) : mapTool(entry.name, entry.args);
     const state = {
       input: mapped.input,
       title: mapped.title,
