@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.26] - 2026-10-17
+
 ### Changed
 
 - Name a subagent card for an `agent()` call made inside eval after its agent type (for example "Explore Agent"),
