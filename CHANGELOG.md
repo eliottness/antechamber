@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-10-17
+
 ### Fixed
 
 - Show completed background bash output and detached eval results in OpenChamber, including after reloading history.
