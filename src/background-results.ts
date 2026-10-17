@@ -103,7 +103,7 @@ export function holdForBackground(part: OCToolPart, waits: string[], final: Fina
     status: "running",
     input: state.input,
     ...(title !== undefined ? { title } : {}),
-    metadata: { ...state.metadata, output: final.output, backgroundWaits: waits, backgroundFinal: final },
+    metadata: { ...state.metadata, output: final.output, backgroundWaits: waits, backgroundFailed: final.failed },
     time: { start: state.time.start },
   };
 }
@@ -111,7 +111,7 @@ export function holdForBackground(part: OCToolPart, waits: string[], final: Fina
 function finish(part: OCToolPart, final: Final, at: number): void {
   const state = part.state;
   if (state.status === "pending") return;
-  const { backgroundWaits: _waits, backgroundFinal: _final, output: _output, ...metadata } = state.metadata ?? {};
+  const { backgroundWaits: _waits, backgroundFailed: _failed, output: _output, ...metadata } = state.metadata ?? {};
   const time = { start: state.time.start, end: Math.max(at, state.time.start) };
   const title = state.status === "running" || state.status === "completed" ? (state.title ?? part.tool) : part.tool;
   part.state = final.failed
@@ -120,9 +120,9 @@ function finish(part: OCToolPart, final: Final, at: number): void {
 }
 
 function finalOf(part: OCToolPart): Final | undefined {
-  const final = part.state.status === "running" ? part.state.metadata?.backgroundFinal : undefined;
-  if (final === null || typeof final !== "object" || !("output" in final) || !("failed" in final)) return undefined;
-  return { output: String(final.output), failed: final.failed === true };
+  const metadata = part.state.status === "running" ? part.state.metadata : undefined;
+  if (typeof metadata?.backgroundFailed !== "boolean") return undefined;
+  return { output: typeof metadata.output === "string" ? metadata.output : "", failed: metadata.backgroundFailed };
 }
 
 /** `id` finished at `at`: drop it from every card waiting on it; cards left with nothing to wait on end. */
@@ -179,7 +179,6 @@ export function completeBackgroundEval(
     const remaining = [...new Set(waits)];
     if (part.state.status !== "pending" && remaining.length > 0) {
       holdForBackground(part, remaining, final);
-      if (part.state.status === "running") part.state.metadata = { ...part.state.metadata, backgroundWaits: remaining };
     } else finish(part, final, completed);
     return part;
   }
