@@ -4,6 +4,7 @@ import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts } from "./types.js";
 import type { OCPromptPart } from "./types.js";
 import { contextMessageID, nativePromptInput } from "./prompt-parts.js";
+import { backgroundResult } from "./background-results.js";
 
 export interface SessionTreeState {
   messageEntries: Record<string, string>;
@@ -28,6 +29,7 @@ export interface TreeEntry {
   id: string;
   parentId: string | null;
   customType?: string;
+  content?: unknown;
   details?: unknown;
   message?: {
     role: string;
@@ -183,6 +185,7 @@ function bindOrdinaryEntry(
     (message, position) =>
       position >= cursor &&
       !s.localMessageIds?.has(message.info.id) &&
+      !message.info.id.startsWith("msg_background_") &&
       s.tree.messageEntries[message.info.id] === undefined &&
       message.info.role === entry.message?.role &&
       (message.info.role !== "user" ||
@@ -212,6 +215,17 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
   const branch = branchEntries(tree, s.tree.revert ? s.tree.revert.previousLeafId : leafId);
   const positions = new Map(branch.map((entry, index) => [entry.id, index]));
   pruneStaleShellTurns(s, positions);
+  // Background completion cards carry no native ID live; recompute their content key in branch order.
+  const seen = new Map<string, number>();
+  for (const entry of branch) {
+    if (entry.type !== "custom_message") continue;
+    const result = backgroundResult(entry.customType, entry.content);
+    if (result === undefined) continue;
+    const occurrence = seen.get(result.key) ?? 0;
+    seen.set(result.key, occurrence + 1);
+    const messageID = `msg_background_${result.key}_${occurrence}`;
+    if (s.messages?.some((message) => message.info.id === messageID)) s.tree.messageEntries[messageID] = entry.id;
+  }
   // Admitted context carries its OpenChamber id in the native custom message.
   for (const entry of branch) {
     const messageID = contextMessageID(entry);

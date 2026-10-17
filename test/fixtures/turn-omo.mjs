@@ -38,6 +38,7 @@ const record = (type, fields, time = 2000) => {
   entries.push(entry);
   leaf = entry.id;
   appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+  return entry;
 };
 const user = (cmd) => {
   const message = {
@@ -73,6 +74,80 @@ const start = (cmd) => {
   active = cmd;
   send({ type: "agent_start" });
   user(cmd);
+  if (cmd.message === "background-results") {
+    // Raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
+    const calls = [
+      { type: "toolCall", id: "detached-cell", name: "eval", arguments: { language: "js", code: 'print("done")' } },
+      {
+        type: "toolCall",
+        id: "background-launch",
+        name: "eval",
+        arguments: {
+          language: "js",
+          code: 'print(await tool.bash({ command: "echo nested", run_in_background: true }))',
+        },
+      },
+      {
+        type: "toolCall",
+        id: "direct-launch",
+        name: "bash",
+        arguments: { command: "echo direct", run_in_background: true },
+      },
+    ];
+    const message = {
+      role: "assistant",
+      content: calls,
+      provider: "fake",
+      model: "served",
+      timestamp: 1100,
+      stopReason: "toolUse",
+    };
+    send({ type: "message_start", message });
+    for (const [contentIndex, toolCall] of calls.entries())
+      send({ type: "message_update", assistantMessageEvent: { type: "toolcall_end", contentIndex, toolCall } });
+    record("message", { message });
+    send({ type: "message_end", message });
+    const texts = [
+      "Eval cell detached-cell detached and is running in the js kernel (0 other live cells).",
+      "Command running in background with ID: bash_2\n\nfirst line",
+      "Command running in background with ID: bash_20",
+    ];
+    const toolResults = calls.map((call, index) => {
+      send({ type: "tool_execution_start", toolCallId: call.id, toolName: call.name, args: call.arguments });
+      const result = {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.name,
+        content: [{ type: "text", text: texts[index] }],
+        ...(call.id === "background-launch"
+          ? {
+              details: {
+                toolCalls: [
+                  {
+                    name: "bash",
+                    ok: true,
+                    durationMs: 1,
+                    callId: "nested-launch",
+                    args: { command: "echo nested", run_in_background: true },
+                    resultPreview: "Command running in background with ID: bash_2 first line",
+                  },
+                ],
+              },
+            }
+          : {}),
+        isError: false,
+        timestamp: 2100,
+      };
+      record("message", { message: result }, 2100);
+      send({ type: "tool_execution_end", toolCallId: call.id, toolName: call.name, result, isError: false });
+      return result;
+    });
+    send({ type: "turn_end", message, toolResults });
+    send({ type: "agent_end" });
+    active = undefined;
+    send({ type: "agent_idle" });
+    return;
+  }
   if (cmd.message === "interrupted-work") {
     const message = {
       role: "assistant",
@@ -173,6 +248,16 @@ createInterface({ input: process.stdin })
     }
     // Replays an arbitrary agent frame, e.g. an extension_event OmO would publish.
     if (cmd.type === "emit") send(cmd.frame);
+    if (cmd.type === "background_notification") {
+      // Raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the custom message
+      // frames carry no entry ID and OmO persists the entry without any entry_appended frame.
+      const fields = { customType: cmd.customType, content: cmd.content, display: false };
+      const timestamp = cmd.timestamp ?? 3000;
+      const message = { role: "custom", ...fields, timestamp };
+      send({ type: "message_start", message });
+      send({ type: "message_end", message });
+      record("custom_message", { ...fields, id: cmd.entryID }, timestamp);
+    }
     if (cmd.type === "exit") process.exit(3);
     if (cmd.type === "inject") {
       if (cmd.message === "interrupted-work") start(cmd);
