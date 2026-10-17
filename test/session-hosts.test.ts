@@ -10,6 +10,8 @@ import test, { type TestContext } from "node:test";
 import { createSessionHostStopper, stopSessionHosts } from "../src/session-hosts.js";
 import { trackDetachedFixture } from "./fixtures/detached-fixture.js";
 
+const linuxOnly = process.platform !== "linux";
+
 test("unsupported private-host teardown warns once without scanning or signalling", async (t) => {
   t.after(() => {
     t.mock.restoreAll();
@@ -119,6 +121,8 @@ for (const scenario of [
   "pidfd-permission-denied",
 ])
   test(`B4-REUSE ${scenario} never signals the replacement`, async (t) => {
+    // Every /proc, pidfd and signal boundary is simulated, so run the Linux teardown on any host.
+    const stop = createSessionHostStopper("linux", () => "python3");
     const owner = "reviewer-inert-owner";
     const cwd = "/reviewer/inert";
     const socket = `/inert/p-${createHash("sha256").update(`p:${owner}`).digest("hex").slice(0, 16)}.sock`;
@@ -261,7 +265,7 @@ for (const scenario of [
         return [index + 3, record];
       });
       const child = original.spawn(
-        "/bin/python3",
+        "python3",
         [
           "-I",
           resolve("test/fixtures/pidfd-host-probe.py"),
@@ -295,9 +299,9 @@ for (const scenario of [
 
     const failClosed = ["group-change", "pidfd-unavailable", "pidfd-permission-denied"].includes(scenario);
     if (failClosed) {
-      await assert.rejects(stopSessionHosts(new Map([[owner, cwd]])), /pidfd teardown failed/);
+      await assert.rejects(stop(new Map([[owner, cwd]])), /pidfd teardown failed/);
     } else {
-      await stopSessionHosts(new Map([[owner, cwd]]));
+      await stop(new Map([[owner, cwd]]));
     }
 
     const result = helperResult ?? {
@@ -342,6 +346,7 @@ const hostArgs = (directory: string, owner: string) =>
   ] as const;
 
 test("B4-REUSE real owned group exits while unrelated, shared LSP, OpenChamber and another session survive", {
+  skip: linuxOnly,
   timeout: 15_000,
 }, async (t) => {
   const directory = fs.mkdtempSync(join(tmpdir(), "antechamber-reuse-real-"));
@@ -379,6 +384,7 @@ test("B4-REUSE real owned group exits while unrelated, shared LSP, OpenChamber a
 });
 
 test("B4-REUSE Python removed after capability detection fails closed and leaves owned members alive", {
+  skip: linuxOnly,
   timeout: 15_000,
 }, async (t) => {
   const directory = fs.mkdtempSync(join(tmpdir(), "antechamber-reuse-no-python-"));

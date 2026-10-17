@@ -370,5 +370,5 @@ test("R-029: filesystem delete failure is observable to the caller", { timeout: 
   rmSync(path);
   mkdirSync(path);
 
-  await assert.rejects(h.manager.remove(session.id), { code: "EISDIR" });
+  await assert.rejects(h.manager.remove(session.id), { code: process.platform === "linux" ? "EISDIR" : "EPERM" });
 });
