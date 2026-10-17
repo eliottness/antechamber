@@ -56,7 +56,7 @@ for (const file of readdirSync(fixtures).filter((name) => name.endsWith(".json")
       if (fixture.tool === "eval") {
         assert.equal(mapped.tool, "bash");
         assert.equal(mapped.title, sample.arguments.summary);
-        assert.ok(String(mapped.input.command).endsWith(`\n${sample.arguments.code}`));
+        assert.equal(mapped.input.command, sample.arguments.code);
         assert.equal(mapped.metadata?.evalSubtitle, sample.arguments.summary);
       }
       if (fixture.tool === "task") {
@@ -123,16 +123,19 @@ test("bash and questions use native renderer contracts", () => {
 test("eval uses a bash renderer with its code and language summary", () => {
   assert.deepEqual(mapTool("eval", { code: 'print("hello")', language: "py", summary: "Print hello" }), {
     tool: "bash",
-    input: { command: '# py eval: Print hello\nprint("hello")', description: "py eval: Print hello" },
+    input: { command: 'print("hello")', description: "Python Eval: Print hello" },
     title: "Print hello",
-    metadata: { evalTitle: "py eval", evalSubtitle: "Print hello" },
+    metadata: { evalTitle: "Python Eval", evalSubtitle: "Print hello" },
   });
-  assert.deepEqual(mapTool("eval", { code: "print(1)", summary: "One" }).input.command, "// js eval: One\nprint(1)");
+  assert.deepEqual(mapTool("eval", { code: "print(1)", summary: "One" }).input, {
+    command: "print(1)",
+    description: "JS Eval: One",
+  });
   assert.deepEqual(mapTool("eval", {}), {
     tool: "bash",
-    input: { command: "eval", description: "js eval: eval" },
+    input: { command: "eval", description: "JS Eval: eval" },
     title: "eval",
-    metadata: { evalTitle: "js eval", evalSubtitle: "eval" },
+    metadata: { evalTitle: "JS Eval", evalSubtitle: "eval" },
   });
   assert.equal(mapTool("eval", { action: "peek", cell_id: "cell_1" }).input.command, "eval peek cell_1");
 });
@@ -423,7 +426,7 @@ for (const [name, args] of [
     if (name === "eval") {
       // The OmO Graph extension heads eval cards from these fields, live and after reload.
       for (const state of [part.state, reloaded.state]) {
-        assert.equal(state.metadata?.evalTitle, "js eval");
+        assert.equal(state.metadata?.evalTitle, "JS Eval");
         assert.equal(state.metadata?.evalSubtitle, "Print hello");
       }
     }

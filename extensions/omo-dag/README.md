@@ -33,7 +33,7 @@ screen from the sidebar's Extension pages menu.
 
 The extension also labels OmO eval cells in the chat. OpenChamber 1.24 streams
 output only for shell cards, so antechamber shows eval cells as shell cards;
-with the extension enabled their header reads `js eval` (or `py eval`) and the
+with the extension enabled their header reads `JS Eval` (or `Python Eval`) and the
 cell's summary instead of "Shell Command" and the first line of code. Other
 shell cards keep their normal header.
 
