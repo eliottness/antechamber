@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bugHarness } from "./bug-harness.js";
-import { MONITOR_ENDED_EVENT, MONITOR_STATE_EVENT } from "../src/monitor-sessions.js";
+import { MONITOR_ENDED_EVENT, MONITOR_NOTIFICATION, MONITOR_STATE_EVENT } from "../src/monitor-sessions.js";
 import { ocIdFor } from "../src/session-store.js";
 import type { ManagedSession } from "../src/sessions.js";
 import type { OCMessageWithParts, OCToolPart } from "../src/types.js";
@@ -81,6 +81,67 @@ test("a monitor is a busy child session until OmO reports it ended", async (t) =
     .filter((e) => e.type === "session.status" && e.properties.sessionID === childID)
     .map((e) => (e.type === "session.status" ? e.properties.status.type : undefined));
   assert.deepEqual(statuses, ["busy", "idle"]);
+});
+
+// Shape from a raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: matched lines
+// arrive only in this hidden custom message, never in terminal_monitor_state.
+async function notifyMonitor(s: ManagedSession, content: string): Promise<void> {
+  const pi = s.pi;
+  assert.ok(pi);
+  const message = {
+    role: "custom",
+    customType: MONITOR_NOTIFICATION,
+    content: `<system-reminder>Monitor event(${monitor.description}): ${content}</system-reminder>`,
+    display: false,
+    details: { monitors: [{ id: monitor.id, description: monitor.description, eventCount: 2, kinds: ["line"] }] },
+    timestamp: monitor.startedAtMs + 1_000,
+  };
+  for (const frameType of ["message_start", "message_end"]) {
+    const reply: { success: boolean } = await pi.command({ type: "emit", frame: { type: frameType, message } });
+    assert.equal(reply.success, true);
+  }
+}
+
+test("matched monitor lines stream into the watch card and stay out of the parent transcript", async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  const parent = h.manager.get(info.id);
+  assert.ok(parent?.pi);
+  await emit(parent, MONITOR_STATE_EVENT, { activeCount: 1, monitors: [monitor] });
+  const childID = ocIdFor(`${info.id}/monitor/bash_7`);
+  const parentBefore = JSON.stringify(h.manager.messages(info.id) ?? []);
+
+  await notifyMonitor(parent, "DONE 1\nDONE 2");
+  const running = tool(h.manager.messages(childID));
+  assert.equal(running.state.status, "running");
+  assert.ok(running.state.status === "running");
+  assert.match(String(running.state.metadata?.output), /\nDONE 1\nDONE 2$/);
+  assert.ok(
+    h.events.some(
+      (e) =>
+        e.type === "message.part.updated" &&
+        e.properties.part.sessionID === childID &&
+        (e.properties.part as OCToolPart).state?.status === "running" &&
+        String(
+          ((e.properties.part as OCToolPart).state as { metadata?: { output?: unknown } }).metadata?.output,
+        ).includes("DONE 2"),
+    ),
+  );
+
+  await notifyMonitor(parent, "DONE 3\nwatcher completed (exit code 0)");
+  await emit(parent, MONITOR_ENDED_EVENT, {
+    id: "bash_7",
+    endedAtMs: monitor.startedAtMs + 5_000,
+    exitCode: 0,
+    fireCount: 3,
+    reason: "exit",
+  });
+  const ended = tool(h.manager.messages(childID));
+  assert.ok(ended.state.status === "completed");
+  assert.match(ended.state.output, /Events: 3/);
+  assert.match(ended.state.output, /DONE 1\nDONE 2\nDONE 3\nwatcher completed \(exit code 0\)$/);
+  assert.doesNotMatch(ended.state.output, /system-reminder|Monitor event\(/);
+  assert.equal(JSON.stringify(h.manager.messages(info.id) ?? []), parentBefore);
 });
 
 test("agent exit ends its watches and deleting the parent removes them", async (t) => {
