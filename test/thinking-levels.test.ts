@@ -185,6 +185,47 @@ test("thinking level is isolated between sessions", async (t) => {
   assert.equal((await state(manager, second.id)).thinkingCalls, 0);
 });
 
+test("user messages carry the applied thinking level live and after a cold restart", async (t) => {
+  const { directory } = setup(t);
+  // OpenChamber restores its effort picker from the latest user message's `model.variant`;
+  // without it every reopened session falls back to the agent default and resends it.
+  const userVariants = async (url: string, id: string): Promise<Array<string | undefined>> => {
+    const response = await fetch(`${url}/session/${id}/message`);
+    assert.equal(response.status, 200);
+    const messages = (await response.json()) as Array<{ info: { role: string; model?: { variant?: string } } }>;
+    return messages.filter((m) => m.info.role === "user").map((m) => m.info.model?.variant);
+  };
+  const first = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  let firstStopped = false;
+  t.after(() => (firstStopped ? undefined : first.stop()));
+  await first.start();
+  const session = (await (await fetch(`${first.url}/session`, { method: "POST", body: "{}" })).json()) as {
+    id: string;
+  };
+  for (const [text, variant] of [
+    ["FIRST", "low"],
+    ["SECOND", "high"],
+  ] as const) {
+    const response = await fetch(`${first.url}/session/${session.id}/message`, {
+      method: "POST",
+      body: JSON.stringify({
+        model: { providerID: "fake", modelID: "fake-model" },
+        variant,
+        parts: [{ type: "text", text }],
+      }),
+    });
+    assert.equal(response.status, 200);
+  }
+  assert.deepEqual(await userVariants(first.url, session.id), ["low", "high"]);
+  await first.stop();
+  firstStopped = true;
+
+  const second = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  t.after(() => second.stop());
+  await second.start();
+  assert.deepEqual(await userVariants(second.url, session.id), ["low", "high"]);
+});
+
 for (const [route, body] of [
   ["api-model", { model: { providerID: "fake", id: "fake-model", variant: "low" } }],
   [

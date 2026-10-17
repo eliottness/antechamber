@@ -1,5 +1,5 @@
 import type { PiRpcClient } from "./pi-rpc.js";
-import type { OCModelRef } from "./types.js";
+import type { OCModelRef, OCUserMessage } from "./types.js";
 
 export interface ModelSelection extends OCModelRef {
   readonly variant?: string;
@@ -20,6 +20,15 @@ export function thinkingVariants(model: ThinkingModel): Record<string, Record<st
       .filter(([, value]) => value !== null)
       .map(([level]) => level);
   return levels.length === 0 ? undefined : Object.fromEntries(levels.map((level) => [level, {}]));
+}
+
+/**
+ * A user message's model as OpenCode >= 1.4 stores it: the thinking level travels as
+ * `model.variant`. Without it OpenChamber restores the agent's default effort on every
+ * reopen and sends that with the next prompt, which resets the level and breaks the cache.
+ */
+export function userMessageModel(model: OCModelRef, variant: string | undefined): OCUserMessage["model"] {
+  return { providerID: model.providerID, modelID: model.modelID, ...(variant !== undefined ? { variant } : {}) };
 }
 
 export interface ThinkingState {

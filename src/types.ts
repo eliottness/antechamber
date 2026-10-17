@@ -44,7 +44,8 @@ export interface OCUserMessage {
   role: "user";
   time: { created: number };
   agent: string;
-  model: OCModelRef;
+  /** `variant` is the thinking level; OpenChamber restores the effort picker from the latest user message. */
+  model: OCModelRef & { variant?: string };
   /** No-reply context admitted without a turn (v2 lists it as `type: "synthetic"`). */
   synthetic?: boolean;
   /** Client metadata sent with the prompt (OpenChamber 2.x). */

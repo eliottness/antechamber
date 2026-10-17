@@ -21,7 +21,7 @@ let records = readFileSync(sessionFile, "utf8")
   .trim()
   .split("\n")
   .map((line) => JSON.parse(line));
-for (const record of records) if (record.type === "message") leaf = record.id;
+for (const record of records) if (record.type !== "session" && record.id) leaf = record.id;
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const stop = (eof = false) => {
   if (eof && requireGroup) return;
@@ -160,7 +160,17 @@ input.on("line", (line) => {
       return;
     }
     thinkingLevel = command.level === "minimal" ? "low" : command.level;
-    appendFileSync(sessionFile, `${JSON.stringify({ type: "thinking_level_change", thinkingLevel })}\n`);
+    // Real OmO appends this as a tree entry on the active branch (id, parentId, timestamp).
+    const entry = {
+      type: "thinking_level_change",
+      id: randomUUID(),
+      parentId: leaf,
+      timestamp: Date.now(),
+      thinkingLevel,
+    };
+    leaf = entry.id;
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+    records.push(entry);
     send({ type: "thinking_level_changed", level: thinkingLevel });
   }
   if (command.type === "get_state")

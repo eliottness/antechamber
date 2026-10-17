@@ -30,6 +30,7 @@ import { TodoBridge, type TodoUpdated } from "./todo-bridge.js";
 import { readSessionTree, recordTurn } from "./session-tree.js";
 import { touchedFiles } from "./session-diff.js";
 import { getAgentName } from "./agent-name.js";
+import { userMessageModel } from "./thinking-levels.js";
 import { debugLog } from "./misc-routes.js";
 import { envSetting } from "./config.js";
 
@@ -145,6 +146,7 @@ export function compactionMessages(
   summary: string,
   created: number,
   model: OCModelRef | undefined,
+  thinkingLevel: string | undefined,
 ): [OCMessageWithParts, OCMessageWithParts] {
   const sessionID = s.info.id;
   const userID = `msg_compaction_${key}`;
@@ -152,7 +154,14 @@ export function compactionMessages(
   const served = model ?? { providerID: "unknown", modelID: "unknown" };
   return [
     {
-      info: { id: userID, sessionID, role: "user", time: { created }, agent: getAgentName(), model: served },
+      info: {
+        id: userID,
+        sessionID,
+        role: "user",
+        time: { created },
+        agent: getAgentName(),
+        model: userMessageModel(served, thinkingLevel),
+      },
       parts: [{ id: `prt_compaction_${key}`, sessionID, messageID: userID, type: "compaction", auto: false }],
     },
     {
@@ -285,7 +294,7 @@ export class PiEventTranslator {
           role: "user",
           time: { created: message.timestamp ?? Date.now() },
           agent: getAgentName(),
-          model: s.model ?? { providerID: "unknown", modelID: "unknown" },
+          model: userMessageModel(s.model ?? { providerID: "unknown", modelID: "unknown" }, s.thinkingLevel),
         },
         parts: [{ id: id("prt"), sessionID: s.info.id, messageID, type: "text", text }],
       };
@@ -636,7 +645,14 @@ export class PiEventTranslator {
               if (entry.type === "compaction") key = entry.id;
             }
           }
-          for (const message of compactionMessages(s, key ?? id("compaction"), result.summary, Date.now(), s.model)) {
+          for (const message of compactionMessages(
+            s,
+            key ?? id("compaction"),
+            result.summary,
+            Date.now(),
+            s.model,
+            s.thinkingLevel,
+          )) {
             if (messages.some((item) => item.info.id === message.info.id)) continue;
             // Keep a hidden redo branch after the new turn, as appendMessage does.
             const boundary = messages.findIndex((item) => item.info.id === s.tree.revert?.messageID);
