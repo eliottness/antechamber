@@ -380,3 +380,117 @@ test("history rebuild ends every waiting card, at its finish notice when there i
   assert.ok(direct.state.status === "completed", "no notice, but nothing can still run after a rebuild");
   assert.equal(direct.state.output, "Command running in background with ID: bash_20");
 });
+
+test("a reused shell id is matched to its own launch, and a trimmed detach hint still makes the cell wait", () => {
+  // Shapes from a preview session, 2026-10-17: after an OmO restart the next background shell is bash_1 again,
+  // and the detached cell's tail-trimmed output keeps only the bash_output hint for it.
+  const at = (s: number) => new Date(Date.UTC(2026, 9, 17, 21, 0, s)).toISOString();
+  const call = (id: string) => ({
+    type: "toolCall",
+    id,
+    name: "eval",
+    arguments: { language: "js", code: "x", summary: id },
+  });
+  const assistant = (id: string, parent: string | null, s: number, callID: string) => ({
+    type: "message",
+    id,
+    parentId: parent,
+    timestamp: at(s),
+    message: { role: "assistant", content: [call(callID)], stopReason: "toolUse", timestamp: Date.parse(at(s)) },
+  });
+  const result = (id: string, parent: string, s: number, callID: string, text: string) => ({
+    type: "message",
+    id,
+    parentId: parent,
+    timestamp: at(s),
+    message: {
+      role: "toolResult",
+      toolCallId: callID,
+      toolName: "eval",
+      content: [{ type: "text", text }],
+      isError: false,
+      timestamp: Date.parse(at(s)),
+    },
+  });
+  const notice = (id: string, parent: string, s: number, customType: string, text: string) => ({
+    type: "custom_message",
+    id,
+    parentId: parent,
+    timestamp: at(s),
+    customType,
+    content: text,
+    display: false,
+  });
+  const hint =
+    'Continue other work; completion will be reported automatically. Use bash_output({ bash_id: "bash_1" }) only to peek at new output.';
+  const entries = [
+    assistant("a1", null, 0, "old-cell"),
+    result(
+      "r1",
+      "a1",
+      5,
+      "old-cell",
+      "Command is still running; auto-detached to background with ID: bash_1 (not killed)",
+    ),
+    notice(
+      "n1",
+      "r1",
+      10,
+      "senpi-terminal:notification",
+      "Background terminal session bash_1 finished: completed (exit code 0).\nFinal output:\nOLD",
+    ),
+    assistant("a2", "n1", 100, "new-cell"),
+    result("r2", "a2", 160, "new-cell", "Eval cell new-cell detached and is running in the background."),
+    notice(
+      "n2",
+      "r2",
+      170,
+      "senpi-codemode:notification",
+      `Detached eval cell new-cell (js) completed.\n--- call 3 ---\nB75 60\n\n${hint}`,
+    ),
+    notice(
+      "n3",
+      "n2",
+      180,
+      "senpi-terminal:notification",
+      "Background terminal session bash_1 finished: completed (exit code 0).\nFinal output:\nB75_DONE",
+    ),
+    notice(
+      "n4",
+      "n3",
+      190,
+      "senpi-terminal:notification",
+      "Background terminal session bash_1 finished: completed (exit code 0).\nFinal output:\nNO_LAUNCH",
+    ),
+  ];
+  const managed: ManagedSession = {
+    info: {
+      id: "ses_reuse",
+      projectID: "/tmp/r",
+      directory: "/tmp/r",
+      title: "r",
+      version: "test",
+      time: { created: 0, updated: 0 },
+    },
+    pi: undefined,
+    model: undefined,
+    streaming: undefined,
+    status: { type: "idle" },
+    messages: [],
+    toolByCallId: new Map(),
+    tree: { messageEntries: {} },
+    hasPendingInteraction: () => false,
+    hasRunningChildren: () => false,
+  };
+  const history = parsePiSessionText(managed, "test", `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+  const cell = tools(history).find((part) => part.callID === "new-cell");
+  assert.ok(cell?.state.status === "completed");
+  assert.equal(cell.state.time.end, Date.parse(at(180)), "the cell waits for the shell its trimmed output names");
+  const finished = tools(history).filter((part) => part.callID.startsWith("call_background_"));
+  assert.equal(finished.length, 3);
+  const [, own, unclaimed] = finished;
+  assert.ok(own && own.state.status !== "pending");
+  assert.equal(own.state.time.start, Date.parse(at(100)), "started with this cell, not the earlier bash_1 launch");
+  assert.ok(unclaimed && unclaimed.state.status !== "pending");
+  assert.equal(unclaimed.state.time.start, Date.parse(at(190)), "an already-finished launch is not borrowed");
+});

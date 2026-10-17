@@ -55,14 +55,21 @@ export function backgroundCommands(result: ToolResult): Record<string, unknown> 
   for (const call of details.toolCalls) {
     if (call?.name !== "bash" || typeof call.resultPreview !== "string" || typeof call.args?.command !== "string")
       continue;
-    const id = /\bID:\s*(bash_\d+)\b/.exec(call.resultPreview)?.[1];
-    if (id !== undefined) commands[id] = call.args.command;
+    for (const id of launchedShells(call.resultPreview)) commands[id] = call.args.command;
   }
   return Object.keys(commands).length === 0 ? {} : { backgroundCommands: commands };
 }
 
-/** Background shells a result says it left running (raw RPC capture, 2026-10-17). */
-const LAUNCHED = /\b(?:running in background|auto-detached to background) with ID:\s*(bash_\d+)\b/g;
+/**
+ * Background shells a result says it left running (raw RPC captures, 2026-10-17). A cell's output is
+ * trimmed to its tail, which can cut the "with ID" line and leave only the bash_output hint.
+ */
+const LAUNCHED =
+  /\b(?:running in background|auto-detached to background) with ID:\s*(bash_\d+)\b|Use bash_output\(\{ bash_id: "(bash_\d+)" \}\) only to peek/g;
+
+export function launchedShells(text: string): string[] {
+  return [...new Set([...text.matchAll(LAUNCHED)].map((match) => match[1] ?? match[2] ?? "").filter(Boolean))];
+}
 
 /**
  * What a tool result leaves running: the background shells it started, and the eval cell
@@ -70,7 +77,7 @@ const LAUNCHED = /\b(?:running in background|auto-detached to background) with I
  */
 export function backgroundWaits(callID: string, text: string, result?: ToolResult): string[] {
   const waits = new Set<string>();
-  for (const match of text.matchAll(LAUNCHED)) if (match[1] !== undefined) waits.add(match[1]);
+  for (const id of launchedShells(text)) waits.add(id);
   const commands = result === undefined ? undefined : backgroundCommands(result).backgroundCommands;
   if (commands !== null && typeof commands === "object") for (const id of Object.keys(commands)) waits.add(id);
   if (/^Eval cell \S+ detached and is running/.test(text)) waits.add(callID);
@@ -200,29 +207,42 @@ export function backgroundMessage(
   // The card that launched the command started it, so the finished card shows the real run time.
   let started = entry.created;
   if (result.kind === "terminal") {
-    for (const message of messages.toReversed()) {
-      for (const part of message.parts) {
+    // Newest first, stopping at an earlier finish of the same id: OmO numbers shells from bash_1 again
+    // after its process restarts, so an older launch of that id is not this command's.
+    search: for (const message of messages.toReversed()) {
+      for (const part of message.parts.toReversed()) {
         if (part.type !== "tool" || part.state.status === "pending") continue;
+        if (
+          part.callID.startsWith("call_background_") &&
+          part.state.input.command?.toString().split("\n")[0] === result.callID
+        )
+          break search;
         const commands = part.state.metadata?.backgroundCommands;
         const nested =
           commands !== null && typeof commands === "object" && result.callID in commands
             ? Reflect.get(commands, result.callID)
             : undefined;
+        const held = part.state.metadata?.output;
         const output =
-          part.state.status === "completed" ? part.state.output : part.state.status === "error" ? part.state.error : "";
+          part.state.status === "completed"
+            ? part.state.output
+            : part.state.status === "error"
+              ? part.state.error
+              : typeof held === "string"
+                ? held
+                : "";
         const original =
           typeof nested === "string"
             ? nested
-            : /\bID:\s*(bash_\d+)\b/.exec(output)?.[1] === result.callID
-              ? part.state.input.command
+            : launchedShells(output).includes(result.callID)
+              ? (part.state.input.command ?? part.state.input.code)
               : undefined;
         if (typeof original === "string") {
           command += `\n${original}`;
           started = Math.min(part.state.time.start, entry.created);
-          break;
+          break search;
         }
       }
-      if (command !== result.callID) break;
     }
   }
   const sessionID = s.info.id;
