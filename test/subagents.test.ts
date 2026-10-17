@@ -700,6 +700,58 @@ test("after a restart a wake reaches a registry-only child and nested eval tasks
   assert.equal(restarted.list(directory).find((session) => session.id === ocIdFor("st_inner"))?.parentID, outerID);
 });
 
+test("a deleted child stays deleted after a parent history read and a restart", async (t) => {
+  const { manager, parentPath, store, directory, parent } = setup(t);
+  const batch = fixture.samples[1];
+  appendFileSync(
+    parentPath,
+    `${[
+      {
+        type: "message",
+        id: "a",
+        parentId: null,
+        timestamp: 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "batch", name: "task", arguments: batch.arguments }],
+        },
+      },
+      {
+        type: "message",
+        id: "r",
+        parentId: "a",
+        timestamp: 2,
+        message: { role: "toolResult", toolName: "task", toolCallId: "batch", ...batch },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n")}\n`,
+  );
+  liveRecord(store, "st_01a12ba2", "completed", "deleted child");
+  await manager.disposeAll();
+  const childID = ocIdFor("st_01a12ba2");
+  const query = `directory=${encodeURIComponent(directory)}`;
+  const ids = async (url: string) =>
+    ((await fetch(`${url}/session?${query}`).then((response) => response.json())) as Array<{ id: string }>).map(
+      (session) => session.id,
+    );
+  const first = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
+  await first.start();
+  await fetch(`${first.url}/session/${parent.info.id}/message?${query}`).then((response) => response.json());
+  assert.ok((await ids(first.url)).includes(childID));
+  const deleted = await fetch(`${first.url}/session/${childID}?${query}`, { method: "DELETE" });
+  assert.equal(deleted.status, 200);
+  await fetch(`${first.url}/session/${parent.info.id}/message?${query}`).then((response) => response.json());
+  assert.ok(!(await ids(first.url)).includes(childID));
+  await first.stop();
+  const second = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
+  await second.start();
+  t.after(() => second.stop());
+  await fetch(`${second.url}/session/${parent.info.id}/message?${query}`).then((response) => response.json());
+  assert.ok(!(await ids(second.url)).includes(childID));
+  assert.equal((await fetch(`${second.url}/session/${childID}?${query}`)).status, 404);
+});
+
 test("dormant parent rebuilds batch children and applies trailing wake results", (t) => {
   const { manager, parent, parentPath } = setup(t);
   const batch = fixture.samples[1];

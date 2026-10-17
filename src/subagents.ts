@@ -367,6 +367,7 @@ export class SubagentBridge {
       const id = metadata.taskID;
       const details = record(metadata.task) ? metadata.task : {};
       let child = this.children.get(ocIdFor(id));
+      if (!child && this.deleted(ocIdFor(id))) continue;
       if (!child) {
         child = this.create(parent, {
           id,
@@ -419,7 +420,7 @@ export class SubagentBridge {
     if (known) return known.session;
     const entry = this.store.get(id);
     if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
-    if (!entry.task || !entry.parentID) return undefined;
+    if (entry.deleted || !entry.task || !entry.parentID) return undefined;
     const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task);
     child.session.info.title = entry.title ?? child.session.info.title;
     return child.session;
@@ -803,13 +804,29 @@ export class SubagentBridge {
     }
   }
 
-  remove(id: string): void {
+  /** Forget a deleted child and leave a registry tombstone; false when `id` is not a child. */
+  remove(id: string): boolean {
     const child = this.children.get(id);
-    if (!child) return;
+    if (!child) return false;
     this.closeWatchers(child);
     child.parts.clear();
     this.children.delete(id);
     this.removed.add(id);
+    const { info } = child.session;
+    this.store.set(id, {
+      deleted: true,
+      piSessionId: child.session.piSessionId ?? child.task.id,
+      piPath: this.archive(child.task.id),
+      directory: info.directory,
+      ...(info.parentID !== undefined ? { parentID: info.parentID } : {}),
+      created: info.time.created,
+      updated: info.time.updated,
+    });
+    return true;
+  }
+
+  private deleted(id: string): boolean {
+    return this.removed.has(id) || this.store.get(id)?.deleted === true;
   }
 
   dispose(): void {

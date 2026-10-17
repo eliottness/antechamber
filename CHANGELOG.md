@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep deleted subagent sessions deleted. They came back when their parent's history was read again or when the
+  adapter restarted, because OmO still holds their task record.
+
 ## [0.2.15] - 2026-10-17
 
 ### Fixed
