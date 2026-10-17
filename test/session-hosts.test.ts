@@ -121,7 +121,9 @@ for (const scenario of [
   "pidfd-unavailable",
   "pidfd-permission-denied",
 ])
-  test(`B4-REUSE ${scenario} never signals the replacement`, { skip: linuxOnly }, async (t) => {
+  test(`B4-REUSE ${scenario} never signals the replacement`, async (t) => {
+    // Every /proc, pidfd and signal boundary is simulated, so run the Linux teardown on any host.
+    const stop = createSessionHostStopper("linux", () => "python3");
     const owner = "reviewer-inert-owner";
     const cwd = "/reviewer/inert";
     const socket = `/inert/p-${createHash("sha256").update(`p:${owner}`).digest("hex").slice(0, 16)}.sock`;
@@ -264,7 +266,7 @@ for (const scenario of [
         return [index + 3, record];
       });
       const child = original.spawn(
-        "/bin/python3",
+        "python3",
         [
           "-I",
           resolve("test/fixtures/pidfd-host-probe.py"),
@@ -298,9 +300,9 @@ for (const scenario of [
 
     const failClosed = ["group-change", "pidfd-unavailable", "pidfd-permission-denied"].includes(scenario);
     if (failClosed) {
-      await assert.rejects(stopSessionHosts(new Map([[owner, cwd]])), /pidfd teardown failed/);
+      await assert.rejects(stop(new Map([[owner, cwd]])), /pidfd teardown failed/);
     } else {
-      await stopSessionHosts(new Map([[owner, cwd]]));
+      await stop(new Map([[owner, cwd]]));
     }
 
     const result = helperResult ?? {
