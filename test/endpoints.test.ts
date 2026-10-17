@@ -537,11 +537,14 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
   await stream.ready;
   const pi = server["sessions"].get(sessionId)?.pi;
   assert.ok(pi);
-  let abortBashDispatched = false;
+  let resolveAbortBash: () => void = () => {};
+  const abortBashDispatched = new Promise<void>((resolve) => {
+    resolveAbortBash = resolve;
+  });
   const pending = new Promise<void>((resolvePending) => {
     pi.onEvent((event) => {
       if (event.type === "fixture_bash_pending") resolvePending();
-      if (event.type === "fixture_abort_bash") abortBashDispatched = true;
+      if (event.type === "fixture_abort_bash") resolveAbortBash();
     });
   });
   const cancelled = stream.waitFor(
@@ -568,8 +571,8 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
     assert.equal(await response.json(), true);
   }
   assert.equal((await shell).status, 200);
-  await Promise.all([cancelled, idle]);
-  assert.equal(abortBashDispatched, true);
+  // abort_bash is a notification, so the waiter is released before the agent reports it.
+  await Promise.all([cancelled, idle, abortBashDispatched]);
   assert.ok(performance.now() - started < 10_000);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
   assert.doesNotMatch(JSON.stringify(server["sessions"].messages(sessionId)), /echo SECOND/);
