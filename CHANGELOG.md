@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-10-17
+
 ### Fixed
 
 - Keep a session's thinking level when it is reopened. User messages now carry the level as `model.variant`, both
