@@ -29,6 +29,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Report the real agent startup failure on macOS instead of `kill EPERM`. When OmO exited while a session was being
   created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
   to create session" with the original error hidden.
+- Show live bash and eval output in OpenChamber 1.24, and display eval and terminal controls as shell cards with
+  their final results retained after history reload.
 
 ## [0.2.18] - 2026-10-17
 

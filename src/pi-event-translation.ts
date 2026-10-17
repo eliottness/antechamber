@@ -474,6 +474,21 @@ export class PiEventTranslator {
           return;
         const part = typeof ev.toolCallId === "string" ? s.toolByCallId.get(ev.toolCallId) : undefined;
         if (part === undefined || part.state.status !== "running") return;
+        const partial = ev.partialResult;
+        let output = resultText(
+          partial !== null && typeof partial === "object" && "content" in partial ? partial.content : undefined,
+        );
+        if (ev.toolName === "eval") {
+          // raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17:
+          // eval prefixes cumulative stdout with status lines, unlike its final result.
+          const header = /^\d+\/(\d+) cells? (?:running|complete)\b[^\n]*(?:\n|$)/.exec(output);
+          if (header !== null) {
+            output = output.slice(header[0].length);
+            if (header[1] === "1") output = output.replace(/^\[1\] \S+ [^\n]* (?:running|complete)(?:\r?\n|$)/, "");
+          }
+          if (/^waiting for the \w+ kernel to be ready$/.test(output.trim())) output = "";
+        }
+        if (output.trim() !== "") part.state.metadata = { ...part.state.metadata, output };
         this.emitPart(s, part);
         return;
       }
