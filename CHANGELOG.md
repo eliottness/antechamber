@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.25] - 2026-10-17
+
+- feat(tools): show subagents and monitors started inside eval (#30)
+
 ## [0.2.24] - 2026-10-17
 
 ### Fixed
