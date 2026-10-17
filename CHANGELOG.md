@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-10-17
+
 ### Fixed
 
 - Show a session as running in OpenChamber while a subagent it started from `eval` (such as an OmO Graph run) is
