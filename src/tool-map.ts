@@ -129,6 +129,91 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
   };
 }
 
+/**
+ * What an eval cell started that has a session of its own. Its other calls are not shown:
+ * the cell's output already holds what it printed, and OmO records only a one-line preview.
+ */
+export interface NestedSessions {
+  /** The monitor child session for a recorded `monitor` call. */
+  monitor?: (args: Record<string, unknown>) => string | undefined;
+  /** The subagent session for a recorded `agent()` call; `claimed` keeps repeated calls apart. */
+  agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => string | undefined;
+}
+
+/** A subagent-style card, as OpenChamber draws `task`: it opens `sessionID` when there is one. */
+function nestedSubagent(description: string, prompt: string, type: string, sessionID: string | undefined): MappedTool {
+  return {
+    tool: "task",
+    input: { description, prompt, subagent_type: type },
+    title: description.slice(0, 60),
+    metadata: sessionID !== undefined ? { sessionID } : {},
+  };
+}
+
+/**
+ * Finished eval calls, from the raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17.
+ * Monitors and `agent()` calls (recorded as `__agent__`) become subagent cards; everything else is skipped.
+ */
+export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: NestedSessions = {}): OCToolPart[] {
+  if (!record(details) || !Array.isArray(details.toolCalls)) return [];
+  const parts: OCToolPart[] = [];
+  const start = parent.state.status === "pending" ? 0 : parent.state.time.start;
+  const claimed = new Set<string>();
+  details.toolCalls.forEach((entry: unknown, index) => {
+    if (
+      !record(entry) ||
+      (entry.name !== "monitor" && entry.name !== "__agent__") ||
+      typeof entry.ok !== "boolean" ||
+      typeof entry.durationMs !== "number" ||
+      !Number.isFinite(entry.durationMs) ||
+      entry.durationMs < 0
+    )
+      return;
+    const args = record(entry.args) ? entry.args : {};
+    let mapped: MappedTool;
+    if (entry.name === "monitor") {
+      const sessionID = entry.ok ? sessions.monitor?.(args) : undefined;
+      if (sessionID === undefined) return; // nothing to open; the cell's code already shows the call
+      const command = typeof args.command === "string" ? args.command : "";
+      const label = typeof args.description === "string" && args.description !== "" ? args.description : command;
+      mapped = nestedSubagent(`Monitor: ${label}`, command, "monitor", sessionID);
+    } else {
+      const prompt = typeof args.prompt === "string" ? args.prompt : "";
+      const label = [args.label, args.description, prompt.split("\n")[0]].find(
+        (value): value is string => typeof value === "string" && value !== "",
+      );
+      const sessionID = entry.ok ? sessions.agent?.(args, claimed, start) : undefined;
+      const type = typeof args.agent === "string" && args.agent !== "" ? args.agent : "subagent";
+      mapped = nestedSubagent(label ?? "subagent", prompt, type, sessionID);
+    }
+    const key = typeof entry.callId === "string" ? `id:${encodeURIComponent(entry.callId)}` : `index:${index}`;
+    const callID = `${encodeURIComponent(parent.callID)}:${key}`;
+    const state = {
+      input: mapped.input,
+      title: mapped.title,
+      output: "",
+      metadata: { ...mapped.metadata, nested: true, parentCallID: parent.callID, durationMs: entry.durationMs },
+      time: { start, end: start + entry.durationMs },
+    };
+    parts.push({
+      id: `prt_${parent.sessionID}_nested_${callID}`,
+      sessionID: parent.sessionID,
+      messageID: parent.messageID,
+      type: "tool",
+      callID: `nested:${callID}`,
+      tool: mapped.tool,
+      state: entry.ok
+        ? { ...state, status: "completed" }
+        : {
+            ...state,
+            status: "error",
+            error: typeof entry.error === "string" && entry.error !== "" ? entry.error : "failed",
+          },
+    });
+  });
+  return parts;
+}
+
 /** JSON first, then the literal-only Python repr used by older session files.
  * Never execute provider content; invalid or incomplete literals are skipped.
  */

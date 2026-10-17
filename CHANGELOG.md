@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Show subagents and monitors started inside an eval cell as subagent cards that open their session, live and after
+  reloading history. A failed `agent()` call keeps its error.
+
 ## [0.2.21] - 2026-10-17
 
 ### Fixed
@@ -29,6 +34,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Report the real agent startup failure on macOS instead of `kill EPERM`. When OmO exited while a session was being
   created, cleanup signalled its not yet reaped process group, macOS answered EPERM, and OpenChamber showed "Failed
   to create session" with the original error hidden.
+
+### Added
+
+- Show completed calls made inside eval as individual tool cards, with their recorded previews, both live and after
+  reloading session history.
 
 ## [0.2.18] - 2026-10-17
 
