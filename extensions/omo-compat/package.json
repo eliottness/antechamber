@@ -1,0 +1,28 @@
+{
+  "name": "antechamber-omo-compat",
+  "version": "0.2.21",
+  "description": "OpenChamber extension: displays OmO tool calls the way OmO means them when OpenChamber runs on antechamber",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=1.24.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "omo-compat",
+        "name": "OmO Compatibility",
+        "icon": "icon.svg"
+      },
+      "tools": [
+        {
+          "match": "bash",
+          "title": "{metadata.evalTitle}",
+          "subtitle": "{metadata.evalSubtitle}"
+        }
+      ]
+    }
+  }
+}

@@ -261,3 +261,14 @@ test("setup points at the bundled OmO Graph extension once it is built", (t) => 
   const [line] = hint(setup({ ...options, dryRun: true }, ctx));
   assert.ok(line?.endsWith(`Folder: ${extension}`));
 });
+
+test("setup points at the bundled OmO Compatibility extension, which needs no build", (t) => {
+  const { home, ctx, options } = fixture(t);
+  const extension = join(home, "extensions", "omo-compat");
+  const hint = (lines: string[]) => lines.filter((line) => line.includes("OmO Compatibility extension"));
+  assert.deepEqual(hint(setup({ ...options, dryRun: true }, ctx)), []);
+  fs.mkdirSync(extension, { recursive: true });
+  fs.writeFileSync(join(extension, "package.json"), "");
+  const [line] = hint(setup({ ...options, dryRun: true }, ctx));
+  assert.ok(line?.endsWith(`Folder: ${extension}`));
+});

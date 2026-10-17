@@ -367,7 +367,7 @@ OpenCode events with no adapter source are not emitted.
 | pi stdout event | OpenCode SSE |
 |---|---|
 | `message_update` / `assistantMessageEvent: text_delta` | `message.part.delta` followed by `message.part.updated` snapshot |
-| `assistantMessageEvent: toolcall_start/delta/end` | `message.part.updated` (tool part; pending `{raw}` accumulates the streamed JSON fragments, running carries parsed `arguments`, result lands at `turn_end`) |
+| `assistantMessageEvent: toolcall_start/delta/end` | `message.part.updated` (tool part; pending `{raw}` accumulates streamed JSON, running carries renderer inputs; eval and terminal controls use `bash` cards). Execution updates carry live `metadata.output`; completion supplies `output`. |
 | `turn_end` (`toolResults[]`) | `message.part.updated` (tool part, completed `{output}` or error per `isError`, matched by `toolCallId`) |
 | `bash_execution_update` | unmapped; folded into tool parts above |
 | turn start / turn end | `session.status` (busy) / `session.idle` |

@@ -58,7 +58,7 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Tag must match package.json and the extension
         run: |
-          for file in package.json extensions/omo-dag/package.json; do
+          for file in package.json extensions/omo-dag/package.json extensions/omo-compat/package.json; do
             actual="$(node -p "require('./$file').version")"
             test "$actual" = "$VERSION" || { echo "$file is at $actual, expected $VERSION"; exit 1; }
           done
@@ -96,12 +96,19 @@ jobs:
       # Installable from OpenChamber by URL: .../releases/latest/download/antechamber-omo-graph.zip
       - name: Package the OmO Graph extension
         run: npm run pack:extension -- "$RUNNER_TEMP/antechamber-omo-graph.zip"
+      # OpenChamber unwraps a zip whose only entry is a folder holding package.json.
+      - name: Package the OmO Compatibility extension
+        run: |
+          stage="$(mktemp -d)/antechamber-omo-compat"
+          mkdir -p "$stage"
+          cp extensions/omo-compat/package.json extensions/omo-compat/icon.svg extensions/omo-compat/README.md "$stage/"
+          (cd "$(dirname "$stage")" && zip -qrX "$RUNNER_TEMP/antechamber-omo-compat.zip" antechamber-omo-compat)
       - name: Create GitHub release
         run: |
           if gh release view "v$VERSION" > /dev/null 2>&1; then
-            gh release upload "v$VERSION" "$RUNNER_TEMP/antechamber-omo-graph.zip" --clobber
+            gh release upload "v$VERSION" "$RUNNER_TEMP/antechamber-omo-graph.zip" "$RUNNER_TEMP/antechamber-omo-compat.zip" --clobber
           else
-            gh release create "v$VERSION" "$RUNNER_TEMP/antechamber-omo-graph.zip" --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+            gh release create "v$VERSION" "$RUNNER_TEMP/antechamber-omo-graph.zip" "$RUNNER_TEMP/antechamber-omo-compat.zip" --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
           fi
         env:
           GH_TOKEN: ${{ github.token }}

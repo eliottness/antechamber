@@ -35,6 +35,9 @@
     "extensions/omo-dag/service/main.js",
     "extensions/omo-dag/README.md",
     "extensions/omo-dag/docs/DESIGN.md",
+    "extensions/omo-compat/package.json",
+    "extensions/omo-compat/icon.svg",
+    "extensions/omo-compat/README.md",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
