@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-10-17
+
 ### Fixed
 
 - Keep deleted subagent sessions deleted. They came back when their parent's history was read again or when the
