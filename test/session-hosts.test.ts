@@ -10,7 +10,6 @@ import test, { type TestContext } from "node:test";
 import { createSessionHostStopper, stopSessionHosts } from "../src/session-hosts.js";
 import { trackDetachedFixture } from "./fixtures/detached-fixture.js";
 
-// Teardown runs only on Linux: it needs pidfd through python3 and /proc.
 const linuxOnly = process.platform !== "linux";
 
 test("unsupported private-host teardown warns once without scanning or signalling", async (t) => {

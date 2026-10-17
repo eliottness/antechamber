@@ -86,7 +86,6 @@ test("F2 B4 live private survivor fails shutdown even when harness cleanup can k
     },
   );
   const exited = once(child, "exit");
-  // A failed assertion must not leave the helper holding the test process open.
   t.after(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   });

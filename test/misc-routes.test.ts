@@ -27,7 +27,6 @@ test("owned routes return real listings or truthful neutral and unsupported resp
     {
       name: "match.txt",
       path: "nested/match.txt",
-      // Listings are rooted at the canonical directory (macOS tmpdir is under a /var symlink).
       absolute: join(realpathSync(dir), "nested", "match.txt"),
       type: "file",
       ignored: false,

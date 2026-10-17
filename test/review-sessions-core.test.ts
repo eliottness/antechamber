@@ -370,6 +370,5 @@ test("R-029: filesystem delete failure is observable to the caller", { timeout: 
   rmSync(path);
   mkdirSync(path);
 
-  // unlink(2) on a directory is EISDIR on Linux and EPERM on macOS.
   await assert.rejects(h.manager.remove(session.id), { code: process.platform === "linux" ? "EISDIR" : "EPERM" });
 });

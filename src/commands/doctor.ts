@@ -29,7 +29,7 @@ interface DoctorReport {
   readonly exitCode: 0 | 1;
 }
 
-/** Signal 0 probes existence on every platform; EPERM means it exists under another user. */
+/** EPERM means the process exists under another user. */
 function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);

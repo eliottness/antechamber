@@ -18,7 +18,6 @@ import { branchEntries, getEntries } from "../src/session-tree.js";
 
 const fixture = resolve("test/fixtures/fake-omo.mjs");
 const deadline = () => AbortSignal.timeout(10_000);
-// Private-host teardown needs pidfd, /proc and Linux process semantics.
 const linuxOnly = process.platform !== "linux";
 
 class Clock implements LifecycleClock {
