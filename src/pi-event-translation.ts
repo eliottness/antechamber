@@ -34,6 +34,13 @@ import { getAgentName } from "./agent-name.js";
 import { userMessageModel } from "./thinking-levels.js";
 import { debugLog } from "./misc-routes.js";
 import { envSetting } from "./config.js";
+import {
+  backgroundCommands,
+  backgroundID,
+  backgroundMessage,
+  backgroundResult,
+  completeBackgroundEval,
+} from "./background-results.js";
 
 export interface PiUsage {
   input?: number;
@@ -252,7 +259,9 @@ export class PiEventTranslator {
     });
     if (status.type === "idle") {
       s.info.time.idle = Date.now();
-      const last = s.messages?.findLast((message) => message.info.role === "assistant");
+      const last = s.messages?.findLast(
+        (message) => message.info.role === "assistant" && !message.info.id.startsWith("msg_background_"),
+      );
       s.info.outcome =
         s.interruptRequested || (last?.info.role === "assistant" && last.info.error?.name === "MessageAbortedError")
           ? "interrupted"
@@ -332,6 +341,7 @@ export class PiEventTranslator {
     switch (ev.type) {
       case "entry_appended":
         this.onTodoEntry(s, ev);
+        this.onBackgroundEntry(s, ev.entry, "entry");
         break;
       case "session_info_changed":
         this.services.applyNativeTitle(s, ev.name);
@@ -370,6 +380,44 @@ export class PiEventTranslator {
     s.todoBridge ??= new TodoBridge(s.info.id);
     const event = s.todoBridge.entry(ev.entry, (part) => this.emitPart(s, part));
     if (event !== undefined) this.services.emit(s.info.directory, event);
+  }
+
+  private onBackgroundEntry(s: ManagedSession, value: unknown, source: "message" | "entry" = "message"): void {
+    if (value === null || typeof value !== "object") return;
+    if (!("customType" in value) || !("content" in value)) return;
+    const result = backgroundResult(value.customType, value.content);
+    if (result === undefined) return;
+    const messages = this.services.ensureMessages(s);
+    const timestamp = "timestamp" in value ? value.timestamp : undefined;
+    const parsed = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
+    const created = typeof parsed === "number" && Number.isFinite(parsed) ? parsed : Date.now();
+    const part = completeBackgroundEval(messages, result, created);
+    const prefix = `msg_background_${result.key}_`;
+    const unbound = messages.findLast(
+      (message) => message.info.id.startsWith(prefix) && s.tree.messageEntries[message.info.id] === undefined,
+    );
+    if (part !== undefined) this.emitPart(s, part);
+    else if (source === "entry" && unbound !== undefined) {
+      // The live custom message already created this card; the entry only supplies its native ID.
+      if ("id" in value && typeof value.id === "string") s.tree.messageEntries[unbound.info.id] = value.id;
+    } else {
+      const message = backgroundMessage(s, result, {
+        id: backgroundID(messages, result),
+        created,
+        model: s.model ?? { providerID: "unknown", modelID: "unknown" },
+        agent: getAgentName(),
+      });
+      if (messages.some((existing) => existing.info.id === message.info.id)) return;
+      if ("id" in value && typeof value.id === "string") s.tree.messageEntries[message.info.id] = value.id;
+      const boundary = messages.findIndex((item) => item.info.id === s.tree.revert?.messageID);
+      messages.splice(boundary < 0 ? messages.length : boundary, 0, message);
+      this.services.emit(s.info.directory, { type: "message.updated", properties: { info: message.info } });
+      for (const part of message.parts) this.emitPart(s, part);
+    }
+    if ("id" in value && typeof value.id === "string") {
+      recordTurn(s);
+      this.services.persistMeta(s);
+    }
   }
 
   private onLifecycleEvent(s: ManagedSession, ev: Record<string, unknown>): void {
@@ -511,6 +559,15 @@ export class PiEventTranslator {
         const custom = ev.message as Record<string, unknown> | undefined;
         if (custom?.role === "custom" && custom.customType === MONITOR_NOTIFICATION) {
           this.services.monitors.notify(s, custom);
+          return;
+        }
+        if (
+          ev.message !== null &&
+          typeof ev.message === "object" &&
+          "role" in ev.message &&
+          ev.message.role === "custom"
+        ) {
+          this.onBackgroundEntry(s, ev.message);
           return;
         }
         const msg = ev.message as
@@ -915,6 +972,7 @@ export class PiEventTranslator {
       const metadata = {
         ...(part.state.status !== "pending" ? part.state.metadata : {}),
         ...resultMetadata(part.tool, tr),
+        ...backgroundCommands(tr),
       };
       const title =
         part.state.status === "running" || part.state.status === "completed"

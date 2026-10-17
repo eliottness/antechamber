@@ -19,6 +19,13 @@ import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree
 import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
 import { compactionMessages, piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
+import {
+  backgroundCommands,
+  backgroundID,
+  backgroundMessage,
+  backgroundResult,
+  completeBackgroundEval,
+} from "./background-results.js";
 
 // ----------------------------------------------------------------------
 // Restored-session history: pi JSONL file → OpenCode messages + parts
@@ -230,6 +237,19 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         ),
       );
       continue;
+    }
+    if (e.type === "custom_message") {
+      const result = backgroundResult(e.customType, e.content);
+      if (result !== undefined && completeBackgroundEval(out, result, entryTime(e)) === undefined) {
+        const message = backgroundMessage({ info: s.info, messages: out }, result, {
+          id: backgroundID(out, result),
+          created: entryTime(e),
+          model: currentModel,
+          agent: agentName,
+        });
+        if (e.id !== undefined) s.tree.messageEntries[message.info.id] = e.id;
+        out.push(message);
+      }
     }
     const contextID = contextMessageID(e);
     if (contextID !== undefined) {
@@ -477,6 +497,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       const metadata = {
         ...(part.state.status !== "pending" ? part.state.metadata : {}),
         ...resultMetadata(part.tool, m),
+        ...backgroundCommands(m),
       };
       const title =
         part.state.status === "running" || part.state.status === "completed"
