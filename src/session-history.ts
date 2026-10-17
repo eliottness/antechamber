@@ -16,7 +16,7 @@ import { TodoBridge } from "./todo-bridge.js";
 import { userMessageModel } from "./thinking-levels.js";
 import { contextMessageID } from "./prompt-parts.js";
 import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree.js";
-import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
+import { evalAgentSession, taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
 import { compactionMessages, piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
 
@@ -499,7 +499,10 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
               metadata,
               time: { start: startedAt, end: created },
             };
-      const nested = nestedToolParts(part, m.details);
+      const nested = nestedToolParts(part, m.details, {
+        agent: (args, claimed, after) =>
+          evalAgentSession(s.piSessionId ?? s.restored?.piSessionId, args, claimed, after),
+      });
       const owner = out.find((message) => message.info.id === part.messageID);
       if (owner !== undefined) {
         for (const card of nested) {

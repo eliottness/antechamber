@@ -16,7 +16,7 @@ import type {
 import type { ManagedSession } from "./sessions.js";
 import type { PiFileMessage } from "./session-history.js";
 import type { SessionStore } from "./session-store.js";
-import type { SubagentBridge } from "./subagents.js";
+import { evalAgentSession, type SubagentBridge } from "./subagents.js";
 import type { MonitorSessions } from "./monitor-sessions.js";
 import {
   applyProviderToolResults,
@@ -939,7 +939,10 @@ export class PiEventTranslator {
   }
 
   private onNestedTools(s: ManagedSession, parent: OCToolPart, details: unknown): void {
-    const nested = nestedToolParts(parent, details, (args) => this.services.monitors.findChild(s.info.id, args));
+    const nested = nestedToolParts(parent, details, {
+      monitor: (args) => this.services.monitors.findChild(s.info.id, args),
+      agent: (args, claimed, after) => evalAgentSession(s.piSessionId ?? s.restored?.piSessionId, args, claimed, after),
+    });
     if (nested.length === 0) return;
     const owner = s.messages?.find((message) => message.info.id === parent.messageID);
     if (owner === undefined) return;

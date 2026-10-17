@@ -9,8 +9,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Show completed calls made inside eval as individual tool cards, with their recorded previews, both live and after
-  reloading session history. A monitor started inside eval opens its monitor session like a subagent.
+- Show subagents and monitors started inside an eval cell as subagent cards that open their session, live and after
+  reloading history. A failed `agent()` call keeps its error.
 
 ## [0.2.21] - 2026-10-17
 
