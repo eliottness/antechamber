@@ -514,7 +514,8 @@ export class SessionManager {
       else delete s.info.time.archived; // 0 = unarchive
     }
     s.info.time.updated = Date.now();
-    this.persistMeta(s);
+    // Child sessions have no pi path of their own, so persistMeta would skip them.
+    if (!this.subagents.save(s.info.id)) this.persistMeta(s);
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     return s.info;
   }

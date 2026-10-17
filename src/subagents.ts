@@ -388,6 +388,7 @@ export class SubagentBridge {
   }
 
   private create(parent: ManagedSession, task: ChildTask): Child {
+    const archived = this.store.get(ocIdFor(task.id))?.archived;
     const session = this.managedSession({
       id: ocIdFor(task.id),
       parentID: parent.info.id,
@@ -395,7 +396,7 @@ export class SubagentBridge {
       directory: parent.info.directory,
       title: typeof task.input.description === "string" ? task.input.description : task.id,
       version: parent.info.version,
-      time: { ...parent.info.time },
+      time: { ...parent.info.time, ...(archived !== undefined ? { archived } : {}) },
     });
     const child: Child = {
       session,
@@ -736,6 +737,14 @@ export class SubagentBridge {
     return this.parse(child.session, `${request}\n${response}\n`);
   }
 
+  /** Save a rename or archive made through the session routes; false when `id` is not a child. */
+  save(id: string): boolean {
+    const child = this.children.get(id);
+    if (!child) return false;
+    this.persist(child);
+    return true;
+  }
+
   private persist(child: Child): void {
     const { info } = child.session;
     try {
@@ -745,6 +754,7 @@ export class SubagentBridge {
         directory: info.directory,
         title: info.title,
         parentID: info.parentID,
+        ...(info.time.archived !== undefined ? { archived: info.time.archived } : {}),
         task: child.task,
         created: info.time.created,
         updated: info.time.updated,
