@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show completed background bash output and detached eval results in OpenChamber, including after reloading history.
+  A card that started background work keeps running until that work finishes.
+
 ## [0.2.23] - 2026-10-17
 
 - feat(monitors): show matched lines in monitor sessions (#32)

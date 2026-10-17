@@ -3,15 +3,7 @@
 import { readFileSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
 import type { OCAssistantMessage, OCMessageWithParts, OCModelRef, OCPart, OCToolPart, OCUserMessage } from "./types.js";
-import {
-  applyProviderToolResults,
-  finishProviderToolParts,
-  mapTool,
-  providerToolParts,
-  resultMetadata,
-  resultText,
-  toolFailed,
-} from "./tool-map.js";
+import { applyProviderToolResults, finishProviderToolParts, mapTool, providerToolParts } from "./tool-map.js";
 import { TodoBridge } from "./todo-bridge.js";
 import { userMessageModel } from "./thinking-levels.js";
 import { contextMessageID } from "./prompt-parts.js";
@@ -19,6 +11,15 @@ import { bindMessageEntries, type Entries, type TreeEntry } from "./session-tree
 import { taskParts, updateTaskParts, taskCompletions } from "./subagents.js";
 import { shellTitle, shellUserMessage } from "./session-commands.js";
 import { compactionMessages, piModelId, piStopReason, textOf, type PiUsage } from "./pi-event-translation.js";
+import {
+  backgroundID,
+  backgroundMessage,
+  backgroundResult,
+  completeBackgroundEval,
+  finishToolPart,
+  releaseBackground,
+  settleBackground,
+} from "./background-results.js";
 
 // ----------------------------------------------------------------------
 // Restored-session history: pi JSONL file → OpenCode messages + parts
@@ -208,7 +209,9 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     runAssistant = undefined;
   };
 
+  let lastAt = 0;
   for (const e of chain) {
+    lastAt = Math.max(lastAt, entryTime(e));
     if (e.type === "model_change" && typeof e.provider === "string" && typeof e.modelId === "string") {
       currentModel = { providerID: e.provider, modelID: e.modelId };
       continue;
@@ -230,6 +233,20 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         ),
       );
       continue;
+    }
+    if (e.type === "custom_message") {
+      const result = backgroundResult(e.customType, e.content);
+      if (result?.kind === "terminal") releaseBackground(out, result.callID, entryTime(e));
+      if (result !== undefined && completeBackgroundEval(out, result, entryTime(e)) === undefined) {
+        const message = backgroundMessage({ info: s.info, messages: out }, result, {
+          id: backgroundID(out, result),
+          created: entryTime(e),
+          model: currentModel,
+          agent: agentName,
+        });
+        if (e.id !== undefined) s.tree.messageEntries[message.info.id] = e.id;
+        out.push(message);
+      }
     }
     const contextID = contextMessageID(e);
     if (contextID !== undefined) {
@@ -471,33 +488,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         updateTaskParts(matching, m, true, created);
         continue;
       }
-      const text = resultText(m.content) ?? "";
-      const startedAt = part.state.status !== "pending" ? part.state.time.start : created;
-      const input = part.state.input ?? {};
-      const metadata = {
-        ...(part.state.status !== "pending" ? part.state.metadata : {}),
-        ...resultMetadata(part.tool, m),
-      };
-      const title =
-        part.state.status === "running" || part.state.status === "completed"
-          ? (part.state.title ?? part.tool)
-          : part.tool;
-      part.state = toolFailed(m)
-        ? {
-            status: "error",
-            input,
-            error: text !== "" ? text : `tool ${part.tool} failed`,
-            metadata,
-            time: { start: startedAt, end: created },
-          }
-        : {
-            status: "completed",
-            input,
-            output: text,
-            title,
-            metadata,
-            time: { start: startedAt, end: created },
-          };
+      if (callID !== undefined) finishToolPart(part, m, callID, created);
     }
     // system / custom entries are not rendered
   }
@@ -583,5 +574,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       if (identity !== undefined) part.id = identity;
     }
   }
+  // The agent that ran these shells is gone by the time history is rebuilt.
+  settleBackground(out, lastAt);
   return out;
 }
