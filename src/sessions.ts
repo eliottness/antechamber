@@ -86,6 +86,7 @@ export interface ManagedSession extends ThinkingState {
   abortRequests?: number;
   titleSource?: TitleSource;
   activeUserMessageID?: string;
+  deliveredInputCompactions?: Map<string, string>;
   inputs?: Map<string, { text: string; delivery: "steer" | "queue"; accepted: boolean; delivered: boolean }>;
   tree: SessionTreeState;
   info: OCSession;

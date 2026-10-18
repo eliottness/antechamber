@@ -199,16 +199,26 @@ export async function handleV1(
             .slice(start, end)
             .flatMap((message) => (message.info.role === "assistant" ? [message.info.parentID] : [])),
         );
-        // A compaction opens its own display turn, but ongoing replies still belong to the original prompt.
         const parent = messages.findIndex(
           (message, index) => index < start && message.info.role === "user" && parents.has(message.info.id),
         );
         if (parent >= 0) start = parent;
         // OpenChamber 1.24 widens a page with no user message only up to 120 messages
         // (150 on desktop), then renders it with no turn to anchor on: blank. A long agent
-        // turn outgrows that, so a page reaches back to the prompt that opened its turn.
-        if (!messages.slice(start, end).some((message) => message.info.role === "user")) {
-          const prompt = messages.findLastIndex((message, index) => index < start && message.info.role === "user");
+        // turn outgrows that, so retain its native prompt, not just a compaction display marker.
+        if (
+          !messages
+            .slice(start, end)
+            .some(
+              (message) => message.info.role === "user" && !message.parts.some((part) => part.type === "compaction"),
+            )
+        ) {
+          const prompt = messages.findLastIndex(
+            (message, index) =>
+              index < start &&
+              message.info.role === "user" &&
+              !message.parts.some((part) => part.type === "compaction"),
+          );
           if (prompt >= 0) start = prompt;
         }
         const page = messages.slice(start, end);

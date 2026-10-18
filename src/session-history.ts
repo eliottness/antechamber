@@ -227,17 +227,16 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       continue;
     }
     if (e.type === "compaction" && typeof e.summary === "string" && typeof e.firstKeptEntryId === "string") {
-      // Not a run boundary: an automatic compaction can sit between steps of one turn.
-      out.push(
-        ...compactionMessages(
-          s,
-          e.id ?? `r${indexOf.get(e) ?? 0}`,
-          e.summary,
-          entryTime(e),
-          currentModel,
-          currentThinkingLevel,
-        ),
+      const compaction = compactionMessages(
+        s,
+        e.id ?? `r${indexOf.get(e) ?? 0}`,
+        e.summary,
+        entryTime(e),
+        currentModel,
+        currentThinkingLevel,
       );
+      out.push(...compaction);
+      lastUserId = compaction[0].info.id;
       continue;
     }
     if (e.type === "custom_message") {

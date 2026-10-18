@@ -284,13 +284,15 @@ test("V124-006d: compaction does not replace the parent anchor of a paged turn",
   const prompt = initial.findLast((message) => message.info.role === "user");
   const reply = initial.at(-1);
   assert.ok(session && prompt && reply?.info.role === "assistant");
+  let displayParent = prompt.info.id;
   for (let index = 0; index < 205; index++) {
     if (index === 175) {
-      for (const message of compactionMessages(session, "paged", "Earlier work", Date.now(), session.model, undefined))
-        manager.appendMessage(sessionID, message);
+      const compaction = compactionMessages(session, "paged", "Earlier work", 3000, session.model, undefined);
+      for (const message of compaction) manager.appendMessage(sessionID, message);
+      displayParent = compaction[0].info.id;
     }
     manager.appendMessage(sessionID, {
-      info: { ...reply.info, id: `msg_step_${index}`, parentID: prompt.info.id },
+      info: { ...reply.info, id: `msg_step_${index}`, parentID: displayParent },
       parts: [],
     });
   }

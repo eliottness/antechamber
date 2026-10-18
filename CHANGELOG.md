@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep compaction markers before the replies that follow them, both live and after reopening a conversation.
+
 ## [0.2.28] - 2026-10-18
 
 - fix(session): keep replies visible after compaction (#37)
