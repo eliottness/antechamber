@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep a subagent and its parent session shown as running when OmO resumes the subagent on its own after its turn
+  ended while its background work ran, and keep the subagent's transcript up to its final reply.
+
 ## [0.2.26] - 2026-10-17
 
 ### Changed

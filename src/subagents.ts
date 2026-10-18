@@ -42,6 +42,17 @@ function active(status: unknown): boolean {
   return ["running", "queued", "pending", "starting", "suspended"].includes(String(status));
 }
 
+/**
+ * A finished task OmO may still resume on its own: a resident child whose turn settled while its own
+ * background work ran is set back to running (omo-task.js `task_self_resumed`, which goes through the
+ * same reset as a revive). Leaving residency (`rpc_detached`, `persisted_only`, `disposed`) ends that.
+ */
+function revivable(details: Record<string, unknown>): boolean {
+  return (
+    details.residency_state === "resident" && ["completed", "error", "interrupted"].includes(String(details.status))
+  );
+}
+
 function terminal(status: unknown): boolean {
   return ["completed", "failed", "error", "cancelled", "canceled", "killed", "lost", "denied", "plan_error"].includes(
     String(status),
@@ -701,7 +712,11 @@ export class SubagentBridge {
 
   private reconcileRuntime(child: Child, running: boolean): OCToolPart[] {
     child.session.status = { type: running ? "busy" : "idle" };
-    if (!running) this.closeWatchers(child);
+    if (!running) {
+      const keep = revivable(child.task.details) ? child.recordPath : undefined;
+      this.closeWatchers(child, keep);
+      if (keep !== undefined) this.watch(child, keep);
+    }
     const parts = [...child.parts.values()];
     for (const part of parts) {
       updateTaskParts(
@@ -834,9 +849,13 @@ export class SubagentBridge {
     this.emit(session.info.directory, { type: "message.part.updated", properties: { part } });
   }
 
-  private closeWatchers(child: Child): void {
-    for (const watcher of child.watchers.values()) watcher.close();
-    child.watchers.clear();
+  private closeWatchers(child: Child, keep?: string): void {
+    const kept = keep === undefined ? undefined : dirname(keep);
+    for (const [dir, watcher] of child.watchers) {
+      if (dir === kept) continue;
+      watcher.close();
+      child.watchers.delete(dir);
+    }
   }
 
   finishCalls(parentID: string, cancelled = false): void {
