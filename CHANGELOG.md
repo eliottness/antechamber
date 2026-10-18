@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.27] - 2026-10-18
+
 ### Fixed
 
 - Keep a subagent and its parent session shown as running when OmO resumes the subagent on its own after its turn
