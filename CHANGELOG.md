@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-10-18
+
+- fix(session): keep replies visible after compaction (#37)
+
 ## [0.2.27] - 2026-10-18
 
 ### Fixed
