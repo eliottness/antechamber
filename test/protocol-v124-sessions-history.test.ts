@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
+import { compactionMessages } from "../src/pi-event-translation.js";
 import { AdapterServer } from "../src/server.js";
+import type { OCMessageWithParts } from "../src/types.js";
 
 const turnRpc = resolve("test/fixtures/turn-omo.mjs");
 
@@ -35,7 +37,7 @@ async function startServer(t: TestContext) {
     rmSync(directory, { recursive: true, force: true });
   });
   await server.start();
-  return { directory, url: server.url };
+  return { directory, url: server.url, server };
 }
 
 async function createSession(url: string, directory: string, title: string) {
@@ -262,6 +264,49 @@ test("V124-006c: a page without a prompt reaches back to its turn's user message
   assert.deepEqual(roles(two), ["user", "assistant", "assistant"]);
   const older: unknown = await (await fetch(`${base}&limit=1&before=${encodeURIComponent(cursor ?? "")}`)).json();
   assert.deepEqual(roles(older), ["user", "assistant"]);
+});
+
+test("V124-006d: compaction does not replace the parent anchor of a paged turn", { timeout: 10_000 }, async (t) => {
+  const { directory, url, server } = await startServer(t);
+  const sessionID = await createSession(url, directory, "compacted long turn");
+  const base = `${url}/session/${sessionID}/message?directory=${encodeURIComponent(directory)}`;
+  for (const text of ["normal", "steps"]) {
+    const response = await fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parts: [{ type: "text", text }] }),
+    });
+    assert.equal(response.status, 200);
+  }
+  const manager = server["sessions"];
+  const session = manager.get(sessionID);
+  const initial = manager.messages(sessionID) ?? [];
+  const prompt = initial.findLast((message) => message.info.role === "user");
+  const reply = initial.at(-1);
+  assert.ok(session && prompt && reply?.info.role === "assistant");
+  for (let index = 0; index < 205; index++) {
+    if (index === 175) {
+      for (const message of compactionMessages(session, "paged", "Earlier work", Date.now(), session.model, undefined))
+        manager.appendMessage(sessionID, message);
+    }
+    manager.appendMessage(sessionID, {
+      info: { ...reply.info, id: `msg_step_${index}`, parentID: prompt.info.id },
+      parts: [],
+    });
+  }
+  for (const limit of [1, 30, 50, 150]) {
+    const response = await fetch(`${base}&limit=${limit}`);
+    const page = (await response.json()) as OCMessageWithParts[];
+    assert.equal(page[0]?.info.id, prompt.info.id);
+    assert.equal(page.at(-1)?.info.id, "msg_step_204");
+    const ids = new Set(page.map((message) => message.info.id));
+    for (const message of page) {
+      if (message.info.role === "assistant") assert.ok(ids.has(message.info.parentID), message.info.id);
+    }
+    assert.equal(response.headers.get("x-next-cursor"), prompt.info.id);
+  }
+  const older = await fetch(`${base}&limit=30&before=${encodeURIComponent(prompt.info.id)}`);
+  assert.deepEqual(await older.json(), initial.slice(0, 2));
 });
 
 test("V124-007: returns a v1 message by id", { timeout: 10_000 }, async (t) => {

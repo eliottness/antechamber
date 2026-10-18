@@ -9,6 +9,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Keep new replies and tool activity visible after compaction in long conversations by retaining their original
+  prompt in paged history.
 - Keep a subagent and its parent session shown as running when OmO resumes the subagent on its own after its turn
   ended while its background work ran, and keep the subagent's transcript up to its final reply.
 
