@@ -473,9 +473,8 @@ export class SubagentBridge {
   }
 
   /**
-   * Register the child a subagent card from an eval cell links to. Those calls make no `task` tool card, so
-   * without this the child appears only on the next session list or its completion wake, and the parent
-   * shows no running subagent once its own turn ends.
+   * Eval subagent calls make no `task` tool card, so without this their child appears only on the next session
+   * list or its completion wake, and the parent shows no running subagent once its own turn ends.
    */
   link(id: string): void {
     if (!this.sessions.has(id)) this.restore(id);
