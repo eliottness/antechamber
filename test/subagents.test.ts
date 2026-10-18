@@ -594,6 +594,64 @@ test("resumed running child supersedes stale archive and replaces it at terminal
   assert.ok(readFileSync(join(state, "children", "st_child.jsonl"), "utf8").includes("resumed run"));
 });
 
+test("a resident task OmO resumes after its turn settled shows busy again and archives the resumed run", async (t) => {
+  // omo-task.js: a child whose turn settled while its own background work ran is marked completed,
+  // then set back to running with task_self_resumed when that work wakes it.
+  const { manager, parent, store, state, bus } = setup(t);
+  const child = liveRecord(store, "st_child", "running", "waiting on sleep");
+  const resident = { ...child.data, residency_state: "resident" };
+  put(child.recordPath, resident);
+  start(manager, parent, { task_summary: "Resuming child" });
+  result(manager, parent, { task_id: "st_child", status: "running" }, "", false);
+  const childID = ocIdFor("st_child");
+  const status = (type: string) =>
+    eventWhen(
+      bus,
+      (event) =>
+        event.type === "session.status" &&
+        event.properties.sessionID === childID &&
+        event.properties.status.type === type,
+    );
+  const settle = (data: Record<string, unknown>) => {
+    put(`${child.recordPath}.tmp`, data);
+    renameSync(`${child.recordPath}.tmp`, child.recordPath);
+  };
+
+  let idle = status("idle");
+  settle({ ...resident, status: "completed", updated_at: new Date(Date.now() - 60_000).toISOString() });
+  await idle;
+  assert.equal(parent.hasRunningChildren(), false);
+
+  const busy = status("busy");
+  put(child.path, transcript("EVAL_BG_DONE"));
+  settle({
+    ...resident,
+    status: "running",
+    resumed_run_epoch: 1,
+    updated_at: new Date(Date.now() + 1_000).toISOString(),
+  });
+  await busy;
+  assert.equal(parent.hasRunningChildren(), true);
+
+  idle = status("idle");
+  settle({
+    ...resident,
+    status: "completed",
+    resumed_run_epoch: 1,
+    updated_at: new Date(Date.now() + 2_000).toISOString(),
+  });
+  await idle;
+  assert.ok(texts(manager.messages(childID)).includes("EVAL_BG_DONE"));
+  assert.ok(readFileSync(join(state, "children", "st_child.jsonl"), "utf8").includes("EVAL_BG_DONE"));
+
+  const watched = manager.subagents["children"].get(childID);
+  assert.equal(watched?.watchers.size, 1, "a resident finished task keeps its record watched");
+  const closed = eventWhen(bus, () => watched?.watchers.size === 0);
+  settle({ ...resident, status: "completed", residency_state: "rpc_detached" });
+  await closed;
+  assert.equal(watched?.watchers.size, 0, "leaving residency ends the watch");
+});
+
 test("aborting a parent ends child status and closes every child watcher", async (t) => {
   const { manager, parent, store } = setup(t);
   liveRecord(store);
