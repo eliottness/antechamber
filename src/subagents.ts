@@ -713,7 +713,6 @@ export class SubagentBridge {
   private reconcileRuntime(child: Child, running: boolean): OCToolPart[] {
     child.session.status = { type: running ? "busy" : "idle" };
     if (!running) {
-      // Keep reading the record of a task that can resume, or the resumed run never shows as busy.
       const keep = revivable(child.task.details) ? child.recordPath : undefined;
       this.closeWatchers(child, keep);
       if (keep !== undefined) this.watch(child, keep);

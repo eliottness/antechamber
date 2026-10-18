@@ -595,8 +595,6 @@ test("resumed running child supersedes stale archive and replaces it at terminal
 });
 
 test("a resident task OmO resumes after its turn settled shows busy again and archives the resumed run", async (t) => {
-  // omo-task.js: a child whose turn settled while its own background work ran is marked completed,
-  // then set back to running with task_self_resumed when that work wakes it.
   const { manager, parent, store, state, bus } = setup(t);
   const child = liveRecord(store, "st_child", "running", "waiting on sleep");
   const resident = { ...child.data, residency_state: "resident" };
