@@ -47,14 +47,21 @@ function session(): ManagedSession {
 }
 
 /** A task record as OmO writes it for agent() inside eval (senpi-task/tasks/st_*.json, 2026-10-17). */
-function writeTask(root: string, id: string, parentPiId: string, createdAt: string, prompt = "Reply NODE 1"): void {
+function writeTask(
+  root: string,
+  id: string,
+  parentPiId: string,
+  createdAt: string,
+  prompt = "Reply NODE 1",
+  status = "completed",
+): void {
   const dir = join(root, "agent", "projects", "nested-project", "senpi-task", "tasks");
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, `${id}.json`),
     JSON.stringify({
       task_id: id,
-      status: "completed",
+      status,
       parent_session_id: parentPiId,
       name: "node-1",
       agent_type: "explore",
@@ -112,6 +119,32 @@ test("a subagent started inside eval becomes a subagent card live, and other inn
     owner.parts.map((part) => (part.type !== "tool" ? part.type : part.callID === "eval-parent" ? "eval" : part.tool)),
     ["text", "eval", "task", "read", "text"],
   );
+});
+
+test("a running subagent an eval cell started is announced busy under its parent without a session list", {
+  timeout: 15_000,
+}, async (t) => {
+  // Given: OmO's record for the cell's agent() call says the subagent is still running.
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  const managed = h.manager.get(info.id);
+  assert.ok(managed?.piSessionId);
+  writeTask(h.root, "st_nested_a", managed.piSessionId, new Date().toISOString(), "Reply NODE 1", "running");
+  const childID = ocIdFor("st_nested_a");
+  const created = h.wait((event) => event.type === "session.created" && event.properties.info.id === childID);
+  const busy = h.wait(
+    (event) =>
+      event.type === "session.status" &&
+      event.properties.sessionID === childID &&
+      event.properties.status.type === "busy",
+  );
+  // When: the cell's partial result arrives with the subagent card, and nothing lists sessions.
+  await h.manager.prompt(info.id, "nested-eval", undefined, false);
+  // Then: OpenChamber hears of the child and its busy status, which keeps the parent shown as working.
+  const announced = await created;
+  assert.ok(announced.type === "session.created" && announced.properties.info.parentID === info.id);
+  await busy;
+  assert.equal(managed.hasRunningChildren(), true);
 });
 
 for (const via of ["end", "turn", "late"]) {

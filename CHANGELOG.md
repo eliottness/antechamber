@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Announce a subagent an eval cell starts as a running child session as soon as its card appears, so the parent session
+  stays shown as working in OpenChamber while it runs. Before, it appeared only after a session list reload or when it
+  finished.
+
 ## [0.2.26] - 2026-10-17
 
 ### Changed

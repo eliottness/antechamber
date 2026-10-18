@@ -1013,6 +1013,8 @@ export class PiEventTranslator {
       if (existing >= 0) owner.parts.splice(existing, 1);
       owner.parts.splice(owner.parts.indexOf(parent) + 1 + index, 0, part);
       this.emitPart(s, part);
+      const childID = part.state.status === "pending" ? undefined : part.state.metadata?.sessionID;
+      if (part.tool === "task" && typeof childID === "string") this.services.subagents.link(childID);
     }
   }
 
