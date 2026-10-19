@@ -105,7 +105,9 @@ Replay keeps the selected sessions' descendant registry closure in its sandbox,
 including archived task children whose only transcript is under `state/children/`.
 Transcript references and persisted task session paths are remapped into the
 sandbox; project directories remain the original read-only context. This copied
-closure does not add UI test jobs: `--children`, `--archived`, and `--limit` still
+closure is hydrated through the read-only message API before opening the UI,
+so restored child costs are available to its rollup. It does not add UI test jobs:
+`--children`, `--archived`, and `--limit` still
 control only the selected sessions to open. The copy helper is covered by
 `test/replay-sandbox.test.ts` without launching an agent, CLI, or browser.
 

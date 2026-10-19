@@ -198,7 +198,7 @@ async function main(): Promise<number> {
   const agent = join(root, "agent");
   mkdirSync(home);
   mkdirSync(out, { recursive: true });
-  copyReplayState(stateDir, state, agent, registry, selected);
+  const copiedIDs = copyReplayState(stateDir, state, agent, registry, selected);
   const launcher = join(root, "opencode-antechamber");
   writeFileSync(
     launcher,
@@ -240,6 +240,15 @@ async function main(): Promise<number> {
       );
       return response.ok ? true : undefined;
     });
+
+    // Restored child costs are lazy; hydrate the whole copied subtree before the UI sums it.
+    for (const id of copiedIDs) {
+      if (registry[id]!.deleted) continue;
+      const directory = encodeURIComponent(registry[id]!.directory);
+      const response = await fetch(`${base}/api/session/${id}/message?limit=1&directory=${directory}`);
+      if (!response.ok) throw new Error(`cannot load copied history for ${id}: HTTP ${response.status}`);
+      await response.arrayBuffer();
+    }
 
     const profile = join(root, "chrome");
     browser = spawn(

@@ -70,7 +70,8 @@ function fixture(t: TestContext) {
 
 test("replay retains archived task descendants without native originals and excludes unrelated registries", (t) => {
   const f = fixture(t);
-  copyReplayState(f.stateDir, f.state, f.agent, f.registry, f.selected);
+  const copiedIDs = copyReplayState(f.stateDir, f.state, f.agent, f.registry, f.selected);
+  assert.deepEqual(copiedIDs.sort(), [f.rootID, f.childID, f.nestedID].sort());
   const copied = new SessionStore(f.state);
   assert.deepEqual(copied.childIds().sort(), [f.childID, f.nestedID].sort());
   assert.equal(copied.get(f.nestedID)?.parentID, f.childID);

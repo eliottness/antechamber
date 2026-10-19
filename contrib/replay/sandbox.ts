@@ -8,7 +8,7 @@ export function copyReplayState(
   agent: string,
   registry: Record<string, SessionRegistryEntry>,
   selected: readonly (readonly [string, SessionRegistryEntry])[],
-): void {
+): string[] {
   cpSync(stateDir, state, {
     recursive: true,
     dereference: true,
@@ -75,4 +75,5 @@ export function copyReplayState(
     const output = rewritten.join(source.endsWith(".jsonl") ? "\n" : "");
     if (output !== raw) writeFileSync(destination, output);
   }
+  return Object.keys(copied);
 }
