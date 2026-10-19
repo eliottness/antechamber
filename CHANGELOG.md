@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-10-19
+
 ### Fixed
 
 - Keep compaction markers before the replies that follow them, both live and after reopening a conversation.
