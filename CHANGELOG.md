@@ -10,6 +10,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Refresh dormant conversation history when another client appends messages or tool results after it was opened.
+
+## [0.2.29] - 2026-10-19
+
+### Fixed
+
 - Keep compaction markers before the replies that follow them, both live and after reopening a conversation.
 
 ## [0.2.28] - 2026-10-18
