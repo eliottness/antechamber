@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 import { AdapterServer } from "../src/server.js";
 import type { PiRpcClient } from "../src/pi-rpc.js";
 import { SessionPersistenceError, SessionStore } from "../src/session-store.js";
@@ -1067,6 +1069,67 @@ for (const v1 of [true, false]) {
     assert.ok(dispatched.slice(1).every((input) => String(input.message).trim() !== ""));
   });
 }
+
+test("inline attachments the native RPC cannot carry reach the agent as saved files", {
+  timeout: 15_000,
+}, async (t) => {
+  const { url, directory, server } = await startServer(t);
+  const sessionID = await createSession(url);
+  const manager = server["sessions"];
+  const pi = manager.get(sessionID)?.pi;
+  assert.ok(pi);
+  const command = pi.command.bind(pi);
+  const dispatched: Record<string, unknown>[] = [];
+  t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+    if (args[0].type === "prompt") dispatched.push(args[0]);
+    return command(...args);
+  });
+  const pdf = Buffer.from("%PDF-1.7\n\0binary");
+  const uri = `data:application/pdf;base64,${pdf.toString("base64")}`;
+  const v1 = await fetch(`${url}/session/${sessionID}/message`, {
+    method: "POST",
+    body: JSON.stringify({
+      messageID: "msg_pdf",
+      parts: [
+        { type: "text", text: "summarize" },
+        { type: "file", filename: "../report.pdf", mime: "application/pdf", url: uri },
+      ],
+    }),
+  });
+  assert.equal(v1.status, 200);
+  await manager["operations"].get(sessionID);
+  const v2 = await fetch(`${url}/api/session/${sessionID}/prompt`, {
+    method: "POST",
+    body: JSON.stringify({ text: "", files: [{ uri: "data:application/zip;base64,UEsDBA==" }] }),
+  });
+  assert.equal(v2.status, 200);
+  await manager["operations"].get(sessionID);
+
+  assert.equal(dispatched.length, 2);
+  const references = dispatched.map((input) => {
+    const line = String(input.message)
+      .split("\n\n")
+      .find((chunk) => chunk.startsWith("{"));
+    assert.ok(line, String(input.message));
+    return JSON.parse(line) as { filename?: string; mime: string; url: string };
+  });
+  const attachments = join(directory, "state", "attachments");
+  const pdfPath = fileURLToPath(references[0]?.url ?? "");
+  assert.equal(references[0]?.mime, "application/pdf");
+  assert.equal(pdfPath, join(attachments, createHash("sha256").update(pdf).digest("hex"), "report.pdf"));
+  assert.deepEqual(readFileSync(pdfPath), pdf);
+  assert.equal(statSync(pdfPath).mode & 0o777, 0o600);
+  const zipPath = fileURLToPath(references[1]?.url ?? "");
+  assert.equal(references[1]?.mime, "application/zip");
+  assert.ok(zipPath.startsWith(attachments) && zipPath.endsWith("/attachment"));
+  assert.deepEqual(readFileSync(zipPath), Buffer.from("PK\x03\x04", "latin1"));
+
+  // The saved path is re-derived when history binds the prompt, so it keeps one user identity.
+  await manager.reloadMessages(sessionID);
+  const users = manager.messages(sessionID)?.filter((message) => message.info.role === "user");
+  assert.equal(users?.filter((message) => message.info.id === "msg_pdf").length, 1);
+  assert.equal(users?.length, 2);
+});
 
 test("rich v1 prompts preserve native attachments and one user identity through reload", {
   timeout: 10_000,
