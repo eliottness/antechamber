@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.35] - 2026-10-19
+
 ### Fixed
 
 - Keep OmO background subagents running in OpenChamber after the parent turn is stopped or its agent
