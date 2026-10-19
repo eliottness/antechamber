@@ -101,6 +101,16 @@ real model calls, so they cost tokens and are not run in CI:
 | `contrib/v2-smoke.ts` | `npm run v2-smoke` | Checks the OpenCode v2 API surface specifically |
 | `contrib/replay/transcripts.ts` | `npm run replay` | Opens copies of real sessions in an isolated OpenChamber with headless Chrome, at phone and desktop sizes, and fails when a transcript renders no turn. No agent and no tokens; the data stays local. See `contrib/AGENTS.md`. |
 
+Replay keeps the selected sessions' descendant registry closure in its sandbox,
+including archived task children whose only transcript is under `state/children/`.
+Transcript references and persisted task session paths are remapped into the
+sandbox; project directories remain the original read-only context. This copied
+closure is hydrated through the read-only message API before opening the UI,
+so restored child costs are available to its rollup. It does not add UI test jobs:
+`--children`, `--archived`, and `--limit` still
+control only the selected sessions to open. The copy helper is covered by
+`test/replay-sandbox.test.ts` without launching an agent, CLI, or browser.
+
 `contrib/omo/smoke/` holds the shared smoke-test harness (`core.ts`,
 `context.ts`, and the `checks/` modules loaded by
 `contrib/omo/omo-smoke.ts`); see `contrib/omo/smoke/README.md` for how checks

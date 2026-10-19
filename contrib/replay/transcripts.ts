@@ -16,8 +16,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import {
   chmodSync,
-  copyFileSync,
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -28,9 +26,11 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { defaultStateDir, envSetting } from "../../src/config.js";
+import type { SessionRegistryEntry } from "../../src/session-store.js";
+import { copyReplayState } from "./sandbox.js";
 
 const { values } = parseArgs({
   options: {
@@ -49,14 +49,6 @@ const { values } = parseArgs({
     keep: { type: "boolean", default: false },
   },
 });
-
-interface SessionRecord {
-  piPath?: string;
-  directory?: string;
-  title?: string;
-  parentID?: string;
-  archived?: number;
-}
 
 interface Viewport {
   readonly name: "mobile" | "desktop";
@@ -181,7 +173,10 @@ async function main(): Promise<number> {
   if (viewports.length === 0) throw new Error("--viewport must be mobile, desktop or both");
   const timeoutMs = Number(values.timeout);
 
-  const registry = JSON.parse(readFileSync(join(stateDir, "sessions.json"), "utf8")) as Record<string, SessionRecord>;
+  const registry = JSON.parse(readFileSync(join(stateDir, "sessions.json"), "utf8")) as Record<
+    string,
+    SessionRegistryEntry
+  >;
   const wanted = values.session === undefined ? undefined : new Set(values.session);
   let selected = Object.entries(registry).filter(
     ([id, record]) =>
@@ -203,15 +198,7 @@ async function main(): Promise<number> {
   const agent = join(root, "agent");
   mkdirSync(home);
   mkdirSync(out, { recursive: true });
-  cpSync(stateDir, state, { recursive: true, filter: (path) => !path.startsWith(join(stateDir, "run")) });
-  const copied: Record<string, SessionRecord> = {};
-  for (const [id, record] of selected) {
-    const piPath = join(agent, "sessions", basename(dirname(record.piPath!)), basename(record.piPath!));
-    mkdirSync(dirname(piPath), { recursive: true });
-    copyFileSync(record.piPath!, piPath);
-    copied[id] = { ...record, piPath };
-  }
-  writeFileSync(join(state, "sessions.json"), JSON.stringify(copied));
+  const copiedIDs = copyReplayState(stateDir, state, agent, registry, selected);
   const launcher = join(root, "opencode-antechamber");
   writeFileSync(
     launcher,
@@ -253,6 +240,15 @@ async function main(): Promise<number> {
       );
       return response.ok ? true : undefined;
     });
+
+    // Restored child costs are lazy; hydrate the whole copied subtree before the UI sums it.
+    for (const id of copiedIDs) {
+      if (registry[id]!.deleted) continue;
+      const directory = encodeURIComponent(registry[id]!.directory);
+      const response = await fetch(`${base}/api/session/${id}/message?limit=1&directory=${directory}`);
+      if (!response.ok) throw new Error(`cannot load copied history for ${id}: HTTP ${response.status}`);
+      await response.arrayBuffer();
+    }
 
     const profile = join(root, "chrome");
     browser = spawn(
