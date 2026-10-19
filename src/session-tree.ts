@@ -186,6 +186,8 @@ function bindOrdinaryEntry(
       position >= cursor &&
       !s.localMessageIds?.has(message.info.id) &&
       !message.info.id.startsWith("msg_background_") &&
+      !(message.info.role === "assistant" && message.info.summary) &&
+      !message.parts.some((part) => part.type === "compaction") &&
       s.tree.messageEntries[message.info.id] === undefined &&
       message.info.role === entry.message?.role &&
       (message.info.role !== "user" ||

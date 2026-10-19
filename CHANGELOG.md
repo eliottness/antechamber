@@ -9,6 +9,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Preserve native replies and their recorded usage when reopening sessions with legacy compaction ID collisions.
 - Refresh dormant conversation history when another client appends messages or tool results after it was opened.
 - Keep compaction markers before the replies that follow them, both live and after reopening a conversation.
 
