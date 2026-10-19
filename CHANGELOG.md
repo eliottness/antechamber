@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore subagent costs and token totals before listing sessions, so OpenChamber includes
+  retained child spend without requiring each child transcript to be opened.
+
 ## [0.2.32] - 2026-10-19
 
 ### Fixed
