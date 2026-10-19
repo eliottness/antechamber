@@ -10,7 +10,23 @@ and this project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Preserve native replies and their recorded usage when reopening sessions with legacy compaction ID collisions.
+
+## [0.2.31] - 2026-10-19
+
+- fix(session): refresh dormant history after external appends (#39)
+
+## [0.2.30] - 2026-10-19
+
+### Fixed
+
+- Preserve archived and nested task children in replay sandboxes, with transcript and task session paths
+  remapped locally, so child history and costs are not lost when replaying selected roots.
 - Refresh dormant conversation history when another client appends messages or tool results after it was opened.
+
+## [0.2.29] - 2026-10-19
+
+### Fixed
+
 - Keep compaction markers before the replies that follow them, both live and after reopening a conversation.
 
 ## [0.2.28] - 2026-10-18
