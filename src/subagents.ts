@@ -57,6 +57,24 @@ function timestamp(value: unknown): number {
   return typeof value === "string" ? Date.parse(value) : Number.NaN;
 }
 
+/**
+ * The lifecycle fields of an `omo.task.updated` row. `live_progress` changes on every event and is
+ * not task state; a text field OmO cut to its 32 000-character limit (`*_truncated`) must not
+ * replace the full value the task record carries.
+ */
+function snapshotState(row: Record<string, unknown>): Record<string, unknown> {
+  const {
+    live_progress: _progress,
+    final_response_truncated: responseCut,
+    error_message_truncated: errorCut,
+    description_truncated: _descriptionCut,
+    ...data
+  } = row;
+  if (responseCut === true) delete data.final_response;
+  if (errorCut === true) delete data.error_message;
+  return data;
+}
+
 function terminal(status: unknown): boolean {
   return ["completed", "failed", "error", "cancelled", "canceled", "killed", "lost", "denied", "plan_error"].includes(
     String(status),
@@ -435,8 +453,11 @@ export class SubagentBridge {
       if (!this.children.has(id)) this.restore(id);
       const child = this.children.get(id);
       if (!child) continue;
+      const data = snapshotState(row);
+      // OmO re-sends every row ~150 ms after each progress event of any task; only changes matter.
+      if (Object.entries(data).every(([key, value]) => child.task.details[key] === value)) continue;
       this.wire(parent);
-      if (!this.applyNative(child, row)) continue;
+      if (!this.applyNative(child, data)) continue;
       child.live = true;
       this.refresh(child, true, false);
     }
@@ -671,7 +692,12 @@ export class SubagentBridge {
   private refresh(child: Child, publish: boolean, useRecord = true): void {
     const archive = this.archive(child.task.id);
     const found = this.reconcileTaskRecord(child, useRecord);
-    const running = active(child.task.details.status) && (found !== undefined || child.live);
+    // OmO stops in-process workers with their parent and leaves them `running` but `persisted_only`
+    // until the revived parent reconciles them (omo-task.js `DK`/`jK`); they are not running.
+    const running =
+      active(child.task.details.status) &&
+      child.task.details.residency_state !== "persisted_only" &&
+      (found !== undefined || child.live);
     const state: RefreshState = {
       previousMessages: child.session.messages ?? [],
       previousStatus: child.session.status.type,

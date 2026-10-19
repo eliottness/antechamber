@@ -330,8 +330,15 @@ inspected on October 19, 2026:
   waits), so a parent abort cancels only tasks the turn was still waiting on.
 - On parent shutdown, shared-host workers detach (`rpc_detached`) and keep
   running (`DK`, `jK`); a revived parent reattaches them before publishing.
-- Task records bump `updated_at` only on transitions (spawn, steer, end), so it
-  is no heartbeat: a long task keeps its spawn time.
+- On parent shutdown, in-process workers are stopped and their record stays
+  `running` with residency `persisted_only` until the revived parent
+  reconciles it; the connector shows such a child idle.
+- Task records bump `updated_at` only on record mutations (spawn, steer,
+  residency changes, end), so it is no heartbeat: a long task keeps its spawn
+  time. Snapshots repeat every row about 150 ms after any task's progress
+  event, so the connector applies a row only when its lifecycle fields change,
+  ignores `live_progress`, and keeps a full `final_response`/`error_message`
+  over a copy OmO cut to 32,000 characters (`*_truncated`).
 
 The connector merges task state from records, snapshots, wake messages and
 tool results. It drops an update older than the one it holds, and a running
@@ -339,6 +346,10 @@ state no newer than a terminal one OmO already reported. Versions up to 0.2.33
 synthesized `cancelled` on abort and compared records against the archive's
 modification time, which hid long tasks for good; such a persisted state has
 no terminal time and is replaced by the next running record or snapshot.
+
+Because stopping the parent's turn no longer ends its background subagents,
+fork and revert stay refused while one runs, with an error that says so;
+wait for the subagent, or cancel it from the parent session.
 
 ### MCP status and authorization
 

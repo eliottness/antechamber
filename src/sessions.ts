@@ -620,8 +620,14 @@ export class SessionManager {
     const s = this.get(sessionId);
     if (!s) throw new SessionTreeError(`unknown session: ${sessionId}`);
     return this.operation(s, async () => {
-      if (s.status.type !== "idle" || s.hasPendingInteraction() || s.hasRunningChildren()) {
+      if (s.status.type !== "idle" || s.hasPendingInteraction()) {
         throw new SessionTreeError("Session is busy; stop the turn before changing the conversation");
+      }
+      // Stopping the turn does not stop a background subagent; it ends on its own or when cancelled.
+      if (s.hasRunningChildren()) {
+        throw new SessionTreeError(
+          "A subagent of this session is still running; wait for it to finish before changing the conversation",
+        );
       }
       if (!s.pi) await this.revive(s);
       const pi = s.pi;
