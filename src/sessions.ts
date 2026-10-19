@@ -371,7 +371,8 @@ export class SessionManager {
       }
       delete s.interruptRequested;
       this.events.settleBackground(s);
-      this.subagents.stopParent(s.info.id);
+      // Its task cards end with the run; the tasks themselves may still run in OmO's shared host.
+      this.subagents.finishCalls(s.info.id, true);
       this.monitors.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
@@ -619,8 +620,14 @@ export class SessionManager {
     const s = this.get(sessionId);
     if (!s) throw new SessionTreeError(`unknown session: ${sessionId}`);
     return this.operation(s, async () => {
-      if (s.status.type !== "idle" || s.hasPendingInteraction() || s.hasRunningChildren()) {
+      if (s.status.type !== "idle" || s.hasPendingInteraction()) {
         throw new SessionTreeError("Session is busy; stop the turn before changing the conversation");
+      }
+      // Stopping the turn does not stop a background subagent; it ends on its own or when cancelled.
+      if (s.hasRunningChildren()) {
+        throw new SessionTreeError(
+          "A subagent of this session is still running; wait for it to finish before changing the conversation",
+        );
       }
       if (!s.pi) await this.revive(s);
       const pi = s.pi;
@@ -831,7 +838,8 @@ export class SessionManager {
     }
     s.cancelShell?.();
     s.approvals?.cancelAll();
-    this.subagents.stopParent(sessionId);
+    // Background tasks outlive an abort; OmO itself cancels the ones the turn was waiting on.
+    this.subagents.finishCalls(sessionId, true);
     return true;
   }
 

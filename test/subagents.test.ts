@@ -19,6 +19,7 @@ import { AdapterServer } from "../src/server.js";
 import { SessionManager, type ManagedSession } from "../src/sessions.js";
 import { ocIdFor, piSessionDir, SessionStore } from "../src/session-store.js";
 import { findTask, JsonlTail, stripTaskSuffix } from "../src/subagents.js";
+import { bugHarness } from "./bug-harness.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
 
 const fixture = JSON.parse(readFileSync("test/fixtures/omo-tools/task.json", "utf8"));
@@ -650,15 +651,68 @@ test("a resident task OmO resumes after its turn settled shows busy again and ar
   assert.equal(watched?.watchers.size, 0, "leaving residency ends the watch");
 });
 
-test("aborting a parent ends child status and closes every child watcher", async (t) => {
-  const { manager, parent, store } = setup(t);
-  liveRecord(store);
-  start(manager, parent, { task_summary: "Cancelled child" });
-  result(manager, parent, { task_id: "st_child", status: "running" }, "", false);
+// OmO's abort only cancels a task the turn is still waiting on; a background task keeps running
+// (omo-task.js: a `run_in_background` spawn returns before the foreground wait that calls
+// `cancelTask(..., "parent turn aborted")`).
+test("aborting a parent leaves a background child running until OmO reports its end", async (t) => {
+  const { manager, parent, store, bus } = setup(t);
+  const child = liveRecord(store);
+  put(child.recordPath, { ...child.data, updated_at: new Date(Date.now() - 60_000).toISOString() });
+  start(manager, parent, { task_summary: "Background child", run_in_background: true });
+  result(manager, parent, { task_id: "st_child", status: "running" }, "Started", true);
   await manager.abort(parent.info.id);
+  const childID = ocIdFor("st_child");
+  assert.equal(manager.get(childID)?.status.type, "busy");
+  assert.equal(parent.hasRunningChildren(), true);
+  assert.equal(parts(parent.messages)[0]?.state.status, "running");
+  const idle = eventWhen(bus, (event) => event.type === "session.idle" && event.properties.sessionID === childID);
+  put(child.recordPath, { ...child.data, status: "completed", updated_at: new Date().toISOString() });
+  await idle;
+  assert.equal(parts(parent.messages)[0]?.state.status, "completed");
+});
+
+test("a child an older adapter marked cancelled recovers from its running record after a restart", async (t) => {
+  const { manager, parent, store, state, directory } = setup(t);
+  const child = liveRecord(store);
+  put(child.recordPath, { ...child.data, updated_at: new Date(Date.now() - 60_000).toISOString() });
+  start(manager, parent, { task_summary: "Long child", run_in_background: true });
+  result(manager, parent, { task_id: "st_child", status: "running" }, "Started", true);
+  const childID = ocIdFor("st_child");
+  // What antechamber <= 0.2.33 persisted after an abort: a synthesized cancel and no terminal time.
+  const tracked = manager.subagents["children"].get(childID);
+  assert.ok(tracked);
+  tracked.task.details = { ...tracked.task.details, status: "cancelled" };
+  manager.subagents.save(childID);
+  // It also archived the transcript at that moment, newer than the record's spawn-time update.
+  put(join(state, "children", "st_child.jsonl"), transcript("child result"));
+  await manager.disposeAll();
+  const restarted = new SessionManager(() => {}, new SessionStore(state), directory);
+  t.after(() => restarted.disposeAll());
+  assert.equal(restarted.get(childID)?.status.type, "busy");
+});
+
+test("omo.task.updated snapshots drive child status and ignore older updates", async (t) => {
+  const { manager, parent, store } = setup(t);
+  const child = liveRecord(store);
+  const spawned = new Date(Date.now() - 60_000).toISOString();
+  put(child.recordPath, { ...child.data, updated_at: spawned });
+  start(manager, parent, { task_summary: "Snapshot child", run_in_background: true });
+  result(manager, parent, { task_id: "st_child", status: "running" }, "Started", true);
+  const childID = ocIdFor("st_child");
+  const snapshot = (row: Record<string, unknown>) =>
+    manager["onPiEvent"](parent, {
+      type: "extension_event",
+      name: "omo.task.updated",
+      data: { parent_session_id: "parent-pi", tasks: [{ task_id: "st_child", ...row }] },
+    });
+  snapshot({ status: "completed", updated_at: new Date().toISOString(), final_response: "snapshot result" });
+  assert.equal(manager.get(childID)?.status.type, "idle");
   assert.equal(parent.hasRunningChildren(), false);
-  assert.equal(manager.get(ocIdFor("st_child"))?.status.type, "idle");
-  for (const child of manager.subagents["children"].values()) assert.equal(child.watchers.size, 0);
+  assert.equal(parts(parent.messages)[0]?.state.status, "completed");
+  snapshot({ status: "running", updated_at: spawned });
+  assert.equal(manager.get(childID)?.status.type, "idle", "an older snapshot cannot reopen the child");
+  snapshot({ status: "running", updated_at: new Date(Date.now() + 1_000).toISOString() });
+  assert.equal(manager.get(childID)?.status.type, "busy", "a newer run reopens it");
 });
 
 test("restart resolves archived children by id through real session and message routes", async (t) => {
@@ -966,11 +1020,15 @@ test("abort before the task id arrives ends the card and allows a fresh run", as
   start(manager, parent, { task_summary: "Not yet spawned" });
   await manager.abort(parent.info.id);
   assert.equal(parts(parent.messages)[0]?.state.status, "error");
-  liveRecord(store);
+  const child = liveRecord(store);
   start(manager, parent, { task_summary: "Resumed parent task" }, "resumed");
   result(manager, parent, { task_id: "st_child", status: "running" }, "", false, "resumed");
   assert.equal(parent.hasRunningChildren(), true);
   await manager.abort(parent.info.id);
+  // The foreground wait is OmO's to cancel; the card follows its report.
+  assert.equal(parent.hasRunningChildren(), true);
+  put(child.recordPath, { ...child.data, status: "cancelled" });
+  result(manager, parent, { task_id: "st_child", status: "cancelled" }, "parent turn aborted", true, "resumed");
   assert.equal(parent.hasRunningChildren(), false);
   assert.ok(parts(parent.messages).every((part) => part.state.status === "error"));
 });
@@ -1033,4 +1091,151 @@ test("removing a child closes its own watchers and cannot restore the deleted vi
   assert.equal(await manager.remove(childID), true);
   assert.equal(tracked.watchers.size, 0);
   assert.equal(manager.get(childID), undefined);
+});
+
+test("a task OmO reports over RPC stays running through a real abort of its parent", async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  const parent = h.manager.get(info.id);
+  assert.ok(parent?.pi && parent.piSessionId);
+  const store = join(h.root, "agent", "projects", "work-hash", "senpi-task");
+  const path = join(store, "children", "st_live", "sessions", "st_live", "child.jsonl");
+  put(path, transcript("live child"));
+  const spawned = new Date(Date.now() - 60_000).toISOString();
+  const row = { task_id: "st_live", status: "running", residency_state: "resident", updated_at: spawned };
+  put(join(store, "tasks", "st_live.json"), {
+    ...row,
+    parent_session_id: parent.piSessionId,
+    task_summary: "Live child",
+    host_session: { session_path: path },
+  });
+  const snapshot = async (tasks: Record<string, unknown>[]) => {
+    assert.ok(parent.pi);
+    // The fake agent writes the frame before its reply, so the event is handled once this resolves.
+    const frame = {
+      type: "extension_event",
+      name: "omo.task.updated",
+      data: { parent_session_id: parent.piSessionId, tasks },
+    };
+    assert.equal((await parent.pi.command({ type: "emit", frame })).success, true);
+  };
+  await snapshot([row]);
+  const childID = ocIdFor("st_live");
+  assert.equal(h.manager.get(childID)?.info.parentID, info.id);
+  assert.equal(h.manager.statuses()[childID]?.type, "busy");
+  await h.manager.abort(info.id);
+  assert.equal(h.manager.statuses()[childID]?.type, "busy", "an abort does not end a background task");
+  await snapshot([{ ...row, status: "completed", updated_at: new Date().toISOString(), final_response: "done" }]);
+  assert.equal(h.manager.statuses()[childID]?.type, "idle");
+});
+
+function taskHarness(t: TestContext) {
+  const h = bugHarness(t);
+  const store = join(h.root, "agent", "projects", "work-hash", "senpi-task");
+  const task = (parentPi: string, id: string, extra: Record<string, unknown> = {}) => {
+    const path = join(store, "children", id, "sessions", id, "child.jsonl");
+    put(path, transcript(`${id} transcript`));
+    const data = {
+      task_id: id,
+      status: "running",
+      residency_state: "resident",
+      updated_at: new Date(Date.now() - 60_000).toISOString(),
+      parent_session_id: parentPi,
+      task_summary: id,
+      host_session: { session_path: path },
+      ...extra,
+    };
+    put(join(store, "tasks", `${id}.json`), data);
+    return { recordPath: join(store, "tasks", `${id}.json`), data };
+  };
+  const snapshot = async (parent: ManagedSession, tasks: Record<string, unknown>[]) => {
+    assert.ok(parent.pi);
+    const frame = {
+      type: "extension_event",
+      name: "omo.task.updated",
+      data: { parent_session_id: parent.piSessionId, tasks },
+    };
+    // The fake agent writes the frame before its reply, so the event is handled once this resolves.
+    assert.equal((await parent.pi.command({ type: "emit", frame })).success, true);
+  };
+  return { h, task, snapshot };
+}
+
+test("a repeated omo.task.updated row only changing live progress emits and saves nothing", async (t) => {
+  const { h, task, snapshot } = taskHarness(t);
+  const info = await h.manager.create(h.root);
+  const parent = h.manager.get(info.id);
+  assert.ok(parent?.piSessionId);
+  const { data } = task(parent.piSessionId, "st_quiet");
+  const row = { task_id: "st_quiet", status: "running", residency_state: "resident", updated_at: data.updated_at };
+  await snapshot(parent, [{ ...row, live_progress: { tool_calls: 1 } }]);
+  assert.equal(h.manager.statuses()[ocIdFor("st_quiet")]?.type, "busy");
+  const store = h.manager.subagents["store"];
+  const set = store.set.bind(store);
+  let saves = 0;
+  store.set = (...args: Parameters<typeof set>) => {
+    saves++;
+    return set(...args);
+  };
+  const before = h.events.length;
+  await snapshot(parent, [{ ...row, live_progress: { tool_calls: 2 } }]);
+  assert.equal(h.events.length, before, "an unchanged task publishes nothing");
+  assert.equal(saves, 0, "an unchanged task does not rewrite the registry");
+  assert.equal(h.manager.subagents["children"].get(ocIdFor("st_quiet"))?.task.details.live_progress, undefined);
+});
+
+test("a final response OmO truncated in a snapshot does not replace the full one", async (t) => {
+  const { h, task, snapshot } = taskHarness(t);
+  const info = await h.manager.create(h.root);
+  const parent = h.manager.get(info.id);
+  assert.ok(parent?.piSessionId);
+  const full = "x".repeat(40_000);
+  const ended = new Date().toISOString();
+  task(parent.piSessionId, "st_long", { status: "completed", updated_at: ended, final_response: full });
+  await snapshot(parent, [
+    {
+      task_id: "st_long",
+      status: "completed",
+      updated_at: ended,
+      final_response: full.slice(0, 32_000),
+      final_response_truncated: true,
+    },
+  ]);
+  const child = h.manager.subagents["children"].get(ocIdFor("st_long"));
+  assert.equal(child?.task.details.final_response, full);
+});
+
+// On parent shutdown OmO detaches shared-host workers, which keep running, and stops in-process
+// ones, whose record stays `running` but `persisted_only` (omo-task.js `DK`/`jK`).
+test("after the parent agent exits, shared-host children stay running and stopped in-process ones go idle", async (t) => {
+  const { h, task, snapshot } = taskHarness(t);
+  const info = await h.manager.create(h.root);
+  const parent = h.manager.get(info.id);
+  assert.ok(parent?.pi && parent.piSessionId);
+  task(parent.piSessionId, "st_hosted");
+  const local = task(parent.piSessionId, "st_local");
+  const row = (id: string) => ({
+    task_id: id,
+    status: "running",
+    residency_state: "resident",
+    updated_at: local.data.updated_at,
+  });
+  await snapshot(parent, [row("st_hosted"), row("st_local")]);
+  const pid = parent.pi.pid;
+  assert.ok(pid);
+  const exited = new Promise<void>((resolveExit) => parent.pi?.onExit(() => resolveExit()));
+  process.kill(-pid, "SIGKILL");
+  await exited;
+  assert.equal(h.manager.statuses()[ocIdFor("st_hosted")]?.type, "busy");
+  assert.equal(h.manager.statuses()[ocIdFor("st_local")]?.type, "busy");
+  const idle = h.wait((e) => e.type === "session.idle" && e.properties.sessionID === ocIdFor("st_local"));
+  put(`${local.recordPath}.tmp`, {
+    ...local.data,
+    residency_state: "persisted_only",
+    updated_at: new Date().toISOString(),
+  });
+  renameSync(`${local.recordPath}.tmp`, local.recordPath);
+  await idle;
+  assert.equal(h.manager.statuses()[ocIdFor("st_hosted")]?.type, "busy");
+  assert.equal(parent.hasRunningChildren(), true);
 });
