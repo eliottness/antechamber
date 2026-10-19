@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.32] - 2026-10-19
+
 ### Fixed
 
 - Preserve native replies and their recorded usage when reopening sessions with legacy compaction ID collisions.
