@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.30] - 2026-10-19
+
 ### Fixed
 
 - Preserve archived and nested task children in replay sandboxes, with transcript and task session paths
