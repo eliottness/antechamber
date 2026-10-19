@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.34] - 2026-10-19
+
 ### Fixed
 
 - Accept uploaded attachments other than images and text, such as PDFs, instead of failing the prompt with
