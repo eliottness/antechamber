@@ -327,6 +327,16 @@ export class PiEventTranslator {
     }
     s.activeUserMessageID = messageID;
     const input = s.inputs?.get(messageID);
+    if (ev.type === "message_start" || (input && !input.delivered)) {
+      const messages = s.messages ?? [];
+      const boundary = messages.findIndex((item) => item.info.id === s.tree.revert?.messageID);
+      const compaction = messages.findLast(
+        (item, index) => (boundary < 0 || index < boundary) && item.parts.some((part) => part.type === "compaction"),
+      );
+      // Optimistic queued prompts can precede compactions that happened before delivery.
+      if (compaction) (s.deliveredInputCompactions ??= new Map()).set(messageID, compaction.info.id);
+      else s.deliveredInputCompactions?.delete(messageID);
+    }
     if (input && !input.delivered) {
       input.delivered = true;
       if (input.accepted) this.deliverInput(s, messageID);
@@ -592,16 +602,30 @@ export class PiEventTranslator {
         // Trust that over our snapshot, which goes stale whenever pi switches on
         // its own side (subagent routing, an in-session /model, a resumed file).
         this.services.applyPiModel(s, msg.provider, piModelId(msg.responseModel, msg.model));
-        const parent = s.messages?.findLast((m) => m.info.role === "user");
+        const messages = s.messages ?? [];
+        const inputID =
+          typeof ev.clientMessageId === "string"
+            ? ev.clientMessageId
+            : (s.activeUserMessageID ?? messages.findLast((m) => m.info.role === "user")?.info.id ?? "");
+        const inputIndex = Math.max(
+          messages.findIndex((m) => m.info.id === inputID),
+          messages.findIndex((m) => m.info.id === s.deliveredInputCompactions?.get(inputID)),
+        );
+        const boundary = messages.findIndex((m) => m.info.id === s.tree.revert?.messageID);
+        // A compaction starts a display turn without changing the native prompt's identity.
+        const compaction = messages.findLast(
+          (m, index) =>
+            index > inputIndex &&
+            (boundary < 0 || index < boundary) &&
+            m.info.role === "user" &&
+            m.parts.some((part) => part.type === "compaction"),
+        );
         const assistant: OCAssistantMessage = {
           id: id("msg"),
           sessionID: s.info.id,
           role: "assistant",
           time: { created: Date.now() },
-          parentID:
-            typeof ev.clientMessageId === "string"
-              ? ev.clientMessageId
-              : (s.activeUserMessageID ?? parent?.info.id ?? ""),
+          parentID: compaction?.info.id ?? inputID,
           modelID: s.model?.modelID ?? "unknown",
           providerID: s.model?.providerID ?? "unknown",
           mode: getAgentName(),

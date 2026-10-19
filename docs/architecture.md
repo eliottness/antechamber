@@ -75,6 +75,15 @@ message is the active branch. The reverted transcript is retained for redo.
 Native progress is checkpointed at `agent_end`, successful `compaction_end`, and
 process exit. Checkpoints advance only to descendants of the saved leaf.
 
+Compaction is displayed as a user-role compaction marker and its assistant
+summary. Subsequent replies use that marker as their display parent until a new
+user prompt, both live and in restored history. The native `clientMessageId` and
+active input identity still refer to the real prompt. Otherwise OpenChamber
+groups the continuation under the earlier prompt and moves older compaction
+markers below newer output. Evidence: the installed OpenChamber 1.24.2
+`useAppFontEffects-DcdrFv2Z.js` parent-based turn projector and copied-session
+desktop/phone replay on 2026-10-18.
+
 The registry also stores the published part IDs in message order under each
 stable message ID. On history reconstruction, those IDs are restored onto the
 parsed parts so clients keep their live identities after a restart. History

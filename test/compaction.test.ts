@@ -49,6 +49,54 @@ function withEnv(t: { after: (fn: () => void) => void }, key: string, value: str
   });
 }
 
+test("replies after compaction stay in chronological turns live and after restart", { timeout: 15000 }, async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  await h.manager.prompt(info.id, "interrupted-work", undefined, false, "msg_original");
+  const session = h.manager.get(info.id);
+  assert.ok(session?.pi);
+  for (let index = 0; index < 2; index++) await session.pi.command({ type: "compact" });
+  const marker = h.manager
+    .messages(info.id)
+    ?.findLast((message) => message.parts.some((part) => part.type === "compaction"));
+  assert.ok(marker);
+
+  await session.pi.command({ type: "release" });
+  const reply = h.manager.messages(info.id)?.at(-1);
+  assert.ok(reply?.info.role === "assistant");
+  assert.equal(reply.info.parentID, marker.info.id);
+  assert.equal(session.activeUserMessageID, "msg_original");
+  const liveParent = reply.info.parentID;
+
+  await h.restart();
+  const restored = h.manager.messages(info.id)?.at(-1);
+  assert.ok(restored?.info.role === "assistant");
+  assert.equal(restored.info.parentID, liveParent);
+  await h.manager.prompt(info.id, "normal", undefined, false, "msg_next");
+  const next = h.manager.messages(info.id)?.at(-1);
+  assert.ok(next?.info.role === "assistant");
+  assert.equal(next.info.parentID, "msg_next");
+});
+
+test("queued prompts delivered after compaction keep their own reply parent", { timeout: 15000 }, async (t) => {
+  const h = bugHarness(t);
+  const info = await h.manager.create(h.root);
+  await h.manager.prompt(info.id, "interrupted-work", undefined, false, "msg_original");
+  await h.manager.prompt(info.id, "normal", undefined, false, "msg_queued", "queue");
+  const session = h.manager.get(info.id);
+  assert.ok(session?.pi);
+  await session.pi.command({ type: "compact" });
+  await session.pi.command({ type: "release" });
+  const reply = h.manager.messages(info.id)?.at(-1);
+  assert.ok(reply?.info.role === "assistant");
+  assert.equal(reply.info.parentID, "msg_queued");
+
+  await h.restart();
+  const restored = h.manager.messages(info.id)?.at(-1);
+  assert.ok(restored?.info.role === "assistant");
+  assert.equal(restored.info.parentID, reply.info.parentID);
+});
+
 async function compactCommands(h: ReturnType<typeof bugHarness>, id: string): Promise<number> {
   const pi = h.manager.get(id)?.pi;
   assert.ok(pi);
