@@ -491,6 +491,7 @@ export class SubagentBridge {
     if (entry.deleted || !entry.task || !entry.parentID) return undefined;
     const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task);
     child.session.info.title = entry.title ?? child.session.info.title;
+    this.refresh(child, false);
     return child.session;
   }
 

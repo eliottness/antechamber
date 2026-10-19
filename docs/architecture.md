@@ -81,6 +81,13 @@ results while retaining adapter-local notices. Branch advancement still requires
 a descendant of the saved selection; a staged revert remains pinned.
 Live RPC-owned history continues to use its event-driven cache.
 
+Restoring a task child loads its retained transcript and computes its own cost
+and token totals before the session is returned or listed. Child costs remain
+separate from the parent's own spend: OpenChamber sums sessions by `parentID`.
+Evidence: on 2026-10-19, a copied real session listed $0 for 55 task children
+after a cold start, but $85.41774294 after their histories were opened.
+Hydrating during restoration makes the first list include that same spend.
+
 Synthetic compaction markers and summaries never bind to ordinary native
 messages. History reconstruction removes legacy bindings for these reserved IDs
 before assigning native message and part identities. Otherwise a summary and a

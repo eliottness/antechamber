@@ -663,7 +663,13 @@ test("aborting a parent ends child status and closes every child watcher", async
 
 test("restart resolves archived children by id through real session and message routes", async (t) => {
   const { manager, parent, store, directory } = setup(t);
-  liveRecord(store, "st_child", "completed", "survives eviction");
+  const { path } = liveRecord(store, "st_child", "completed", "survives eviction");
+  const rows = transcript("survives eviction")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  rows.at(-1).message.usage = { input: 11, output: 7, cost: { total: 2.5 } };
+  put(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
   start(manager, parent, { task_summary: "Archived child" });
   result(manager, parent, { task_id: "st_child", status: "completed" });
   await manager.disposeAll();
@@ -672,10 +678,20 @@ test("restart resolves archived children by id through real session and message 
   await server.start();
   t.after(() => server.stop());
   const childID = ocIdFor("st_child");
+  const listed = (await fetch(`${server.url}/session?directory=${encodeURIComponent(directory)}`).then((response) =>
+    response.json(),
+  )) as Array<{ id: string; cost?: number; tokens?: { input: number; output: number } }>;
+  const child = listed.find((session) => session.id === childID);
+  assert.equal(child?.cost, 2.5, "the first list includes archived spend without opening child history");
+  assert.equal(child.tokens?.input, 11);
+  assert.equal(child.tokens?.output, 7);
+  assert.equal(parent.info.cost ?? 0, 0, "child spend is not folded into its parent");
   const info = (await fetch(`${server.url}/session/${childID}`).then((response) => response.json())) as {
     parentID?: string;
+    cost?: number;
   };
   assert.equal(info.parentID, parent.info.id);
+  assert.equal(info.cost, 2.5);
   const history = (await fetch(`${server.url}/session/${childID}/message`).then((response) =>
     response.json(),
   )) as OCMessageWithParts[];
@@ -692,6 +708,10 @@ test("restart resolves archived children by id through real session and message 
       (session: { id: string; parentID?: string }) => session.id === childID && session.parentID === parent.info.id,
     ),
   );
+  const refreshed = (await fetch(`${server.url}/session/${childID}`).then((response) => response.json())) as {
+    cost?: number;
+  };
+  assert.equal(refreshed.cost, 2.5, "history reads do not add the same spend again");
 });
 
 test("a child archived through the session route stays archived after a restart", async (t) => {
