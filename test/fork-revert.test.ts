@@ -18,6 +18,7 @@ import {
   shellUserMessage,
 } from "../src/session-commands.js";
 import type { PiRpcClient } from "../src/pi-rpc.js";
+import { compactionMessages } from "../src/pi-event-translation.js";
 
 function setup(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-t10-"));
@@ -817,7 +818,7 @@ test("dormant refresh preserves native rows with legacy compaction ID collisions
   t.after(() => cold.disposeAll());
   const rows = () => cold.messages(id)?.filter((message) => message.info.id === summaryID);
   const before = rows();
-  assert.equal(before?.length, 2);
+  assert.equal(before?.length, 1);
 
   appendExternalTurn(s.piPath, "from-terminal");
 
@@ -846,6 +847,85 @@ test("dormant cached history keeps a staged revert pinned after external appends
   assert.deepEqual(cold.get(id)?.tree.revert, pin);
   assert.equal(cold.get(id)?.pi, undefined);
 });
+
+test("native binding skips synthetic compaction messages", { timeout: 30_000 }, async (t) => {
+  const { manager, dir } = setup(t);
+  const { s } = await turns(manager, dir);
+  const reply = s.messages?.at(-1);
+  assert.ok(reply?.info.role === "assistant");
+  s.messages = [...compactionMessages(s, "unbound", "context", 1, s.model, undefined), reply];
+  s.tree.messageEntries = {};
+  s.tree.leafId = "native-reply";
+
+  bindMessageEntries(s, {
+    entries: [{ type: "message", id: "native-reply", parentId: null, message: { role: "assistant" } }],
+    leafId: "native-reply",
+  });
+
+  assert.equal(s.tree.messageEntries.msg_compaction_unbound_summary, undefined);
+  assert.equal(s.tree.messageEntries[reply.info.id], "native-reply");
+});
+
+for (const cached of [false, true]) {
+  test(`revival retains colliding native usage with cached history ${cached}`, { timeout: 30_000 }, async (t) => {
+    const { manager, dir, state } = setup(t);
+    const { s, id } = await turns(manager, dir);
+    assert.ok(s.piPath);
+    await manager.disposeAll();
+    const raw = readFileSync(s.piPath, "utf8");
+    const lastLine = raw.trimEnd().split("\n").at(-1);
+    assert.ok(lastLine);
+    const last = JSON.parse(lastLine);
+    const compaction = {
+      type: "compaction",
+      id: "legacy-compaction",
+      parentId: last.id,
+      firstKeptEntryId: last.id,
+      timestamp: "2026-10-19T00:00:00.000Z",
+      summary: "retained-context",
+    };
+    const reply = {
+      type: "message",
+      id: "legacy-reply",
+      parentId: compaction.id,
+      timestamp: "2026-10-19T00:00:01.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "legacy-tool", name: "bash", arguments: { command: "true" } }],
+        usage: { input: 31, output: 7, cost: { total: 0.25 } },
+      },
+    };
+    writeFileSync(s.piPath, `${raw}${JSON.stringify(compaction)}\n${JSON.stringify(reply)}\n`);
+    const summaryID = `msg_compaction_${compaction.id}_summary`;
+    new SessionStore(state).update(id, {
+      tree: { ...s.tree, messageEntries: { ...s.tree.messageEntries, [summaryID]: reply.id } },
+    });
+    const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+    t.after(() => cold.disposeAll());
+    const previous = cached ? cold.messages(id) : undefined;
+
+    await cold.reloadMessages(id);
+
+    const messages = cold.messages(id);
+    assert.ok(messages);
+    assert.equal(new Set(messages.map((message) => message.info.id)).size, messages.length);
+    assert.equal(messages.filter((message) => message.info.id === summaryID).length, 1);
+    const native = messages.find((message) =>
+      message.parts.some((part) => part.type === "tool" && part.callID === "legacy-tool"),
+    );
+    assert.ok(native);
+    assert.notEqual(native.info.id, summaryID);
+    assert.equal(
+      messages.reduce((cost, message) => cost + (message.info.role === "assistant" ? message.info.cost : 0), 0),
+      0.25,
+    );
+    assert.equal(cold.get(id)?.info.cost, 0.25);
+    assert.equal(cold.get(id)?.info.tokens?.input, 31);
+    assert.equal(cold.get(id)?.tree.messageEntries[summaryID], undefined);
+    assert.equal(cold.get(id)?.tree.messageEntries[native.info.id], reply.id);
+    if (previous) for (let index = 0; index < previous.length; index++) assert.equal(messages[index], previous[index]);
+  });
+}
 
 test("a committed revert keeps its abandoned branch hidden after restart", { timeout: 30_000 }, async (t) => {
   const { manager, dir, state } = setup(t);

@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve native replies and their recorded usage when reopening sessions with legacy compaction ID collisions.
+
 ## [0.2.31] - 2026-10-19
 
 - fix(session): refresh dormant history after external appends (#39)

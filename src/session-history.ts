@@ -192,6 +192,16 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
 
   const entries = parseEntries(raw);
 
+  // Older binders assigned synthetic compaction IDs to unrelated native replies.
+  for (const entry of entries) {
+    if (entry.type !== "compaction" || entry.id === undefined) continue;
+    for (const messageID of [`msg_compaction_${entry.id}`, `msg_compaction_${entry.id}_summary`]) {
+      if (s.tree.messageEntries[messageID] === undefined) continue;
+      delete s.tree.messageEntries[messageID];
+      delete s.tree.messageParts?.[messageID];
+    }
+  }
+
   const indexOf = new Map<PiFileEntry, number>();
   entries.forEach((e, i) => indexOf.set(e, i));
   const { chain, nativeTree } = activeChain(s, entries);

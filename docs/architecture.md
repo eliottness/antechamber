@@ -81,6 +81,14 @@ results while retaining adapter-local notices. Branch advancement still requires
 a descendant of the saved selection; a staged revert remains pinned.
 Live RPC-owned history continues to use its event-driven cache.
 
+Synthetic compaction markers and summaries never bind to ordinary native
+messages. History reconstruction removes legacy bindings for these reserved IDs
+before assigning native message and part identities. Otherwise a summary and a
+cost-bearing reply can share one ID and a later refresh drops the reply.
+Evidence: copied-session revival through the HTTP message endpoint on
+2026-10-19 lost nine tool-bearing replies before this repair and retained them
+after it.
+
 Compaction is displayed as a user-role compaction marker and its assistant
 summary. Subsequent replies use that marker as their display parent until a new
 user prompt, both live and in restored history. The native `clientMessageId` and
