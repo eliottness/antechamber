@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-10-19
+
+- fix(session): refresh dormant history after external appends (#39)
+
 ## [0.2.30] - 2026-10-19
 
 ### Fixed
