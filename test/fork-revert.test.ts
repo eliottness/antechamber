@@ -713,6 +713,140 @@ test("dormant history and revival follow turns another client appended to the se
   assert.ok(texts(cold, id).includes("from-terminal reply"));
 });
 
+test("dormant history follows external turns appended after the first history read", {
+  timeout: 30_000,
+}, async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { s, id } = await turns(manager, dir);
+  assert.ok(s.piPath);
+  await manager.disposeAll();
+
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+  assert.ok(cold.messages(id)?.some((message) => message.info.id === "msg_live_3"));
+  const session = cold.get(id);
+  assert.ok(session);
+  announceSessionNotice({ sessions: cold, session, emit: () => {} }, "adapter notice");
+  const noticeID = cold.messages(id)?.at(-1)?.info.id;
+  assert.ok(noticeID);
+  appendExternalTurn(s.piPath, "from-terminal");
+
+  assert.ok(texts(cold, id).includes("from-terminal reply"));
+  const refreshed = cold.messages(id);
+  assert.ok(refreshed?.some((message) => message.info.id === noticeID));
+  assert.equal(cold.messages(id), refreshed);
+  assert.equal(cold.get(id)?.pi, undefined);
+});
+
+test("dormant history refreshes a cached tool when its native result arrives", { timeout: 30_000 }, async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { s, id } = await turns(manager, dir);
+  assert.ok(s.piPath);
+  await manager.disposeAll();
+  const raw = readFileSync(s.piPath, "utf8");
+  const lastLine = raw.trimEnd().split("\n").at(-1);
+  assert.ok(lastLine);
+  const last = JSON.parse(lastLine);
+  const call = {
+    type: "message",
+    id: "external-call",
+    parentId: last.id,
+    timestamp: "2026-10-19T00:00:00.000Z",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [{ type: "toolCall", id: "external-tool", name: "bash", arguments: { command: "echo done" } }],
+    },
+  };
+  writeFileSync(s.piPath, `${raw}${JSON.stringify(call)}\n`);
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+  const tool = () =>
+    cold
+      .messages(id)
+      ?.flatMap((message) => message.parts)
+      .find((part) => part.type === "tool");
+  const pending = tool();
+  assert.ok(pending?.type === "tool");
+  assert.equal(pending.state.status, "running");
+
+  const result = {
+    type: "message",
+    id: "external-result",
+    parentId: call.id,
+    timestamp: "2026-10-19T00:00:01.000Z",
+    message: { role: "toolResult", toolCallId: "external-tool", content: [{ type: "text", text: "done\n" }] },
+  };
+  writeFileSync(s.piPath, `${readFileSync(s.piPath, "utf8")}${JSON.stringify(result)}\n`);
+
+  const completed = tool();
+  assert.ok(completed?.type === "tool" && completed.state.status === "completed");
+  assert.equal(completed.state.output, "done\n");
+  assert.equal(cold.get(id)?.pi, undefined);
+});
+
+test("dormant refresh preserves native rows with legacy compaction ID collisions", { timeout: 30_000 }, async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { s, id } = await turns(manager, dir);
+  assert.ok(s.piPath);
+  await manager.disposeAll();
+  const raw = readFileSync(s.piPath, "utf8");
+  const lastLine = raw.trimEnd().split("\n").at(-1);
+  assert.ok(lastLine);
+  const compaction = {
+    type: "compaction",
+    id: "external-compaction",
+    parentId: JSON.parse(lastLine).id,
+    firstKeptEntryId: JSON.parse(lastLine).id,
+    timestamp: "2026-10-19T00:00:00.000Z",
+    summary: "compaction-summary",
+  };
+  const reply = {
+    type: "message",
+    id: "external-reply",
+    parentId: compaction.id,
+    timestamp: "2026-10-19T00:00:01.000Z",
+    message: { role: "assistant", content: [{ type: "text", text: "native-reply" }] },
+  };
+  writeFileSync(s.piPath, `${raw}${JSON.stringify(compaction)}\n${JSON.stringify(reply)}\n`);
+  const summaryID = `msg_compaction_${compaction.id}_summary`;
+  new SessionStore(state).update(id, {
+    tree: { ...s.tree, messageEntries: { ...s.tree.messageEntries, [summaryID]: reply.id } },
+  });
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+  const rows = () => cold.messages(id)?.filter((message) => message.info.id === summaryID);
+  const before = rows();
+  assert.equal(before?.length, 2);
+
+  appendExternalTurn(s.piPath, "from-terminal");
+
+  assert.deepEqual(rows(), before);
+  assert.ok(texts(cold, id).includes("from-terminal reply"));
+});
+
+test("dormant cached history keeps a staged revert pinned after external appends", { timeout: 30_000 }, async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { s, id } = await turns(manager, dir);
+  assert.ok(s.piPath);
+  await manager.revert(id, "msg_live_3");
+  await manager.disposeAll();
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+  const before = cold.messages(id)?.map((message) => message.info.id);
+  const pin = structuredClone(cold.get(id)?.tree.revert);
+  assert.ok(before && pin);
+
+  appendExternalTurn(s.piPath, "from-terminal");
+
+  assert.deepEqual(
+    cold.messages(id)?.map((message) => message.info.id),
+    before,
+  );
+  assert.deepEqual(cold.get(id)?.tree.revert, pin);
+  assert.equal(cold.get(id)?.pi, undefined);
+});
+
 test("a committed revert keeps its abandoned branch hidden after restart", { timeout: 30_000 }, async (t) => {
   const { manager, dir, state } = setup(t);
   const { id } = await turns(manager, dir);

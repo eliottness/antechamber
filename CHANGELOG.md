@@ -13,6 +13,7 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - Preserve archived and nested task children in replay sandboxes, with transcript and task session paths
   remapped locally, so child history and costs are not lost when replaying selected roots.
+- Refresh dormant conversation history when another client appends messages or tool results after it was opened.
 
 ## [0.2.29] - 2026-10-19
 

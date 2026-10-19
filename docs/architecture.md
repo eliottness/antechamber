@@ -75,6 +75,12 @@ message is the active branch. The reverted transcript is retained for redo.
 Native progress is checkpointed at `agent_end`, successful `compaction_end`, and
 process exit. Checkpoints advance only to descendants of the saved leaf.
 
+Dormant history reads check the native file size against the parsed cache.
+When another client appends, the next read rebuilds native messages and tool
+results while retaining adapter-local notices. Branch advancement still requires
+a descendant of the saved selection; a staged revert remains pinned.
+Live RPC-owned history continues to use its event-driven cache.
+
 Compaction is displayed as a user-role compaction marker and its assistant
 summary. Subsequent replies use that marker as their display parent until a new
 user prompt, both live and in restored history. The native `clientMessageId` and
