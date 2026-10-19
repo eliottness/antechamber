@@ -96,6 +96,7 @@ export interface ManagedSession extends ThinkingState {
   unwirePi?: () => void;
   /** undefined for dormant sessions until history is parsed from the JSONL. */
   messages: OCMessageWithParts[] | undefined;
+  historyFileSize?: number;
   /** Adapter-authored notices/errors remain local; persisted shell cards can be bound. */
   localMessageIds?: Set<string>;
   status: OCSessionStatus;
@@ -1351,11 +1352,18 @@ export class SessionManager {
   private ensureMessages(s: ManagedSession): OCMessageWithParts[] {
     if (this.subagents.owns(s.info.id)) return this.subagents.messages(s.info.id);
     if (this.monitors.owns(s.info.id)) return this.monitors.messages(s.info.id);
+    if (s.pi !== undefined) delete s.historyFileSize;
+    const dormantPath = s.pi === undefined ? s.restored?.piPath : undefined;
+    const fileSize = dormantPath === undefined ? undefined : statSync(dormantPath, { throwIfNoEntry: false })?.size;
+    const cachedFileSize = s.historyFileSize ?? s.tree.fileSize;
+    if (s.messages !== undefined && fileSize !== undefined && fileSize !== cachedFileSize)
+      return this.refreshMessageCache(s, true);
     if (s.messages === undefined) {
       // A dormant session may have been continued by another OmO client since the last save.
       if (s.pi === undefined && s.restored !== undefined) followExternalAppends(s, s.restored.piPath);
       const admissions = s.tree.localShellTurns?.length;
       s.messages = parsePiSessionFile(s, getAgentName());
+      if (fileSize !== undefined) s.historyFileSize = fileSize;
       this.subagents.discover(s, s.messages);
       if (admissions) this.persistMeta(s);
       if (syncSessionCost(s)) this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
@@ -1363,10 +1371,22 @@ export class SessionManager {
     return s.messages;
   }
 
-  private refreshMessageCache(s: ManagedSession): OCMessageWithParts[] {
+  private refreshMessageCache(s: ManagedSession, replaceNative = false): OCMessageWithParts[] {
     const previous = s.messages ?? [];
     s.messages = undefined;
-    const parsed = new Map(this.ensureMessages(s).map((message) => [message.info.id, message]));
+    const native = this.ensureMessages(s);
+    if (replaceNative) {
+      // Legacy compaction IDs can collide; retain every parsed native row.
+      let index = 0;
+      for (const message of previous) {
+        let next = index;
+        while (next < native.length && native[next]?.info.id !== message.info.id) next++;
+        if (next < native.length) index = next + 1;
+        else if (s.tree.messageEntries[message.info.id] === undefined) native.splice(index++, 0, message);
+      }
+      return native;
+    }
+    const parsed = new Map(native.map((message) => [message.info.id, message]));
     s.messages = previous.flatMap((message) => {
       const restored = parsed.get(message.info.id);
       parsed.delete(message.info.id);
