@@ -382,6 +382,7 @@ export class PiEventTranslator {
         break;
       case "extension_event":
         this.services.monitors.observe(s, ev);
+        this.services.subagents.observe(s, ev);
         break;
       default:
         break; // turn_start, queue_update — future milestones

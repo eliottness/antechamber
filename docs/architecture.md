@@ -307,6 +307,39 @@ Monitor child sessions live only in memory, like adapter-authored cards. A
 watch the user deletes is not recreated by a later snapshot. When the agent
 process exits, its watches are marked ended.
 
+### Subagent lifecycle
+
+OmO owns every task's lifecycle; the connector only shows it. A child session
+is `busy` while OmO reports its task running and `idle` once OmO reports an
+end. The connector never decides a task ended on its own: aborting the parent's
+turn or losing the parent's agent process ends the parent's task cards that
+have no running child, and leaves the children to OmO.
+
+Evidence, from the installed `omo-ai` 5.1.33 plugin
+(`plugin/extensions/omo-task.js`, minified, cited by bundled function name)
+inspected on October 19, 2026:
+
+- `W6` sends `pi.rpc.emit("omo.task.updated", {parent_session_id, tasks,
+  truncated_tasks?})`: a replacement snapshot of the parent's tasks (status,
+  residency, `updated_at`, final response or error), on attach after
+  `session_start` reconciles detached workers and on every task store change.
+  It reaches clients that advertise `extension_events`. The snapshot is capped
+  at 256 tasks, so a task missing from it is unknown, not ended.
+- A `run_in_background` spawn returns before the foreground wait whose abort
+  handler calls `cancelTask(..., "parent turn aborted")` (`UZ` and the batch
+  waits), so a parent abort cancels only tasks the turn was still waiting on.
+- On parent shutdown, shared-host workers detach (`rpc_detached`) and keep
+  running (`DK`, `jK`); a revived parent reattaches them before publishing.
+- Task records bump `updated_at` only on transitions (spawn, steer, end), so it
+  is no heartbeat: a long task keeps its spawn time.
+
+The connector merges task state from records, snapshots, wake messages and
+tool results. It drops an update older than the one it holds, and a running
+state no newer than a terminal one OmO already reported. Versions up to 0.2.33
+synthesized `cancelled` on abort and compared records against the archive's
+modification time, which hid long tasks for good; such a persisted state has
+no terminal time and is replaced by the next running record or snapshot.
+
 ### MCP status and authorization
 
 OpenChamber scopes MCP calls by directory, while OmO owns MCP per session

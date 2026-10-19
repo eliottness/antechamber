@@ -53,6 +53,10 @@ function revivable(details: Record<string, unknown>): boolean {
   );
 }
 
+function timestamp(value: unknown): number {
+  return typeof value === "string" ? Date.parse(value) : Number.NaN;
+}
+
 function terminal(status: unknown): boolean {
   return ["completed", "failed", "error", "cancelled", "canceled", "killed", "lost", "denied", "plan_error"].includes(
     String(status),
@@ -417,6 +421,42 @@ export class SubagentBridge {
     }
   }
 
+  /**
+   * OmO's task bridge publishes `omo.task.updated` over the RPC extension channel: a replacement
+   * snapshot of every task under the parent, sent on attach (after OmO reconciles detached workers)
+   * and on each task store change (omo-task.js `W6`). A task missing from it is unknown, not ended:
+   * the snapshot is capped at 256 tasks.
+   */
+  observe(parent: ManagedSession, ev: Record<string, unknown>): void {
+    if (ev.name !== "omo.task.updated" || !record(ev.data) || !Array.isArray(ev.data.tasks)) return;
+    for (const row of ev.data.tasks) {
+      if (!record(row) || !taskId(row.task_id)) continue;
+      const id = ocIdFor(row.task_id);
+      if (!this.children.has(id)) this.restore(id);
+      const child = this.children.get(id);
+      if (!child) continue;
+      this.wire(parent);
+      if (!this.applyNative(child, row)) continue;
+      child.live = true;
+      this.refresh(child, true, false);
+    }
+  }
+
+  /**
+   * Merge task state reported by OmO (record, snapshot) unless it is older than what is known: an
+   * older update, or a running state that predates a terminal one OmO already reported. Terminal
+   * states are only ever taken from OmO, so nothing the adapter inferred can block a running task.
+   */
+  private applyNative(child: Child, data: Record<string, unknown>): boolean {
+    const updated = timestamp(data.updated_at);
+    const known = timestamp(child.task.details.updated_at);
+    if (updated < known) return false;
+    if (active(data.status) && terminal(child.task.details.status) && updated <= (child.task.terminalAt ?? 0))
+      return false;
+    child.task.details = { ...child.task.details, ...data };
+    return true;
+  }
+
   discover(parent: ManagedSession, messages: OCMessageWithParts[]): void {
     this.discoverParts(
       parent,
@@ -630,7 +670,7 @@ export class SubagentBridge {
 
   private refresh(child: Child, publish: boolean, useRecord = true): void {
     const archive = this.archive(child.task.id);
-    const found = this.reconcileTaskRecord(child, archive, useRecord);
+    const found = this.reconcileTaskRecord(child, useRecord);
     const running = active(child.task.details.status) && (found !== undefined || child.live);
     const state: RefreshState = {
       previousMessages: child.session.messages ?? [],
@@ -648,17 +688,12 @@ export class SubagentBridge {
 
   private reconcileTaskRecord(
     child: Child,
-    archive: string,
     useRecord: boolean,
   ): { path: string; data: Record<string, unknown> } | undefined {
     const found = findTask(child.task.id, child.task.parentPiId);
     if (!found) return undefined;
     child.recordPath = found.path;
-    const updated = typeof found.data.updated_at === "string" ? Date.parse(found.data.updated_at) : NaN;
-    const retainedTerminal = Math.max(child.task.terminalAt ?? 0, existsSync(archive) ? statSync(archive).mtimeMs : 0);
-    const staleRunning =
-      active(found.data.status) && terminal(child.task.details.status) && updated <= retainedTerminal;
-    if (useRecord && !staleRunning) child.task.details = { ...child.task.details, ...found.data };
+    if (useRecord) this.applyNative(child, found.data);
     const host = found.data.host_session;
     if (record(host) && typeof host.session_path === "string") {
       child.livePath = host.session_path;
@@ -859,14 +894,23 @@ export class SubagentBridge {
     }
   }
 
+  /**
+   * End the parent's task cards that have no running child. A card whose child runs is left to OmO:
+   * an abort cancels only a task the turn was still waiting on, and OmO reports that cancellation
+   * like any other end (omo-task.js `UZ`, "parent turn aborted"); background tasks keep running.
+   * After an abort the call stays tracked, because its tool result can still arrive.
+   */
   finishCalls(parentID: string, cancelled = false): void {
     for (const [key, parts] of this.calls) {
       if (!key.startsWith(`${parentID}|`)) continue;
       const parent = this.sessions.get(parentID);
+      let waiting = false;
       for (const part of parts) {
         const childID = part.state.status !== "pending" ? part.state.metadata?.sessionID : undefined;
-        if (!cancelled && typeof childID === "string" && this.children.get(childID)?.session.status.type === "busy")
+        if (typeof childID === "string" && this.children.get(childID)?.session.status.type === "busy") {
+          waiting = true;
           continue;
+        }
         updateTaskParts(
           [part],
           {
@@ -879,19 +923,20 @@ export class SubagentBridge {
         );
         if (parent) this.emitPart(parent, part);
       }
-      this.calls.delete(key);
+      if (!cancelled || !waiting) this.calls.delete(key);
     }
   }
 
+  /**
+   * Stop showing a deleted parent's children as live. Their status is not touched: OmO tasks outlive
+   * their parent's turn and process (shared-host workers detach, omo-task.js `DK`/`jK`), so only OmO
+   * can say a task ended.
+   */
   stopParent(parentID: string): void {
     this.finishCalls(parentID, true);
     for (const child of this.children.values()) {
       if (child.session.info.parentID !== parentID) continue;
       this.stopParent(child.session.info.id);
-      if (child.session.status.type === "busy") {
-        child.task.details = { ...child.task.details, status: "cancelled" };
-        this.refresh(child, true, false);
-      }
       this.closeWatchers(child);
     }
   }

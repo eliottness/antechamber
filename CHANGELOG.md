@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep OmO background subagents running in OpenChamber after the parent turn is stopped or its agent
+  process exits. Child status now follows OmO's `omo.task.updated` snapshots and task records, and a
+  child an older version wrongly marked cancelled recovers from its running record.
+
 ## [0.2.34] - 2026-10-19
 
 ### Fixed

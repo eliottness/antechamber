@@ -371,7 +371,8 @@ export class SessionManager {
       }
       delete s.interruptRequested;
       this.events.settleBackground(s);
-      this.subagents.stopParent(s.info.id);
+      // Its task cards end with the run; the tasks themselves may still run in OmO's shared host.
+      this.subagents.finishCalls(s.info.id, true);
       this.monitors.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
@@ -831,7 +832,8 @@ export class SessionManager {
     }
     s.cancelShell?.();
     s.approvals?.cancelAll();
-    this.subagents.stopParent(sessionId);
+    // Background tasks outlive an abort; OmO itself cancels the ones the turn was waiting on.
+    this.subagents.finishCalls(sessionId, true);
     return true;
   }
 
