@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.33] - 2026-10-19
+
 ### Fixed
 
 - Restore subagent costs and token totals before listing sessions, so OpenChamber includes
