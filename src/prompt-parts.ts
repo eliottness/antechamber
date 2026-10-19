@@ -1,4 +1,9 @@
 /** Lossless user parts on the wire, adapted to the native text/images RPC. */
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { defaultStateDir, envSetting } from "./config.js";
 import { RequestBodyError } from "./http.js";
 import type { OCPromptPart } from "./types.js";
 
@@ -139,6 +144,26 @@ export function contextMessageID(entry: { type?: string; customType?: string; de
   return typeof entry.details.messageID === "string" ? entry.details.messageID : undefined;
 }
 
+/**
+ * Saves inline attachment bytes the native RPC cannot carry under `<state dir>/attachments`.
+ * The path is content-addressed, so re-deriving a prompt (admission checks, history binding)
+ * names the same file and recreates it if it was removed.
+ */
+function storeInlineAttachment(content: Buffer, filename: string | undefined): string {
+  const digest = createHash("sha256").update(content).digest("hex");
+  const root = join(resolve(envSetting("STATE_DIR") ?? defaultStateDir()), "attachments");
+  const dir = join(root, digest);
+  const name = basename(filename ?? "").replaceAll("\0", "");
+  const path = join(dir, name === "" || name === "." || name === ".." ? "attachment" : name);
+  if (!existsSync(path)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const partial = `${path}.${process.pid}.partial`;
+    writeFileSync(partial, content, { mode: 0o600 });
+    renameSync(partial, path);
+  }
+  return path;
+}
+
 export function nativePromptInput(text: string, parts: readonly OCPromptPart[]) {
   const chunks = [text];
   const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
@@ -159,7 +184,12 @@ export function nativePromptInput(text: string, parts: readonly OCPromptPart[]) 
             images.push({ type: "image", data: content.toString("base64"), mimeType: part.mime });
           else if (part.mime.startsWith("text/"))
             chunks.push(`${part.filename ?? "attachment"} (${part.mime}):\n${content.toString("utf8")}`);
-          else throw new RequestBodyError(400, `Unsupported inline attachment MIME type: ${part.mime}`);
+          else {
+            // Native RPC has no generic FilePart: save the bytes and hand the agent a file
+            // reference, as for workspace files below, so its own tools can read e.g. a PDF.
+            const url = pathToFileURL(storeInlineAttachment(content, part.filename)).href;
+            chunks.push(JSON.stringify({ filename: part.filename, mime: part.mime, url }));
+          }
         } else {
           // Native RPC has no generic FilePart; retain the reference in model
           // context so the agent can read the selected workspace file.

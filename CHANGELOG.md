@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept uploaded attachments other than images and text, such as PDFs, instead of failing the prompt with
+  `Unsupported inline attachment MIME type`. The file is saved under the state directory's `attachments/`
+  folder and passed to the agent as a file reference it can read with its own tools.
+
 ## [0.2.33] - 2026-10-19
 
 ### Fixed

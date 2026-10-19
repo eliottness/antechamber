@@ -147,8 +147,11 @@ not across connector restarts: adapter-only cards are not persisted transcripts.
 
 V1 prompt bodies retain supported text, file, and agent parts. Inline image
 data becomes native image input, inline text files become prompt text, and
-agent mentions become `@name` text; unsupported inline attachment MIME types
-return 400. Slash-command file parts use the same adaptation. V1 `delivery`
+agent mentions become `@name` text. Other inline attachments (PDF, archives...)
+are saved under `<state dir>/attachments/<sha256>/<filename>` (mode `0600`)
+and reach the agent as a `{filename, mime, url}` file reference, like a
+workspace file, so its own tools can read them. The path is content-addressed,
+so re-deriving the prompt when history binds it yields the same text. Slash-command file parts use the same adaptation. V1 `delivery`
 defaults to `steer` and can select `queue`, which maps to native
 `streamingBehavior: followUp`.
 
