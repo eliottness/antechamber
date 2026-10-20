@@ -54,6 +54,7 @@ function normalizeRegistry(raw) {
   for (const [id, value] of Object.entries(raw)) {
     if (!isObject(value)) continue;
     const entry = {};
+    if (value.deleted === true) entry.deleted = true;
     if (text(value.piSessionId) !== void 0) entry.piSessionId = text(value.piSessionId);
     if (text(value.parentID) !== void 0) entry.parentID = text(value.parentID);
     if (text(value.title) !== void 0) entry.title = text(value.title);
@@ -64,6 +65,20 @@ function normalizeRegistry(raw) {
 }
 function ocIdFor(piSessionId) {
   return `ses_${createHash("md5").update(piSessionId).digest("hex")}`;
+}
+function taskSessionId(task, tasks, registry) {
+  const registered = Object.entries(registry).find(
+    ([, entry]) => entry.task?.id === task.task_id && entry.task.parentPiId === task.parent_session_id
+  );
+  if (registered) return registered[0];
+  const legacy = ocIdFor(task.task_id);
+  const parent = Object.entries(registry).find(([, entry]) => entry.piSessionId === task.parent_session_id)?.[0];
+  if (registry[legacy]?.deleted && registry[legacy]?.parentID === (parent ?? ocIdFor(task.parent_session_id ?? "")))
+    return legacy;
+  const qualified = ocIdFor(`${task.parent_session_id}:${task.task_id}`);
+  if (registry[legacy] !== void 0 || registry[qualified] !== void 0 || tasks.some((other) => other.task_id === task.task_id && other.parent_session_id !== task.parent_session_id))
+    return qualified;
+  return legacy;
 }
 var ACTIVE = /* @__PURE__ */ new Set(["running", "starting"]);
 var WAITING = /* @__PURE__ */ new Set(["queued", "pending", "suspended"]);
@@ -108,7 +123,7 @@ ${task.spawn_spec?.instructions ?? ""}`;
 }
 function resolveSession(sessionId, tasks, registry) {
   const entry = registry[sessionId];
-  const focusTask = tasks.find((t) => ocIdFor(t.task_id) === sessionId) ?? (entry?.task?.id ? tasks.find((t) => t.task_id === entry.task?.id) : void 0);
+  const focusTask = tasks.find((t) => taskSessionId(t, tasks, registry) === sessionId);
   let rootPi;
   if (focusTask) rootPi = focusTask.root_session_id ?? focusTask.parent_session_id ?? entry?.task?.parentPiId;
   else if (entry?.task?.parentPiId) rootPi = entry.task.parentPiId;
@@ -183,7 +198,7 @@ function buildGraph(sessionId, tasks, registry) {
     return {
       id: t.task_id,
       kind: "task",
-      sessionId: ocIdFor(t.task_id),
+      sessionId: taskSessionId(t, tasks, registry),
       title: firstLine(t.task_summary ?? t.description ?? t.name, 90) ?? t.task_id,
       state,
       rawStatus: String(t.status ?? "unknown"),
@@ -322,7 +337,7 @@ var TaskStore = class {
         const path = join(dir, "tasks", file);
         if (!isRegularFile(path)) continue;
         const task = this.tasks.read(path, normalizeTask);
-        if (task) out.set(task.task_id, task);
+        if (task) out.set(JSON.stringify([task.parent_session_id, task.task_id]), task);
       }
     }
     return [...out.values()];
