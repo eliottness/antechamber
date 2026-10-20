@@ -7,6 +7,16 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The OpenChamber extensions install by Git URL, and OpenChamber offers each release under
+  **Update** in Settings → Extensions: every release commits them to the `extension/omo-graph`,
+  `extension/omo-work` and `extension/omo-compat` branches, so add
+  `https://github.com/eliottness/antechamber#extension/omo-graph` (or `#extension/omo-work`,
+  `#extension/omo-compat`). The bare repository URL keeps failing with OpenChamber's "panel.id must
+  be kebab-case" toast, because it points at antechamber itself. ZIP installs still work but are
+  never updated.
+
 ## [1.0.2] - 2026-10-20
 
 ### Fixed

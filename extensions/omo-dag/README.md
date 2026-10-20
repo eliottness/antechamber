@@ -58,16 +58,18 @@ fits where OpenChamber runs:
   - source checkout: `<checkout>/extensions/omo-dag`, after `npm run build`
     (which also writes `panel/main.js` and `service/main.js`).
 - **URL**, from anywhere, including a remote OpenChamber you only reach in a
-  browser:
-  `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`.
-  Every GitHub release attaches this archive. Append a version instead of
-  `latest` (`.../releases/download/vX.Y.Z/antechamber-omo-graph.zip`) to pin
-  one.
-- **ZIP file**, for offline hosts: the same archive, downloaded, or built with
+  browser: `https://github.com/eliottness/antechamber#extension/omo-graph`.
+  Every release commits the built extension to the `extension/omo-graph`
+  branch, so OpenChamber offers it under **Update** in Settings → Extensions.
+  To pin a version instead, install its release archive by URL,
+  `https://github.com/eliottness/antechamber/releases/download/vX.Y.Z/antechamber-omo-graph.zip`;
+  OpenChamber never updates ZIP installs.
+- **ZIP file**, for offline hosts: that archive, downloaded, or built with
   `npm run build && npm run pack:extension -- antechamber-omo-graph.zip`.
 
-Don't use the repository's Git URL. OpenChamber clones the repository root,
-which is antechamber itself, and rejects it as `invalid-manifest`.
+Keep the `#extension/omo-graph` part of the URL. Without it OpenChamber clones
+the repository root, which is antechamber itself, and rejects it as
+`invalid-manifest`, which its toast words as "panel.id must be kebab-case".
 
 Approve the request. The extension asks for two things:
 

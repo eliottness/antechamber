@@ -31,9 +31,12 @@ In OpenChamber, open **Settings → Extensions → Add**:
   installed: the path `antechamber setup` prints,
   `$(npm root -g)/antechamber/extensions/omo-work` for npm installs or
   `<checkout>/extensions/omo-work` after `npm run build`.
-- **URL**:
-  `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-work.zip`.
-- **ZIP file**: the same archive, or
+- **URL**: `https://github.com/eliottness/antechamber#extension/omo-work`, a
+  Git install that OpenChamber offers to update after each release. The
+  release archive,
+  `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-work.zip`,
+  also installs by URL, but OpenChamber never updates ZIP installs.
+- **ZIP file**: that archive, or
   `npm run build && npm run pack:work-extension -- antechamber-omo-work.zip`.
 
 Approve its **local service**. The section then appears in the Work Status

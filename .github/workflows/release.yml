@@ -1,8 +1,9 @@
 name: Release
 
 # Every push to main ships a patch release: bump the versions, commit
-# "chore(release): vX.Y.Z" and tag vX.Y.Z back onto main, publish to npm, and
-# create the GitHub release with the OmO Graph extension zip. See RELEASE.md.
+# "chore(release): vX.Y.Z" and tag vX.Y.Z back onto main, publish to npm,
+# create the GitHub release with the extension zips, and publish the extension
+# branches. See RELEASE.md.
 on:
   push:
     branches: [main]
@@ -114,3 +115,13 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+      # Installable from OpenChamber by Git URL, which OpenChamber checks for
+      # updates: https://github.com/eliottness/antechamber#extension/omo-graph
+      # (also #extension/omo-work and #extension/omo-compat).
+      - name: Publish the extension branches
+        run: npx tsx scripts/publish-extension-branches.ts "$RUNNER_TEMP"
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com

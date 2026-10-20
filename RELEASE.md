@@ -24,8 +24,17 @@ bumps versions or pushes tags by hand. The
    one atomic push.
 5. **Publish.** `npm publish --provenance` to npm.
 6. **GitHub release.** It creates release `vX.Y.Z` with the CHANGELOG section as
-   notes and attaches `antechamber-omo-graph.zip` (built by
-   `npm run pack:extension`).
+   notes and attaches the extension zips: `antechamber-omo-graph.zip` (built by
+   `npm run pack:extension`), `antechamber-omo-work.zip` and
+   `antechamber-omo-compat.zip`.
+7. **Extension branches.** `scripts/publish-extension-branches.ts` commits each
+   zip's content to its branch, `extension/omo-graph`, `extension/omo-work` or
+   `extension/omo-compat`, as one commit on top of the previous release's, and
+   pushes them in one atomic push. OpenChamber installs
+   `https://github.com/eliottness/antechamber#extension/omo-graph` (and the
+   others) from these branches and offers an update whenever the `version` at
+   the branch tip is newer than the installed one. Nobody commits to them by
+   hand. They hold no workflow files, so pushing them runs no CI.
 
 The release commit does not trigger another release. Pushes made with
 `GITHUB_TOKEN` start no workflows, and the job also skips any commit whose
@@ -70,9 +79,11 @@ The version printed by `antechamber version` comes from `package.json`.
 `antechamber --version` intentionally prints the OpenCode API version that
 OpenChamber checks for, not the antechamber version.
 
-The extension zip is installed by URL from
-`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`,
-so keep that asset name stable.
+The extensions are installed by URL from
+`https://github.com/eliottness/antechamber#extension/omo-graph` and
+`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`
+(likewise for omo-work and omo-compat), so keep the branch and asset names
+stable.
 
 ## One-time repository setup
 
@@ -92,6 +103,10 @@ so keep that asset name stable.
     `eliottness/antechamber`, workflow `release.yml`. No secret is needed.
   - *Token.* Add an npm automation token as the `NPM_TOKEN` repository secret
     (Settings -> Secrets and variables -> Actions).
+- **Extension branches.** The workflow pushes `extension/*` with the same
+  credentials as `main`. The `main` ruleset covers only the default branch; a
+  ruleset that also matched `extension/*` would have to let those credentials
+  push (fast-forward only, never force).
 
 Tags are created by `github-actions[bot]` and are annotated but not signed.
 
@@ -100,8 +115,9 @@ Tags are created by `github-actions[bot]` and are annotated but not signed.
 Every step after the push can be re-run safely. When the tip of `main` is
 already a `vX.Y.Z` release commit, the workflow skips the bump and only does
 what is still missing: it publishes to npm only if that version is not on the
-registry yet, and it uploads the zip to an existing GitHub release instead of
-creating a new one.
+registry yet, it uploads the zips to an existing GitHub release instead of
+creating a new one, and it leaves an extension branch alone when its tip
+already holds the same files.
 
 - **Checks or build failed:** nothing was committed or published. Fix it on
   `main`; the fix's push releases.

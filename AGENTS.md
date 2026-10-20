@@ -32,7 +32,7 @@ Published package = `dist/` + `bin/` shims + the built OmO Graph and OmO Work ex
 | Env vars and defaults | `docs/configuration.md` | update in the same change as any env var |
 | Why fork/revert/shutdown work as they do | `docs/architecture.md` | evidence-backed OmO protocol notes |
 | OmO deployment, systemd, teardown | `docs/backends/omo.md` | |
-| Release flow | `RELEASE.md`, `.github/workflows/release.yml`, `scripts/release.ts` | every push to main ships a patch; never hand-bump patch versions |
+| Release flow | `RELEASE.md`, `.github/workflows/release.yml`, `scripts/release.ts`, `scripts/publish-extension-branches.ts` | every push to main ships a patch; never hand-bump patch versions; `extension/*` branches are written by CI only |
 | Per-module responsibility table | `docs/development.md` | source and smoke paths |
 
 ## CODE MAP

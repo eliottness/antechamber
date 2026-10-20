@@ -228,13 +228,14 @@ source fits where OpenChamber runs:
 | OpenChamber runs | Add | Value |
 |---|---|---|
 | on the machine where antechamber is installed | **Folder** | the path `antechamber setup` prints: `$(npm root -g)/antechamber/extensions/omo-dag` for npm installs, `<checkout>/extensions/omo-dag` after `npm run build` from source |
-| anywhere (remote host, browser-only access) | **URL** | `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip` (attached to every GitHub release) |
-| anywhere, offline | **ZIP file** | that same `antechamber-omo-graph.zip`, downloaded, or built with `npm run build && npm run pack:extension -- antechamber-omo-graph.zip` |
+| anywhere (remote host, browser-only access) | **URL** | `https://github.com/eliottness/antechamber#extension/omo-graph`, a Git install that OpenChamber offers to update after each release |
+| anywhere, offline | **ZIP file** | `antechamber-omo-graph.zip` from a GitHub release, or built with `npm run build && npm run pack:extension -- antechamber-omo-graph.zip`. OpenChamber never updates ZIP installs |
 
 Then approve its two permissions (follow sessions, run the local service) and
-open it from the rail icon. Don't install it from the repository's Git URL:
-OpenChamber clones the repository root, which is antechamber itself, not the
-extension, and refuses it as an invalid manifest. Details:
+open it from the rail icon. Keep the `#extension/omo-graph` part of the URL:
+the bare repository URL makes OpenChamber clone antechamber itself, whose
+`package.json` is not an extension, and OpenChamber words that rejection as
+"panel.id must be kebab-case". Details:
 [extensions/omo-dag/README.md](extensions/omo-dag/README.md).
 
 ## OpenChamber extension: OmO Work
@@ -248,8 +249,8 @@ with a Fire now button. On 2.x, monitors appear here instead of as subagent
 sessions.
 
 Add it like OmO Graph: the folder `antechamber setup` prints
-(`.../extensions/omo-work`, built by `npm run build`), or
-`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-work.zip`.
+(`.../extensions/omo-work`, built by `npm run build`), or the URL
+`https://github.com/eliottness/antechamber#extension/omo-work`.
 Approve its local service. It needs an antechamber version that writes a
 work-status token into its run record (this release or newer) and an
 OpenChamber restart after upgrading. Details:
@@ -262,10 +263,30 @@ or newer. It tells OpenChamber how to display OmO tool calls that antechamber
 maps onto OpenChamber's cards; today it heads eval cells with `JS Eval` or
 `Python Eval` and the cell's summary. Add it the same way as OmO Graph: the
 folder `antechamber setup` prints (`.../extensions/omo-compat`, no build
-needed), or the release archive
-`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-compat.zip`.
+needed), or the URL
+`https://github.com/eliottness/antechamber#extension/omo-compat`.
 It asks for no permissions. Details:
 [extensions/omo-compat/README.md](extensions/omo-compat/README.md).
+
+## Upgrading the OpenChamber extensions
+
+Every antechamber release ships the three extensions at its own version. How
+an installed extension moves to a new release depends on how it was added:
+
+- **Git URL** (`https://github.com/eliottness/antechamber#extension/...`):
+  Settings → Extensions shows **Update available** once a release is out
+  (OpenChamber checks at most hourly; **Check for updates** checks now).
+  **Update** replaces it in place and keeps its approvals and settings.
+- **Folder**: the folder belongs to the antechamber installation, so it
+  changes with `antechamber upgrade` (or `git pull && npm ci && npm run build`
+  in a checkout). Toggle the extension off and on to restart its service.
+- **ZIP** (file or release URL): OpenChamber never checks these. Add the new
+  archive and choose **Reinstall**, or switch to the Git URL once: remove the
+  extension, then add it by URL.
+
+Each extension is built against the antechamber of the same release, so
+upgrade antechamber too and restart OpenChamber to run it; `antechamber
+doctor` shows the running version.
 
 ## Configuration
 
