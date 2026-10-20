@@ -586,7 +586,7 @@ export class SessionManager {
     if (treeOperation && s.piPath !== undefined) {
       const disk = readSessionTree(s.piPath);
       const known = new Set(tree.entries.map((entry) => entry.id));
-      if (disk.leafId !== tree.leafId || disk.entries.some((entry) => !known.has(entry.id))) {
+      if (tree.unverifiedPrefix || disk.leafId !== tree.leafId || disk.entries.some((entry) => !known.has(entry.id))) {
         // Only idle user tree operations can replace a stale native runtime.
         const saved = s.tree.leafId;
         const response = await pi.command<{ cancelled?: boolean }>(

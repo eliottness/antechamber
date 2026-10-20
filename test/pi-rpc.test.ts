@@ -60,6 +60,26 @@ test("ignores non-object JSON and invalid response IDs without losing valid fram
   assert.equal((await pending).data, "valid");
 });
 
+test("tracks the current session file across correlated state responses", async (t) => {
+  const { pi, stdin, stdout } = transport(t);
+  for (const sessionFile of ["/tmp/first-session.jsonl", "/tmp/forked-session.jsonl", undefined]) {
+    stdin.once("data", (chunk) => {
+      const command = JSON.parse(String(chunk));
+      stdout.write(
+        `${JSON.stringify({
+          type: "response",
+          id: command.id,
+          command: command.type,
+          success: true,
+          data: { sessionFile },
+        })}\n`,
+      );
+    });
+    await pi.command({ type: "get_state" });
+    assert.equal(pi.sessionFile, sessionFile);
+  }
+});
+
 test("kills oversized unterminated frames and rejects all pending commands", async (t) => {
   const { pi, stdout, kill } = transport(t);
   t.mock.method(console, "error", () => {});

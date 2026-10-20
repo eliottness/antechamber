@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep large sessions usable after their persisted history exceeds the 64 MiB RPC frame limit.
+  History synchronization now reads the persisted prefix locally and requests only the native tail,
+  preserving the selected branch when sending messages or reopening a session.
+
 ## [0.2.35] - 2026-10-19
 
 ### Fixed

@@ -45,9 +45,13 @@ export interface TreeEntry {
 export interface Entries {
   entries: TreeEntry[];
   leafId: string | null;
+  /** A disk prefix is not proof that the live runtime has loaded every entry. */
+  unverifiedPrefix?: true;
 }
 
 export class SessionTreeError extends Error {}
+
+const INLINE_TREE_BYTES = 32 * 1024 * 1024;
 
 export function durableShellTree(tree: SessionTreeState): SessionTreeState {
   return {
@@ -60,10 +64,30 @@ export function durableShellTree(tree: SessionTreeState): SessionTreeState {
 }
 
 export async function getEntries(pi: PiRpcClient, signal?: AbortSignal): Promise<Entries> {
-  const response = await pi.command<Entries>({ type: "get_entries" }, RPC_COMMAND_TIMEOUT_MS, signal);
-  if (!response.success || !response.data)
-    throw new SessionTreeError(response.error ?? "OmO returned no session entries");
-  return response.data;
+  const path = pi.sessionFile;
+  const disk =
+    path !== undefined && (statSync(path, { throwIfNoEntry: false })?.size ?? 0) >= INLINE_TREE_BYTES
+      ? readSessionTree(path)
+      : undefined;
+  for (let index = (disk?.entries.length ?? 0) - 1; ; index--) {
+    const since = disk?.entries[index]?.id;
+    const response = await pi.command<Entries>(
+      { type: "get_entries", ...(since === undefined ? {} : { since }) },
+      RPC_COMMAND_TIMEOUT_MS,
+      signal,
+    );
+    // Another client may have appended entries the live runtime has not loaded.
+    if (!response.success && response.errorCode === "not_found" && since !== undefined) continue;
+    if (!response.success || !response.data)
+      throw new SessionTreeError(response.error ?? "OmO returned no session entries");
+    return disk === undefined
+      ? response.data
+      : {
+          entries: [...disk.entries.slice(0, index + 1), ...response.data.entries],
+          leafId: response.data.leafId,
+          unverifiedPrefix: true,
+        };
+  }
 }
 
 export function readSessionTree(piPath: string): Entries {

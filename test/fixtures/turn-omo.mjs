@@ -266,7 +266,29 @@ createInterface({ input: process.stdin })
       record("thinking_level_change", { thinkingLevel });
       send({ type: "thinking_level_changed", level: thinkingLevel });
     }
-    if (cmd.type === "get_entries") data = { entries, leafId: leaf };
+    // OmO modes/rpc/connection-handler.js: get_entries accepts an exclusive `since` entry
+    // and returns `not_found` when another client's append is absent from this runtime.
+    if (cmd.type === "get_entries") {
+      const index = cmd.since === undefined ? -1 : entries.findIndex((entry) => entry.id === cmd.since);
+      if (cmd.since !== undefined && index === -1) {
+        send({
+          type: "response",
+          id: cmd.id,
+          command: cmd.type,
+          success: false,
+          error: `Entry not found: ${cmd.since}`,
+          errorCode: "not_found",
+        });
+        return;
+      }
+      data = { entries: entries.slice(index + 1), leafId: leaf };
+    }
+    if (cmd.type === "append_session_entry") record(cmd.entry.type, cmd.entry);
+    if (cmd.type === "switch_session") {
+      entries = readFileSync(cmd.sessionPath, "utf8").trim().split("\n").map(JSON.parse).slice(1);
+      leaf = entries.at(-1)?.id ?? null;
+      data = { cancelled: false };
+    }
     if (cmd.type === "navigate_tree") {
       const entry = entries.find((entry) => entry.id === cmd.targetId);
       success = entry !== undefined;
