@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-10-20
+
 ### Added
 
 - The OpenChamber extensions install by Git URL, and OpenChamber offers each release under
