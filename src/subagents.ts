@@ -16,9 +16,9 @@ import {
 import { basename, dirname, join } from "node:path";
 import { piAgentDir } from "./agent-dir.js";
 import { syncSessionCost } from "./pi-event-translation.js";
-import { ocIdFor, SessionPersistenceError, type SessionStore } from "./session-store.js";
-import { type EvalAgent, mapTool, resultText, toolMappers, type ToolResult } from "./tool-map.js";
+import { ocIdFor, SessionPersistenceError, SessionStore } from "./session-store.js";
 import type { ManagedSession } from "./sessions.js";
+import { type EvalAgent, mapTool, resultText, type ToolResult, toolMappers } from "./tool-map.js";
 import type { OCEvent, OCMessageWithParts, OCSession, OCToolPart } from "./types.js";
 import { ADAPTER_VERSION } from "./version.js";
 
@@ -143,7 +143,12 @@ export function updateTaskParts(parts: OCToolPart[], result: ToolResult, ended: 
     const metadata = {
       ...previous,
       task: data,
-      ...(taskId(data.task_id) ? { sessionID: ocIdFor(data.task_id), taskID: data.task_id } : {}),
+      ...(taskId(data.task_id)
+        ? {
+            sessionID: previous?.taskID === data.task_id ? previous.sessionID : ocIdFor(data.task_id),
+            taskID: data.task_id,
+          }
+        : {}),
     };
     // Preserve a final result for the fallback even after the parent JSONL is gone.
     if (ended && output !== "" && !active(data.status)) data.final_response = output;
@@ -238,14 +243,40 @@ function childRecord(id: string, path: string): Record<string, unknown> | undefi
   return data?.task_id === id && typeof data.parent_session_id === "string" ? data : undefined;
 }
 
-/** Reverse lookup of a child session id, for tasks whose spawn never surfaced as a `task` tool call. */
-export function findTaskBySession(sessionId: string): { path: string; data: Record<string, unknown> } | undefined {
-  for (const { id, path } of taskFiles()) {
-    if (ocIdFor(id) !== sessionId) continue;
-    const data = childRecord(id, path);
-    if (data) return { path, data };
+/** Keep bookmarks for known tasks; a bare native id is only safe while it has one parent. */
+export function taskSessionId(id: string, parentPiId: string, store = new SessionStore()): string {
+  for (const sessionID of store.childIds()) {
+    const task = store.get(sessionID)?.task;
+    if (task?.id === id && task.parentPiId === parentPiId) return sessionID;
   }
-  return undefined;
+  const legacyID = ocIdFor(id);
+  const legacy = store.get(legacyID);
+  if (legacy !== undefined) {
+    if (legacy.deleted && legacy.parentID === (store.idFor(parentPiId) ?? ocIdFor(parentPiId))) return legacyID;
+    return ocIdFor(`${parentPiId}:${id}`);
+  }
+  const qualifiedID = ocIdFor(`${parentPiId}:${id}`);
+  if (store.get(qualifiedID)) return qualifiedID;
+  for (const root of taskStores()) {
+    const data = childRecord(id, join(root, "tasks", `${id}.json`));
+    if (data && data.parent_session_id !== parentPiId) return qualifiedID;
+  }
+  return legacyID;
+}
+
+/** Reverse lookup never resolves an unbound, ambiguous bare id by store enumeration order. */
+export function findTaskBySession(
+  sessionId: string,
+  store = new SessionStore(),
+): { path: string; data: Record<string, unknown> } | undefined {
+  let found: { path: string; data: Record<string, unknown> } | undefined;
+  for (const { id, path } of taskFiles()) {
+    const data = childRecord(id, path);
+    if (!data || taskSessionId(id, String(data.parent_session_id), store) !== sessionId) continue;
+    if (found && found.data.parent_session_id !== data.parent_session_id) return undefined;
+    found = { path, data };
+  }
+  return found;
 }
 
 /**
@@ -293,7 +324,7 @@ export function evalAgentSession(
   const summary = text(best.data.task_summary);
   const agentType = text(best.data.agent_type);
   return {
-    sessionID: ocIdFor(best.id),
+    sessionID: taskSessionId(best.id, parentPiId),
     ...(name !== undefined && name !== best.id ? { name } : {}),
     ...(summary !== undefined ? { summary } : {}),
     ...(agentType !== undefined ? { agentType } : {}),
@@ -308,6 +339,33 @@ export function findTask(id: string, parentPiId: string): { path: string; data: 
     if (data?.task_id === id && data.parent_session_id === parentPiId) return { path, data };
   }
   return undefined;
+}
+
+function transcriptSessionId(raw: string): string | undefined {
+  try {
+    const header: unknown = JSON.parse(raw.split("\n", 1)[0] ?? "");
+    return record(header) && header.type === "session" && typeof header.id === "string" ? header.id : undefined;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
+function transcriptSessionIdFromFile(path: string): string | undefined {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)))
+      return undefined;
+    throw error;
+  }
+  try {
+    const buffer = Buffer.alloc(4096);
+    return transcriptSessionId(buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString("utf8"));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Byte offsets and a byte carry retain split UTF-8 characters and torn JSON lines. */
@@ -392,8 +450,20 @@ export class SubagentBridge {
     private readonly parse: ParseHistory,
   ) {}
 
-  private archive(id: string): string {
-    return join(this.store.stateDir, "children", `${id}.jsonl`);
+  private archive(child: Child): string {
+    const previous = this.store.get(child.session.info.id)?.piPath;
+    const directory = join(this.store.stateDir, "children");
+    return (
+      (previous !== undefined && dirname(previous) === directory ? previous : undefined) ??
+      join(
+        directory,
+        `${child.session.info.id === ocIdFor(child.task.id) ? child.task.id : child.session.info.id}.jsonl`,
+      )
+    );
+  }
+
+  private sessionId(parent: ManagedSession, id: string): string {
+    return taskSessionId(id, parent.piSessionId ?? parent.restored?.piSessionId ?? "", this.store);
   }
 
   wire(parent: ManagedSession): void {
@@ -427,7 +497,7 @@ export class SubagentBridge {
     const message = record(event.message) ? event.message : event;
     if (message.customType !== "omo-senpi:wake") return;
     for (const data of taskCompletions(message.details)) {
-      const id = ocIdFor(String(data.task_id));
+      const id = this.sessionId(parent, String(data.task_id));
       // A registry-only child (after a restart) or a task with no card (spawned from
       // `eval`) is not loaded yet; restore() covers both.
       if (!this.children.has(id)) this.restore(id);
@@ -449,10 +519,15 @@ export class SubagentBridge {
     if (ev.name !== "omo.task.updated" || !record(ev.data) || !Array.isArray(ev.data.tasks)) return;
     for (const row of ev.data.tasks) {
       if (!record(row) || !taskId(row.task_id)) continue;
-      const id = ocIdFor(row.task_id);
+      if (
+        typeof row.parent_session_id === "string" &&
+        row.parent_session_id !== (parent.piSessionId ?? parent.restored?.piSessionId)
+      )
+        continue;
+      const id = this.sessionId(parent, row.task_id);
       if (!this.children.has(id)) this.restore(id);
       const child = this.children.get(id);
-      if (!child) continue;
+      if (!child || child.session.info.parentID !== parent.info.id) continue;
       const data = snapshotState(row);
       // OmO re-sends every row ~150 ms after each progress event of any task; only changes matter.
       if (Object.entries(data).every(([key, value]) => child.task.details[key] === value)) continue;
@@ -491,11 +566,12 @@ export class SubagentBridge {
     for (const part of parts) {
       if (part.type !== "tool" || part.tool !== "task" || part.state.status === "pending") continue;
       const metadata = part.state.metadata;
-      if (!taskId(metadata?.taskID)) continue;
+      if (!metadata || !taskId(metadata.taskID)) continue;
       const id = metadata.taskID;
       const details = record(metadata.task) ? metadata.task : {};
-      let child = this.children.get(ocIdFor(id));
-      if (!child && this.deleted(ocIdFor(id))) continue;
+      const sessionID = this.sessionId(parent, id);
+      let child = this.children.get(sessionID);
+      if (!child && this.deleted(sessionID)) continue;
       if (!child) {
         child = this.create(parent, {
           id,
@@ -509,16 +585,21 @@ export class SubagentBridge {
           child.task.details = { ...child.task.details, ...details };
       }
       child.live ||= live;
+      metadata.sessionID = child.session.info.id;
       if (terminal(details.status) && part.state.status !== "running") child.task.terminalAt = part.state.time.end;
       child.parts.set(part.id, part);
       this.refresh(child, true);
     }
   }
 
-  private create(parent: ManagedSession, task: ChildTask): Child {
-    const archived = this.store.get(ocIdFor(task.id))?.archived;
+  private create(
+    parent: ManagedSession,
+    task: ChildTask,
+    id = taskSessionId(task.id, task.parentPiId, this.store),
+  ): Child {
+    const archived = this.store.get(id)?.archived;
     const session = this.managedSession({
-      id: ocIdFor(task.id),
+      id,
       parentID: parent.info.id,
       projectID: parent.info.projectID,
       directory: parent.info.directory,
@@ -550,7 +631,7 @@ export class SubagentBridge {
     const entry = this.store.get(id);
     if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
     if (entry.deleted || !entry.task || !entry.parentID) return undefined;
-    const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task);
+    const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task, id);
     child.session.info.title = entry.title ?? child.session.info.title;
     this.refresh(child, false);
     return child.session;
@@ -562,7 +643,7 @@ export class SubagentBridge {
    */
   private adopt(
     id: string,
-    found: { path: string; data: Record<string, unknown> } | undefined = findTaskBySession(id),
+    found: { path: string; data: Record<string, unknown> } | undefined = findTaskBySession(id, this.store),
   ): ManagedSession | undefined {
     if (!found) return undefined;
     const parentPi = String(found.data.parent_session_id);
@@ -571,16 +652,20 @@ export class SubagentBridge {
     this.wire(parent);
     const spec = record(found.data.spawn_spec) ? found.data.spawn_spec : {};
     const name = found.data.name ?? found.data.description;
-    const child = this.create(parent, {
-      id: String(found.data.task_id),
-      parentPiId: parentPi,
-      input: {
-        ...(typeof name === "string" ? { description: name } : {}),
-        ...(typeof spec.prompt === "string" ? { prompt: spec.prompt } : {}),
-        ...(typeof found.data.agent_type === "string" ? { subagent_type: found.data.agent_type } : {}),
+    const child = this.create(
+      parent,
+      {
+        id: String(found.data.task_id),
+        parentPiId: parentPi,
+        input: {
+          ...(typeof name === "string" ? { description: name } : {}),
+          ...(typeof spec.prompt === "string" ? { prompt: spec.prompt } : {}),
+          ...(typeof found.data.agent_type === "string" ? { subagent_type: found.data.agent_type } : {}),
+        },
+        details: found.data,
       },
-      details: found.data,
-    });
+      id,
+    );
     this.refresh(child, false);
     return child.session;
   }
@@ -604,8 +689,8 @@ export class SubagentBridge {
   private childIdsByPi(): Map<string, string> {
     const byPi = new Map<string, string>();
     for (const id of this.store.childIds()) {
-      const piSessionId = this.store.get(id)?.piSessionId;
-      if (piSessionId) byPi.set(piSessionId, id);
+      const entry = this.store.get(id);
+      if (entry?.piSessionId && !entry.deleted) byPi.set(entry.piSessionId, id);
     }
     return byPi;
   }
@@ -640,14 +725,14 @@ export class SubagentBridge {
     for (const id of this.store.childIds()) this.restore(id);
     const childByPi = this.childIdsByPi();
     for (const { id, path } of taskFiles()) {
-      const sessionId = ocIdFor(id);
-      if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
-      let parentPi = this.taskParents.get(id);
+      let parentPi = this.taskParents.get(path);
       if (parentPi === undefined) {
         const parent = childRecord(id, path)?.parent_session_id;
         if (typeof parent !== "string") continue;
-        this.taskParents.set(id, (parentPi = parent));
+        this.taskParents.set(path, (parentPi = parent));
       }
+      const sessionId = taskSessionId(id, parentPi, this.store);
+      if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
       if (!this.parentFor(parentPi, childByPi)) continue;
       const data = childRecord(id, path);
       if (data) this.adopt(sessionId, { path, data });
@@ -690,7 +775,7 @@ export class SubagentBridge {
   }
 
   private refresh(child: Child, publish: boolean, useRecord = true): void {
-    const archive = this.archive(child.task.id);
+    const archive = this.archive(child);
     const found = this.reconcileTaskRecord(child, useRecord);
     // OmO stops in-process workers with their parent and leaves them `running` but `persisted_only`
     // until the revived parent reconciles them (omo-task.js `DK`/`jK`); they are not running.
@@ -746,25 +831,47 @@ export class SubagentBridge {
     // A resumed live task can be newer than its archive; completed history prefers the archive.
     const liveRun = running || previousStatus === "busy";
     let raw = liveRun ? undefined : optionalFile(archive);
+    const expected =
+      (child.livePath === undefined ? undefined : transcriptSessionIdFromFile(child.livePath)) ??
+      (typeof child.task.details.child_session_id === "string" && child.task.details.child_session_id !== ""
+        ? child.task.details.child_session_id
+        : undefined);
+    const legacyArchive = join(this.store.stateDir, "children", `${child.task.id}.jsonl`);
+    if (!liveRun && raw === undefined && expected !== undefined) {
+      for (const path of [join(this.store.stateDir, "children", `native-${ocIdFor(expected)}.jsonl`), legacyArchive]) {
+        const retained = optionalFile(path);
+        if (retained !== undefined && transcriptSessionId(retained) === expected) {
+          raw = retained;
+          break;
+        }
+      }
+    }
+    const foreign = raw !== undefined && expected !== undefined && transcriptSessionId(raw) !== expected;
+    if (foreign && raw !== undefined) {
+      const displaced = transcriptSessionId(raw);
+      if (displaced !== undefined) {
+        const retained = join(this.store.stateDir, "children", `native-${ocIdFor(displaced)}.jsonl`);
+        // This may be the other child's only history; retain it before repairing the shared path.
+        if (!existsSync(retained)) this.saveArchive(retained, raw);
+      }
+      raw = undefined;
+    }
     if (running && child.recordPath) this.watch(child, child.recordPath);
     if (raw === undefined && child.livePath !== undefined) {
       if (running) this.watch(child, child.livePath);
       child.tail.read(child.livePath);
-      if (child.tail.text !== "") raw = child.tail.text;
+      if (child.tail.text !== "" && (expected === undefined || transcriptSessionId(child.tail.text) === expected))
+        raw = child.tail.text;
     }
     if (raw !== undefined) {
-      const headerLine = raw.split("\n", 1)[0];
-      try {
-        const header: unknown = JSON.parse(headerLine ?? "");
-        if (record(header) && typeof header.id === "string") child.session.piSessionId = header.id;
-      } catch (error) {
-        if (!(error instanceof SyntaxError)) throw error;
-      }
+      const piSessionId = transcriptSessionId(raw);
+      if (piSessionId !== undefined) child.session.piSessionId = piSessionId;
       child.session.messages = this.parse(child.session, raw);
       this.discover(child.session, child.session.messages);
-      if (!running && terminal(child.task.details.status) && (liveRun || !existsSync(archive)))
+      if (!running && terminal(child.task.details.status) && (liveRun || foreign || !existsSync(archive)))
         this.saveArchive(archive, raw);
     } else {
+      if (expected !== undefined) child.session.piSessionId = expected;
       child.session.messages = this.fallback(child);
     }
     child.loaded = true;
@@ -889,7 +996,7 @@ export class SubagentBridge {
     try {
       this.store.set(info.id, {
         piSessionId: child.session.piSessionId ?? child.task.id,
-        piPath: this.archive(child.task.id),
+        piPath: this.archive(child),
         directory: info.directory,
         title: info.title,
         parentID: info.parentID,
@@ -979,9 +1086,10 @@ export class SubagentBridge {
     this.store.set(id, {
       deleted: true,
       piSessionId: child.session.piSessionId ?? child.task.id,
-      piPath: this.archive(child.task.id),
+      piPath: this.archive(child),
       directory: info.directory,
       ...(info.parentID !== undefined ? { parentID: info.parentID } : {}),
+      task: child.task,
       created: info.time.created,
       updated: info.time.updated,
     });

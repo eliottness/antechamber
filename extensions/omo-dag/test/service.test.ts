@@ -65,6 +65,29 @@ after(() => {
 const get = (path: string, token = TOKEN) => fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${token}` } });
 
 describe("service", () => {
+  test("retains task records with the same id in different parent sessions", (t) => {
+    const root = mkdtempSync(join(tmpdir(), "omo-dag-collision-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const agent = join(root, "agent");
+    for (const parent of ["first", "second"]) {
+      const tasks = join(agent, "projects", parent, "senpi-task", "tasks");
+      mkdirSync(tasks, { recursive: true });
+      writeFileSync(
+        join(tasks, "st_shared001.json"),
+        JSON.stringify({ task_id: "st_shared001", parent_session_id: parent }),
+      );
+    }
+    const store = new TaskStore({ agentDirs: [agent], stateDirs: [] });
+
+    assert.deepEqual(
+      store
+        .loadTasks()
+        .map((task) => task.parent_session_id)
+        .sort(),
+      ["first", "second"],
+    );
+  });
+
   test("retains a warm task during a torn write and refreshes it once JSON is valid", (t) => {
     const root = mkdtempSync(join(tmpdir(), "omo-dag-cache-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
