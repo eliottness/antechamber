@@ -34,6 +34,7 @@ let cancelledCompacts = Number(process.env.ANTECHAMBER_TEST_CANCELLED_COMPACTS ?
 let heldCompact;
 let evalCells;
 let firedGoal = 0;
+let resumeTurn = resume < 0 ? undefined : process.env.ANTECHAMBER_TEST_RESUME_TURN;
 const queued = [];
 const commands = [];
 const send = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
@@ -253,7 +254,7 @@ createInterface({ input: process.stdin })
       success = false;
       error = "Compaction cancelled";
     };
-    if (cmd.type === "get_state")
+    if (cmd.type === "get_state") {
       data = {
         sessionId,
         sessionFile,
@@ -262,6 +263,20 @@ createInterface({ input: process.stdin })
         thinkingLevel,
         isStreaming: !!active,
       };
+      // OmO's goal session_start hook queues a turn after get_state's idle snapshot.
+      // core/extensions/builtin/goal/index.js and lifecycle-helpers.js (2026-10-20).
+      if (resumeTurn !== undefined) {
+        active = { message: "native resume", clientMessageId: "native-resume" };
+        if (resumeTurn === "descendant")
+          record("custom_message", {
+            customType: "goal-continuation",
+            content: "Continue the active goal",
+            display: false,
+          });
+        resumeTurn = undefined;
+        send({ type: "agent_start" });
+      }
+    }
     // Real OmO appends the change as a tree entry on the active branch.
     if (cmd.type === "set_thinking_level") {
       thinkingLevel = cmd.level;
@@ -292,6 +307,18 @@ createInterface({ input: process.stdin })
       data = { cancelled: false };
     }
     if (cmd.type === "navigate_tree") {
+      // core/agent-session.js navigateTree rejects even a no-op navigation while streaming.
+      if (active) {
+        send({
+          type: "response",
+          id: cmd.id,
+          command: cmd.type,
+          success: false,
+          error: "Wait for the current response to finish before navigating the session tree.",
+          errorCode: "streaming",
+        });
+        return;
+      }
       const entry = entries.find((entry) => entry.id === cmd.targetId);
       success = entry !== undefined;
       if (entry) {

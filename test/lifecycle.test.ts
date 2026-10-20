@@ -46,6 +46,40 @@ interface State {
   history: string;
 }
 
+for (const cursor of ["same", "descendant"])
+  test(`revival admits input while a native turn resumes at the ${cursor} cursor`, { timeout: 15_000 }, async (t) => {
+    const h = bugHarness(t);
+    const info = await h.manager.create(h.root);
+    await h.manager.prompt(info.id, "normal");
+    const savedLeaf = h.manager.get(info.id)?.tree.leafId;
+    assert.ok(savedLeaf);
+    await h.restart();
+    const previous = process.env.ANTECHAMBER_TEST_RESUME_TURN;
+    process.env.ANTECHAMBER_TEST_RESUME_TURN = cursor;
+    t.after(() => {
+      if (previous === undefined) delete process.env.ANTECHAMBER_TEST_RESUME_TURN;
+      else process.env.ANTECHAMBER_TEST_RESUME_TURN = previous;
+    });
+
+    await h.manager.prompt(info.id, "resumed input", undefined, false, "msg_resumed_input");
+
+    const session = h.manager.get(info.id);
+    assert.ok(session?.pi);
+    const native = await getEntries(session.pi);
+    assert.ok(branchEntries(native).some((entry) => entry.id === savedLeaf));
+    assert.equal(session.tree.leafId, native.leafId);
+    const inspected = await session.pi.command<{
+      active: string;
+      commands: Array<{ type: string; clientMessageId?: string }>;
+    }>({ type: "inspect" });
+    assert.equal(inspected.data?.active, "native-resume");
+    assert.equal(
+      inspected.data?.commands.some((command) => command.type === "navigate_tree"),
+      false,
+    );
+    assert.ok(inspected.data?.commands.some((command) => command.clientMessageId === "msg_resumed_input"));
+  });
+
 function gone(pid: number): void {
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 }
