@@ -64,7 +64,8 @@ section (sandboxed iframe) --serviceRequest /status?session=ses_...--> OpenChamb
 `antechamber serve` writes `<state dir>/run/<pid>.json` (mode 0600) with its
 URL and a random token that opens only the `/antechamber/work-status` routes. The service
 picks the running server whose agent holds the session and relays the snapshot
-and the Stop and Fire now actions. It keeps no state. See
+and the Stop and Fire now actions. It keeps no state. See [docs/DESIGN.md](docs/DESIGN.md) for the snapshot, refresh,
+server choice and security boundary, and
 [docs/architecture.md](../../docs/architecture.md#omo-work-status-section) for
 where each piece of data comes from in OmO.
 
