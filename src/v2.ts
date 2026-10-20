@@ -435,6 +435,15 @@ export class V2EventTranslator {
             ? [this.frame(directory, "session.metadata.updated", { sessionID: info.id, metadata: info.metadata })]
             : []),
           this.frame(directory, "session.agent.selected", { sessionID: info.id, agent: info.agent ?? getAgentName() }),
+          ...(info.cost !== undefined
+            ? [
+                this.frame(directory, "session.usage.updated", {
+                  sessionID: info.id,
+                  cost: info.cost,
+                  tokens: info.tokens ?? zeroTokens(),
+                }),
+              ]
+            : []),
         ];
       }
       case "session.diff":
@@ -615,7 +624,6 @@ export class V2EventTranslator {
     if (st.ended) return [];
     st.ended = true;
     return [
-      this.frame(directory, "session.usage.updated", { sessionID: st.sessionID, cost: st.cost, tokens: st.tokens }),
       st.finish === "error"
         ? this.frame(directory, "session.step.failed", {
             sessionID: st.sessionID,

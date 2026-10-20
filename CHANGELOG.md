@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore main-session costs before listing sessions after a restart, and keep live usage totals cumulative
+  across assistant steps.
+
 ## [1.0.1] - 2026-10-20
 
 ### Added
