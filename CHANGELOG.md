@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-10-20
+
+- docs: integrate the OmO Work extension across the docs (#55)
+
 ## [1.0.5] - 2026-10-20
 
 ### Fixed
