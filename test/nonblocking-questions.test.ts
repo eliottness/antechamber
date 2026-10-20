@@ -126,7 +126,7 @@ test("forms use canonical keys, custom options, partial answers and comment-only
   assert.equal(form.fields[0]?.type, "multiselect");
   assert.deepEqual(
     form.fields.map((field) => field.key),
-    ["q1", "q2", "comment"],
+    ["q1", "q2"],
   );
   assert.deepEqual(formQuestionAnswer(card, { q1: ["A", "custom"] }), { answers: [["A", "custom"], []] });
   assert.deepEqual(formQuestionAnswer(card, { comment: "overall" }), { answers: [[], []], comment: "overall" });

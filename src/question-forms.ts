@@ -21,7 +21,8 @@ export function toQuestionForm(card: PendingQuestion) {
           ? { options: q.options.map((o) => ({ value: o.label, ...o })), custom: q.custom !== false }
           : {}),
       })),
-      ...(card.questionIDs ? [{ key: "comment", type: "string", title: "Comment", required: false }] : []),
+      // No optional "comment" field: OpenChamber 2.4's form dock only enables Submit once every field has a value,
+      // ignoring `required: false`. Replies that still carry `comment` are accepted below.
     ],
   };
 }
