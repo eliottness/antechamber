@@ -122,6 +122,7 @@ export class PiRpcClient extends EventEmitter {
   private disposing: Promise<void> | undefined;
   private agentActive = false;
   private compacting = false;
+  private sessionPath: string | undefined;
 
   get pid(): number | undefined {
     return this.proc.pid;
@@ -129,6 +130,10 @@ export class PiRpcClient extends EventEmitter {
 
   get isBusy(): boolean {
     return this.pending.size > 0;
+  }
+
+  get sessionFile(): string | undefined {
+    return this.sessionPath;
   }
 
   onEvent(listener: (payload: Record<string, unknown>) => void): this {
@@ -296,6 +301,13 @@ export class PiRpcClient extends EventEmitter {
             ...(typeof msg.errorCode === "string" ? { errorCode: msg.errorCode } : {}),
             ...(msg.errorData !== undefined ? { errorData: msg.errorData } : {}),
           };
+      if (pending && response.success && msg.command === "get_state") {
+        const data = response.data;
+        this.sessionPath =
+          typeof data === "object" && data !== null && "sessionFile" in data && typeof data.sessionFile === "string"
+            ? data.sessionFile
+            : undefined;
+      }
       pending?.resolve(response);
       return;
     }
