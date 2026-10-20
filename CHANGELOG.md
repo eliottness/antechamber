@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-10-20
+
 ### Fixed
 
 - Reduce startup CPU usage and boot delays for large session histories by committing restoration metadata
