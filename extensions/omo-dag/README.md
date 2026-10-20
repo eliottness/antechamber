@@ -31,6 +31,10 @@ sessions on OmO.
 The panel docks in the right rail. The same page is also available full
 screen from the sidebar's Extension pages menu.
 
+On OpenChamber 2.x, the bundled [OmO Work](../omo-work/README.md) section
+complements the graph with the session's todo phases, monitors, eval cells and
+other background work.
+
 ## Requirements
 
 - OpenChamber **1.22 or newer**, on web or desktop. It is verified against

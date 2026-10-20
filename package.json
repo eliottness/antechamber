@@ -40,6 +40,7 @@
     "extensions/omo-work/status/main.js",
     "extensions/omo-work/service/main.js",
     "extensions/omo-work/README.md",
+    "extensions/omo-work/docs/DESIGN.md",
     "extensions/omo-compat/package.json",
     "extensions/omo-compat/icon.svg",
     "extensions/omo-compat/README.md",

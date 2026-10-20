@@ -27,7 +27,8 @@ an **external OpenCode server** and sessions run on OmO.
 - Tool calls rendered as native OpenChamber tool parts (bash, write, edit,
   and so on), including subagent/task cards.
 - Approvals and questions bridged through pi's extension-UI protocol.
-- Todo list bridging from pi/OmO's todo tool to OpenChamber's task panel.
+- Todo list bridging from pi/OmO's todo tool to OpenChamber's task panel
+  (OpenChamber 1.x; on 2.x, the OmO Work section shows it by phase).
 - Fork, revert, and unrevert backed by the agent's session tree, not a
   filesystem snapshot. Reverting changes conversation context only; it never
   touches files on disk.
@@ -37,12 +38,10 @@ an **external OpenCode server** and sessions run on OmO.
   ownership tracking for detached task-host processes it spawned.
 - Idle reaping and a live-process cap (`ANTECHAMBER_MAX_LIVE`) so long-running
   deployments don't accumulate agent processes.
-- An optional OpenChamber extension, **OmO Graph**, that draws the OmO
-  sub-agents behind the open session as a live, clickable graph (see
-  [OpenChamber extension](#openchamber-extension-omo-graph)).
-- An optional OpenChamber 2.x Work Status section, **OmO Work**, for the
-  session's todo phases, monitors, eval cells and background work (see
-  [OmO Work](#openchamber-extension-omo-work)).
+- Optional [OpenChamber extensions](#openchamber-extensions): **OmO Graph**
+  draws the OmO sub-agents behind the open session as a live, clickable graph,
+  and **OmO Work** (OpenChamber 2.x) shows the session's todo phases,
+  monitors, eval cells and other background work in the Work Status panel.
 
 ## Supported backends
 
@@ -93,11 +92,13 @@ skips the check. It needs a global npm or bun install, so it is refused for
 source checkouts and `npx`. Drop the flag (plain `antechamber setup`) to point
 OpenChamber back at the `antechamber` bin and stop auto-updates.
 
-Optionally, add the bundled [OmO Graph extension](#openchamber-extension-omo-graph):
-`setup` ends by printing its folder
-(`$(npm root -g)/antechamber/extensions/omo-dag`). In OpenChamber, open
-**Settings → Extensions → Add → Folder**, paste that path, and approve the two
-permissions it asks for. The folder is updated in place by `npm update -g`.
+Optionally, add the bundled [OpenChamber extensions](#openchamber-extensions):
+`setup` ends by printing their folders (under
+`$(npm root -g)/antechamber/extensions/`). In OpenChamber, open
+**Settings → Extensions → Add → Folder**, paste a path, and approve the
+permissions it asks for. On OpenChamber 2.x, add OmO Work to see monitors,
+eval cells and the todo list in the Work Status panel. The folders are updated
+in place by `npm update -g`.
 
 For an isolated OpenChamber instance, leaving your main settings untouched:
 
@@ -205,67 +206,88 @@ node dist/cli.js setup --profile ~/.config/antechamber-openchamber \
 The source launcher requires the built `dist/cli.js`. Pull updates, run
 `npm ci && npm run build`, and restart OpenChamber.
 
-`npm run build` also builds the OmO Graph extension; `setup` prints its folder
-(`$PWD/extensions/omo-dag`) to add in **Settings → Extensions → Add → Folder**.
+`npm run build` also builds the OmO Graph and OmO Work extensions; `setup`
+prints their folders (`$PWD/extensions/omo-dag`, `$PWD/extensions/omo-work`) to
+add in **Settings → Extensions → Add → Folder**.
 
-## OpenChamber extension: OmO Graph
+## OpenChamber extensions
 
-`extensions/omo-dag` is an OpenChamber extension that ships with antechamber
-and is built by `npm run build`. With the default OmO backend, it adds a rail panel
-showing the open session's orchestrator and every sub-agent OmO launched,
-grouped in waves:
+antechamber ships three optional OpenChamber extensions, in the npm package and
+attached to every GitHub release. None is required to run sessions.
+
+| Extension | Adds | OpenChamber | Asks for |
+|---|---|---|---|
+| [OmO Graph](#omo-graph) (`extensions/omo-dag`) | a rail panel drawing the session's OmO sub-agents as a live graph | 1.22 or newer | sessions, local service |
+| [OmO Work](#omo-work) (`extensions/omo-work`) | a Work Status section with the session's todo phases, monitors, eval cells, background sessions and goal timer | 2.3.2 or newer | local service |
+| [OmO Compatibility](#omo-compatibility) (`extensions/omo-compat`) | headers for OmO tool cards, such as `JS Eval` on eval cells | 1.24 or newer | nothing |
+
+All three run on OpenChamber web and desktop; VS Code and mobile load no
+extensions.
+
+### Installing an extension
+
+In OpenChamber, open **Settings → Extensions → Add** and pick the source that
+fits where OpenChamber runs:
+
+| OpenChamber runs | Add | OmO Graph | OmO Work | OmO Compatibility |
+|---|---|---|---|---|
+| anywhere (recommended) | **URL** (Git) | `https://github.com/eliottness/antechamber#extension/omo-graph` | `…#extension/omo-work` | `…#extension/omo-compat` |
+| on the machine where antechamber is installed | **Folder** | `extensions/omo-dag` | `extensions/omo-work` | `extensions/omo-compat` |
+| anywhere, offline | **ZIP file** | `antechamber-omo-graph.zip` | `antechamber-omo-work.zip` | `antechamber-omo-compat.zip` |
+
+- **URL**: a Git install from the branch every release publishes. OpenChamber
+  offers to update it after each release. Keep the `#extension/...` part: the
+  bare repository URL makes OpenChamber clone antechamber itself, whose
+  `package.json` is not an extension, and OpenChamber words that rejection as
+  "panel.id must be kebab-case".
+- **Folder**: the paths `antechamber setup` prints, under
+  `$(npm root -g)/antechamber/` for npm installs or the checkout after
+  `npm run build`.
+- **ZIP file**: attached to every GitHub release, or built with
+  `npm run build && npm run pack:extension -- antechamber-omo-graph.zip` (OmO
+  Graph) or `npm run pack:work-extension -- antechamber-omo-work.zip` (OmO
+  Work). OpenChamber never updates ZIP installs.
+
+Then approve the permissions it asks for. See
+[Upgrading the OpenChamber extensions](#upgrading-the-openchamber-extensions)
+for how each source moves to a new release.
+
+### OmO Graph
+
+With the default OmO backend, OmO Graph adds a rail panel showing the open
+session's orchestrator and every sub-agent OmO launched, grouped in waves:
 
 - each card shows the sub-agent's live state, duration, agent and model;
 - hovering a card highlights its input and output edges;
 - clicking a card opens that sub-agent's session.
 
-It reads OmO's task store and antechamber's session registry read-only,
-through a small local service that OpenChamber starts.
+Its local service reads OmO's task store and antechamber's session registry
+read-only. Details: [extensions/omo-dag/README.md](extensions/omo-dag/README.md).
 
-Install it from OpenChamber's **Settings → Extensions → Add**, using whichever
-source fits where OpenChamber runs:
+### OmO Work
 
-| OpenChamber runs | Add | Value |
-|---|---|---|
-| on the machine where antechamber is installed | **Folder** | the path `antechamber setup` prints: `$(npm root -g)/antechamber/extensions/omo-dag` for npm installs, `<checkout>/extensions/omo-dag` after `npm run build` from source |
-| anywhere (remote host, browser-only access) | **URL** | `https://github.com/eliottness/antechamber#extension/omo-graph`, a Git install that OpenChamber offers to update after each release |
-| anywhere, offline | **ZIP file** | `antechamber-omo-graph.zip` from a GitHub release, or built with `npm run build && npm run pack:extension -- antechamber-omo-graph.zip`. OpenChamber never updates ZIP installs |
+OmO Work adds an **OmO Work** section to OpenChamber 2.x's Work Status panel,
+for the background work of the open session:
 
-Then approve its two permissions (follow sessions, run the local service) and
-open it from the rail icon. Keep the `#extension/omo-graph` part of the URL:
-the bare repository URL makes OpenChamber clone antechamber itself, whose
-`package.json` is not an extension, and OpenChamber words that rejection as
-"panel.id must be kebab-case". Details:
-[extensions/omo-dag/README.md](extensions/omo-dag/README.md).
+- the OmO todo list grouped by phase, with progress per phase;
+- terminal monitors, with their command, filter and latest matched lines (on
+  2.x, monitors appear here instead of as subagent sessions);
+- detached eval cells, with their output and a **Stop** button;
+- background terminal sessions that are still running;
+- the goal continuation timer, what it waits on, and a **Fire now** button.
 
-## OpenChamber extension: OmO Work
-
-`extensions/omo-work` adds an **OmO Work** section to OpenChamber 2.x's Work
-Status panel (OpenChamber 2.3.2 or newer; 1.x has no extension sections). For
-the open session it shows the OmO todo list grouped by phase, terminal
-monitors with their matched lines, detached eval cells with their output and a
-Stop button, background terminal sessions, and the goal continuation timer
-with a Fire now button. On 2.x, monitors appear here instead of as subagent
-sessions.
-
-Add it like OmO Graph: the folder `antechamber setup` prints
-(`.../extensions/omo-work`, built by `npm run build`), or the URL
-`https://github.com/eliottness/antechamber#extension/omo-work`.
-Approve its local service. It needs an antechamber version that writes a
-work-status token into its run record (this release or newer) and an
-OpenChamber restart after upgrading. Details:
+Its local service talks to the running antechamber through the
+`/antechamber/work-status` routes, authenticated by a token antechamber writes
+into its private run record, so it never needs the server password. It needs
+antechamber running on the same machine as OpenChamber. Details:
 [extensions/omo-work/README.md](extensions/omo-work/README.md).
 
-## OpenChamber extension: OmO Compatibility
+### OmO Compatibility
 
-`extensions/omo-compat` is a second, code-free extension for OpenChamber 1.24
-or newer. It tells OpenChamber how to display OmO tool calls that antechamber
-maps onto OpenChamber's cards; today it heads eval cells with `JS Eval` or
-`Python Eval` and the cell's summary. Add it the same way as OmO Graph: the
-folder `antechamber setup` prints (`.../extensions/omo-compat`, no build
-needed), or the URL
-`https://github.com/eliottness/antechamber#extension/omo-compat`.
-It asks for no permissions. Details:
+OmO Compatibility is a manifest with no code. It tells OpenChamber how to
+display OmO tool calls that antechamber maps onto OpenChamber's cards; today
+it heads eval cells with `JS Eval` or `Python Eval` and the cell's summary. It
+needs no build. Details:
 [extensions/omo-compat/README.md](extensions/omo-compat/README.md).
 
 ## Upgrading the OpenChamber extensions
@@ -377,6 +399,8 @@ provenance and creates the GitHub release from the CHANGELOG. See
 - [RELEASE.md](RELEASE.md) - automatic patch releases to npm and GitHub on every push to `main`
 
 - [extensions/omo-dag/README.md](extensions/omo-dag/README.md) - the OmO Graph OpenChamber extension ([design](extensions/omo-dag/docs/DESIGN.md))
+- [extensions/omo-work/README.md](extensions/omo-work/README.md) - the OmO Work status section for OpenChamber 2.x ([design](extensions/omo-work/docs/DESIGN.md))
+- [extensions/omo-compat/README.md](extensions/omo-compat/README.md) - the OmO Compatibility display rules
 
 ## Credits
 
