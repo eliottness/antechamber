@@ -1,10 +1,80 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import test from "node:test";
-import { toV2Message } from "../src/v2.js";
+import { toV2Message, V2EventTranslator } from "../src/v2.js";
 import type { V2Message } from "../src/v2.js";
 import type { OCMessageWithParts } from "../src/types.js";
 import { AdapterServer } from "../src/server.js";
 import { bugHarness, openEvents } from "./bug-harness.js";
+
+for (const entrypoint of ["get", "list", "listAll"] as const) {
+  test(`cold ${entrypoint} exposes session usage before reading history`, { timeout: 15000 }, async (t) => {
+    const h = bugHarness(t);
+    const directory = realpathSync(h.root);
+    const session = await h.manager.create(directory);
+    await h.manager.prompt(session.id, "steps");
+    const expected = structuredClone(h.manager.get(session.id)?.info);
+    assert.ok(expected?.cost && expected.tokens);
+    await h.restart();
+
+    const restored =
+      entrypoint === "get"
+        ? h.manager.get(session.id)?.info
+        : (entrypoint === "list" ? h.manager.list(directory) : h.manager.listAll()).find((s) => s.id === session.id);
+
+    assert.equal(restored?.cost, expected.cost);
+    assert.deepEqual(restored?.tokens, expected.tokens);
+    assert.equal(h.manager.liveSessions().length, 0);
+  });
+}
+
+test("v2 usage stays cumulative across steps and turns", { timeout: 15000 }, async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "steps");
+  const firstUsage = h.frames.filter((frame) => frame.type === "session.usage.updated");
+  assert.equal(firstUsage[0]?.data.cost, 0.0123);
+  assert.ok(firstUsage.length >= 2);
+  assert.ok(firstUsage.slice(1).every((frame) => frame.data.cost === 0.0246));
+  await h.manager.prompt(session.id, "normal");
+
+  const lastUsage = h.frames.filter((frame) => frame.type === "session.usage.updated").at(-1);
+  assert.equal(lastUsage?.data.cost, h.manager.get(session.id)?.info.cost);
+  assert.deepEqual(lastUsage?.data.tokens, h.manager.get(session.id)?.info.tokens);
+  const steps = h.frames.filter((frame) => frame.type === "session.step.ended");
+  assert.deepEqual(
+    steps.map((frame) => frame.data.cost),
+    [0.0123, 0.0123, 0.0123],
+  );
+});
+
+test("v2 session updates publish restored usage without starting a step", () => {
+  const translator = new V2EventTranslator();
+  const tokens = { input: 20, output: 5, reasoning: 2, cache: { read: 8, write: 3 } };
+  const frames = translator.translate("/project", {
+    type: "session.updated",
+    properties: {
+      info: {
+        id: "ses_restored",
+        projectID: "/project",
+        directory: "/project",
+        title: "Restored",
+        version: "test",
+        time: { created: 0, updated: 1 },
+        cost: 1.25,
+        tokens,
+      },
+    },
+  });
+
+  const usage = frames.filter((frame) => frame.type === "session.usage.updated");
+  assert.equal(usage.length, 1);
+  assert.deepEqual(usage[0]?.data, { sessionID: "ses_restored", cost: 1.25, tokens });
+  assert.equal(
+    frames.some((frame) => frame.type === "session.step.started"),
+    false,
+  );
+});
 
 test("v1 and v2 HTTP history agree with completion SSE before and after restart", { timeout: 15000 }, async (t) => {
   const h = bugHarness(t);
