@@ -1,0 +1,30 @@
+{
+  "name": "antechamber-omo-work",
+  "version": "1.0.3",
+  "description": "OpenChamber 2.x Work Status section: OmO todo phases, monitors, eval cells and background work of the current session",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.3.2"
+    },
+    "contributes": {
+      "panel": {
+        "id": "omo-work",
+        "name": "OmO Work",
+        "icon": "list-check-3"
+      },
+      "statusSection": {
+        "entry": "status/index.html",
+        "title": "OmO Work",
+        "height": 120
+      },
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host"
+      }
+    }
+  }
+}
