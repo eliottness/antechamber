@@ -31,8 +31,11 @@ In OpenChamber, open **Settings → Extensions → Add**:
   `$(npm root -g)/antechamber/extensions/omo-compat` for an npm install, or
   `<checkout>/extensions/omo-compat` from a source checkout. It needs no build.
 - **URL**, from anywhere:
-  `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-compat.zip`.
-  Every GitHub release attaches this archive.
+  `https://github.com/eliottness/antechamber#extension/omo-compat`, a Git
+  install that OpenChamber offers to update after each release. Every GitHub
+  release also attaches
+  `https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-compat.zip`,
+  which installs by URL too, but OpenChamber never updates ZIP installs.
 
 There is nothing to approve and no rail icon. Reload open chats after
 installing so their cards pick up the new header.
