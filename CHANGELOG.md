@@ -14,6 +14,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
   child an older version wrongly marked cancelled recovers from its running record. Stopping the turn
   no longer unblocks fork and revert while a background subagent runs; the error now names the
   running subagent instead of asking to stop the turn.
+- Let OmO questions be submitted in OpenChamber 2.4 without typing a comment. The question form no
+  longer adds an optional `Comment` field, which OpenChamber 2.4's question dock treated as a required
+  final step.
 
 ## [0.2.34] - 2026-10-19
 
