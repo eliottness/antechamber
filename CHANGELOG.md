@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-20
+
+- First stable release. No functional changes since 0.2.37.
+
 ## [0.2.37] - 2026-10-20
 
 - fix(questions): drop optional comment field that OpenChamber 2.4 makes mandatory (#45)
