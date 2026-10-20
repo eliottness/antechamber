@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Allow messages in restored sessions whose active goal has already resumed a response, without
+  rejecting the send as a session-tree navigation.
+
 ## [1.0.7] - 2026-10-20
 
 - fix(session): defer registry snapshots for cached lookups (#54)

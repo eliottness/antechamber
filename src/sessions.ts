@@ -24,6 +24,7 @@ import { RequestBodyError } from "./http.js";
 import type { TodoBridge, Todo, TodoUpdated } from "./todo-bridge.js";
 import {
   bindMessageEntries,
+  branchEntries,
   durableShellTree,
   followExternalAppends,
   forkConversation,
@@ -1334,6 +1335,7 @@ export class SessionManager {
     if (!existsSync(restored.piPath)) throw new Error(`pi session file is gone: ${restored.piPath}`);
     this.refreshMessageCache(s);
     await this.lifecycle.makeRoom();
+    const resumedLeaf = readSessionTree(restored.piPath).leafId;
     const pi = new PiRpcClient({
       cwd: s.info.directory,
       args: ["--session", restored.piPath],
@@ -1356,11 +1358,20 @@ export class SessionManager {
       const thinking: ThinkingState =
         state.data.thinkingLevel === undefined ? {} : { thinkingLevel: state.data.thinkingLevel };
       await setThinkingLevel(thinking, pi, s.thinkingLevel);
-      const leaf = s.tree.leafId === undefined ? undefined : await navigate(pi, s.tree.leafId);
-      const tree = await getEntries(pi);
-      if (leaf !== undefined && tree.leafId !== leaf)
-        throw new SessionTreeError("Revival did not restore the saved navigation");
-      if (leaf !== undefined) s.tree.leafId = leaf;
+      let tree = await getEntries(pi);
+      const saved = s.tree.leafId;
+      // Resume hooks can already be streaming on this branch. Navigating back would
+      // discard their progress, and OmO rejects even a no-op navigation while streaming.
+      if (
+        saved !== undefined &&
+        saved !== tree.leafId &&
+        (s.tree.revert || resumedLeaf !== saved || !branchEntries(tree).some((entry) => entry.id === saved))
+      ) {
+        const leaf = await navigate(pi, saved);
+        tree = await getEntries(pi);
+        if (tree.leafId !== leaf) throw new SessionTreeError("Revival did not restore the saved navigation");
+        s.tree.leafId = leaf;
+      }
       bindMessageEntries(s, tree);
       if (thinking.thinkingLevel !== undefined) s.thinkingLevel = thinking.thinkingLevel;
       s.piPath = restored.piPath;
