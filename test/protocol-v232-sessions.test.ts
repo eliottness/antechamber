@@ -158,6 +158,25 @@ test("V232-002: session list preserves cursor and filters", async (t) => {
   assert.equal(typeof cursor.next, "string", "OpenChamber needs a continuation cursor for a filtered page");
 });
 
+test("v2 session listing shares one registry snapshot across cached session lookups", async (t) => {
+  const { url } = await startServer(t);
+  const ids = new Set<string>();
+  for (let index = 0; index < 4; index++) ids.add(await createSession(url, { title: `session ${index}` }));
+  const clone = t.mock.method(globalThis, "structuredClone");
+
+  const response = await fetch(`${url}/api/session`);
+
+  assert.equal(response.status, 200);
+  const page = record(await response.json(), "session page");
+  assert.ok(Array.isArray(page.data));
+  assert.deepEqual(new Set(page.data.map((item) => record(item, "session").id)), ids);
+  assert.equal(
+    clone.mock.calls.filter((call) => call.arguments[0] instanceof Map).length,
+    1,
+    "cached lookups must not clone the whole registry for each listed session",
+  );
+});
+
 test("V232-003: messages paginate with a stable cursor", async (t) => {
   const { url } = await startServer(t);
   const stream = openSse(t, url);

@@ -465,7 +465,7 @@ export class SessionStore {
   private entries: Map<string, SessionRegistryEntry> | undefined;
   private batchState:
     | {
-        entries: Map<string, SessionRegistryEntry>;
+        entries: Map<string, SessionRegistryEntry> | undefined;
         changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean>;
       }
     | undefined;
@@ -477,7 +477,10 @@ export class SessionStore {
   }
 
   private load(): Map<string, SessionRegistryEntry> {
-    if (this.batchState !== undefined) return this.batchState.entries;
+    if (this.batchState !== undefined) {
+      this.batchState.entries ??= structuredClone((this.entries ??= this.readEntries()));
+      return this.batchState.entries;
+    }
     if (this.entries !== undefined) return this.entries;
     this.entries = this.readEntries();
     return this.entries;
@@ -541,7 +544,7 @@ export class SessionStore {
   private mutate(change: (entries: Map<string, SessionRegistryEntry>) => boolean): void {
     if (this.batchState !== undefined) {
       this.batchState.changes.push(change);
-      change(this.batchState.entries);
+      change(this.load());
       return;
     }
     this.withRegistryLock(() => {
@@ -555,7 +558,7 @@ export class SessionStore {
   batch<T>(action: () => T): T {
     if (this.batchState !== undefined) return action();
     const changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean> = [];
-    const batch = { entries: structuredClone(this.load()), changes };
+    const batch = { entries: undefined, changes };
     this.batchState = batch;
     try {
       const result = action();
