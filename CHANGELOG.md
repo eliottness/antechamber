@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-20
+
 ### Fixed
 
 - Keep subagents with colliding task IDs in different sessions separate, and recover a foreign child
