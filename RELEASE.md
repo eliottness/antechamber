@@ -9,7 +9,7 @@ bumps versions or pushes tags by hand. The
 1. **Check.** It checks out the current tip of `main` and runs `npm ci` and
    `npm run check`. If a check fails, nothing is released.
 2. **Bump.** `scripts/release.ts` computes the next patch version (for example
-   `0.2.1` -> `0.2.2`) and writes it to:
+   `1.0.1` -> `1.0.2`) and writes it to:
    - `package.json` and `package-lock.json`,
    - `extensions/omo-dag/package.json`, `extensions/omo-work/package.json` and
      `extensions/omo-compat/package.json` (the extensions always carry the same
@@ -55,14 +55,18 @@ published, and the queued run for the newer push releases everything.
   longer triggers anything.
 - Pull and rebase after a merge: `main` gains a release commit after every push.
 
-Every release is a patch. While the project is `0.x`, a breaking change (renamed
-settings, changed defaults) still belongs under **Changed** in the CHANGELOG.
-For a deliberate minor or major bump, prepare that release by hand:
+Every automatic release is a patch. The project follows semantic versioning
+since 1.0.0, so a breaking change (renamed settings, changed defaults, removed
+routes) needs a major bump and a new feature should get a minor bump. List the
+change under **Changed** (or **Removed**) in the CHANGELOG and prepare that
+release by hand:
 
 ```bash
 # move the [Unreleased] notes under "## [X.Y.0] - YYYY-MM-DD" in CHANGELOG.md, then:
 npm version X.Y.0 --no-git-tag-version           # package.json + package-lock.json
 npm pkg set version=X.Y.0 --prefix extensions/omo-dag
+npm pkg set version=X.Y.0 --prefix extensions/omo-work
+npm pkg set version=X.Y.0 --prefix extensions/omo-compat
 npm pkg set version=X.Y.0 --prefix extensions/omo-work
 npm pkg set version=X.Y.0 --prefix extensions/omo-compat
 git commit -am "chore(release): vX.Y.0"

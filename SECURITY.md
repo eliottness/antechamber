@@ -10,10 +10,11 @@ service.
 
 **Never expose antechamber to an untrusted network without authentication.**
 By default it binds to loopback (`127.0.0.1`) with no auth, which is safe for
-local use. Binding to a non-loopback address is expected to require a
-password or an explicit opt-out flag; see [docs/configuration.md](docs/configuration.md)
-and the README's Security section for the current state of that work, which
-is still landing.
+local use. antechamber refuses to bind a non-loopback address unless a password
+is set (`OPENCODE_SERVER_PASSWORD`, which enables HTTP Basic auth on every
+route) or you opt out explicitly with `ANTECHAMBER_ALLOW_INSECURE=1` or
+`--insecure-no-auth`. See [docs/configuration.md](docs/configuration.md) and
+the README's Security section for the details, including browser origin rules.
 
 If you run antechamber behind a reverse proxy, on a shared machine, or on a
 network reachable by other users, you are responsible for authentication,
@@ -21,13 +22,14 @@ TLS termination, and network-level access control in front of it.
 
 ## Supported versions
 
-antechamber is pre-1.0. Only the latest published release and the `main`
-branch receive security fixes. There is no long-term support branch yet.
+Only the latest published release and the `main` branch receive security
+fixes. There is no long-term support branch.
 
 | Version | Supported |
 |---|---|
-| latest release | yes |
-| older releases | no |
+| latest 1.x release | yes |
+| older 1.x releases | no |
+| 0.x | no |
 
 ## Reporting a vulnerability
 
@@ -49,5 +51,5 @@ disclosure timeline before any public write-up.
 - Vulnerabilities in pi, OmO, or OpenChamber themselves. Report those
   upstream.
 - The fact that antechamber's agent backend can run shell commands. That's
-  the product; the mitigation is network isolation and, once it lands,
-  authentication, not sandboxing the agent itself.
+  the product; the mitigation is network isolation and authentication, not
+  sandboxing the agent itself.
