@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-20
+
 ### Added
 
 - OmO Work, an OpenChamber 2.x Work Status section (`extensions/omo-work`). For the open session it
