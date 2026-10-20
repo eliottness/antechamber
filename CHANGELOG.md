@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.36] - 2026-10-20
+
 ### Fixed
 
 - Keep large sessions usable after their persisted history exceeds the 64 MiB RPC frame limit.
