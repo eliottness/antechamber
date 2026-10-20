@@ -39,6 +39,7 @@ export interface TaskRecord {
 }
 
 export interface RegistryEntry {
+  deleted?: boolean;
   piSessionId?: string;
   parentID?: string;
   title?: string;
@@ -151,6 +152,7 @@ export function normalizeRegistry(raw: unknown): Registry | undefined {
   for (const [id, value] of Object.entries(raw)) {
     if (!isObject(value)) continue;
     const entry: RegistryEntry = {};
+    if (value.deleted === true) entry.deleted = true;
     if (text(value.piSessionId) !== undefined) entry.piSessionId = text(value.piSessionId);
     if (text(value.parentID) !== undefined) entry.parentID = text(value.parentID);
     if (text(value.title) !== undefined) entry.title = text(value.title);
@@ -162,6 +164,25 @@ export function normalizeRegistry(raw: unknown): Registry | undefined {
 
 export function ocIdFor(piSessionId: string): string {
   return `ses_${createHash("md5").update(piSessionId).digest("hex")}`;
+}
+
+function taskSessionId(task: TaskRecord, tasks: TaskRecord[], registry: Registry): string {
+  const registered = Object.entries(registry).find(
+    ([, entry]) => entry.task?.id === task.task_id && entry.task.parentPiId === task.parent_session_id,
+  );
+  if (registered) return registered[0];
+  const legacy = ocIdFor(task.task_id);
+  const parent = Object.entries(registry).find(([, entry]) => entry.piSessionId === task.parent_session_id)?.[0];
+  if (registry[legacy]?.deleted && registry[legacy]?.parentID === (parent ?? ocIdFor(task.parent_session_id ?? "")))
+    return legacy;
+  const qualified = ocIdFor(`${task.parent_session_id}:${task.task_id}`);
+  if (
+    registry[legacy] !== undefined ||
+    registry[qualified] !== undefined ||
+    tasks.some((other) => other.task_id === task.task_id && other.parent_session_id !== task.parent_session_id)
+  )
+    return qualified;
+  return legacy;
 }
 
 const ACTIVE = new Set(["running", "starting"]);
@@ -224,9 +245,7 @@ interface Resolved {
 
 function resolveSession(sessionId: string, tasks: TaskRecord[], registry: Registry): Resolved | undefined {
   const entry = registry[sessionId];
-  const focusTask =
-    tasks.find((t) => ocIdFor(t.task_id) === sessionId) ??
-    (entry?.task?.id ? tasks.find((t) => t.task_id === entry.task?.id) : undefined);
+  const focusTask = tasks.find((t) => taskSessionId(t, tasks, registry) === sessionId);
   let rootPi: string | undefined;
   if (focusTask) rootPi = focusTask.root_session_id ?? focusTask.parent_session_id ?? entry?.task?.parentPiId;
   else if (entry?.task?.parentPiId) rootPi = entry.task.parentPiId;
@@ -312,7 +331,7 @@ export function buildGraph(sessionId: string, tasks: TaskRecord[], registry: Reg
     return {
       id: t.task_id,
       kind: "task",
-      sessionId: ocIdFor(t.task_id),
+      sessionId: taskSessionId(t, tasks, registry),
       title: firstLine(t.task_summary ?? t.description ?? t.name, 90) ?? t.task_id,
       state,
       rawStatus: String(t.status ?? "unknown"),

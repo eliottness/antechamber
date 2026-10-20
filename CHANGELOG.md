@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep subagents with colliding task IDs in different sessions separate, and recover a foreign child
+  archive from its own retained transcript.
+
 ## [1.0.3] - 2026-10-20
 
 ### Added

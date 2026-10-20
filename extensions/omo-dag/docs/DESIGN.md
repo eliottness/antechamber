@@ -36,16 +36,20 @@ exceeds that bound, the service keeps the root and a valid task prefix, removes
 edges to omitted tasks, and returns `truncated.omittedNodes`; the panel
 validates that field and displays the count.
 
-The connector names sub-agent sessions `ses_<md5(task_id)>` and root sessions
-`ses_<md5(piSessionId)>` (`ocIdFor` in `src/session-store.ts`). The graph
-uses the same function, so a node's `sessionId` is exactly the id
-`openSession` needs, even for runs missing from the registry.
+The connector names root sessions `ses_<md5(piSessionId)>` (`ocIdFor` in
+`src/session-store.ts`). Sub-agent links use their recorded registry ID when
+available. Unregistered tasks use `ses_<md5(task_id)>` while the task ID has
+one parent, or `ses_<md5(parent_session_id + ":" + task_id)>` when it collides
+across parents. Discovery retains both colliding task records, and the graph
+uses the same identity rules so `openSession` opens the correct child.
+Legacy deletion tombstones retain their owning parent's bare identity, even
+when they predate task metadata in the registry.
 
 ## Graph model (`src/graph.ts`)
 
 - **Run**: every task whose `root_session_id` equals the resolved root. The
   root is resolved from the open session: it is either a root itself, a
-  sub-agent (`ses_<md5(task_id)>`, so the run is that task's root), or a
+  sub-agent (resolved through its parent-qualified identity or registry), or a
   registry entry.
 - **Spawn edges**: `parent_session_id` → task. A task launched from inside a
   sub-agent has that sub-agent's own session id as its parent (its

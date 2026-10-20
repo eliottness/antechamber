@@ -16,11 +16,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { AdapterServer } from "../src/server.js";
-import { SessionManager, type ManagedSession } from "../src/sessions.js";
 import { ocIdFor, piSessionDir, SessionStore } from "../src/session-store.js";
-import { findTask, JsonlTail, stripTaskSuffix } from "../src/subagents.js";
-import { bugHarness } from "./bug-harness.js";
+import { type ManagedSession, SessionManager } from "../src/sessions.js";
+import { evalAgentSession, findTask, findTaskBySession, JsonlTail, stripTaskSuffix } from "../src/subagents.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
+import { bugHarness } from "./bug-harness.js";
 
 const fixture = JSON.parse(readFileSync("test/fixtures/omo-tools/task.json", "utf8"));
 const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8")
@@ -219,6 +219,247 @@ function eventWhen(bus: EventEmitter, predicate: (event: OCEvent) => boolean): P
     const timer = setTimeout(timeout, 5000);
   });
 }
+
+function collidingTasks(t: TestContext) {
+  const context = setup(t);
+  const { manager, agent, directory, store } = context;
+  const first = liveRecord(store, "st_shared", "completed", "FIRST_TASK_TRANSCRIPT");
+  put(first.recordPath, {
+    ...first.data,
+    child_session_id: "first-child",
+    name: "first",
+    created_at: "2026-10-12T00:00:00.000Z",
+    spawn_spec: { prompt: "first prompt" },
+  });
+  put(first.path, transcript("FIRST_TASK_TRANSCRIPT", "first-child"));
+  put(
+    join(piSessionDir(directory), "other-parent.jsonl"),
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "other-parent-pi",
+      cwd: directory,
+      timestamp: "2026-10-12T00:00:00.000Z",
+    })}\n`,
+  );
+  const other = manager.get(ocIdFor("other-parent-pi"));
+  assert.ok(other);
+  manager.messages(other.info.id);
+  const otherStore = join(agent, "projects", "other-project", "senpi-task");
+  const second = liveRecord(otherStore, "st_shared", "completed", "SECOND_TASK_TRANSCRIPT");
+  put(second.path, transcript("SECOND_TASK_TRANSCRIPT", "second-child"));
+  put(second.recordPath, {
+    ...second.data,
+    parent_session_id: "other-parent-pi",
+    child_session_id: "second-child",
+    name: "second",
+    created_at: "2026-10-12T00:00:00.000Z",
+    spawn_spec: { prompt: "second prompt" },
+  });
+  return { ...context, other, otherStore, first, second };
+}
+
+test("collision lookup rejects an ambiguous bare task session id", (t) => {
+  collidingTasks(t);
+  assert.equal(findTaskBySession(ocIdFor("st_shared")), undefined);
+});
+
+test("collision discovery isolates task cards archives updates and deletion across parents", async (t) => {
+  const { manager, parent, other, directory, state, first, second } = collidingTasks(t);
+  start(manager, parent, { prompt: "first prompt" });
+  result(manager, parent, { task_id: "st_shared", status: "completed" });
+  start(manager, other, { prompt: "second prompt" });
+  result(manager, other, { task_id: "st_shared", status: "completed" });
+  const children = manager.list(directory).filter((session) => session.parentID !== undefined);
+  assert.equal(children.length, 2, "both stores' st_shared tasks must be listed");
+  const firstID = children.find((session) => session.parentID === parent.info.id)?.id;
+  const secondID = children.find((session) => session.parentID === other.info.id)?.id;
+  assert.ok(firstID && secondID);
+  assert.notEqual(firstID, secondID);
+  assert.match(texts(manager.messages(firstID)), /FIRST_TASK_TRANSCRIPT/);
+  assert.match(texts(manager.messages(secondID)), /SECOND_TASK_TRANSCRIPT/);
+  for (const [owner, childID] of [
+    [parent, firstID],
+    [other, secondID],
+  ] as const) {
+    const part = parts(owner.messages)[0];
+    assert.ok(part && part.state.status !== "pending");
+    assert.equal(part.state.metadata?.sessionID, childID);
+  }
+  const registry = new SessionStore(state);
+  const firstArchive = registry.get(firstID)?.piPath;
+  const secondArchive = registry.get(secondID)?.piPath;
+  assert.ok(firstArchive && secondArchive);
+  assert.notEqual(firstArchive, secondArchive);
+  assert.equal(readFileSync(firstArchive, "utf8"), readFileSync(first.path, "utf8"));
+  assert.equal(readFileSync(secondArchive, "utf8"), readFileSync(second.path, "utf8"));
+  const terminalAt = manager.subagents["children"].get(secondID)?.task.terminalAt;
+  assert.notEqual(terminalAt, undefined);
+  manager.subagents.observe(other, {
+    name: "omo.task.updated",
+    data: {
+      tasks: [{ task_id: "st_shared", status: "running", updated_at: new Date((terminalAt ?? 0) + 1).toISOString() }],
+    },
+  });
+  assert.equal(manager.get(firstID)?.status.type, "idle");
+  assert.equal(manager.get(secondID)?.status.type, "busy");
+  manager.subagents.wake(parent, {
+    customType: "omo-senpi:wake",
+    details: [{ task_id: "st_shared", status: "error", error_message: "FIRST_ONLY_ERROR" }],
+  });
+  assert.equal(manager.subagents["children"].get(firstID)?.task.details.status, "error");
+  assert.equal(manager.subagents["children"].get(secondID)?.task.details.status, "running");
+  await manager.remove(firstID);
+  manager.subagents.discover(parent, parent.messages ?? []);
+  assert.equal(manager.get(firstID), undefined);
+  assert.equal(manager.get(secondID)?.info.parentID, other.info.id);
+  await manager.disposeAll();
+  const restarted = new SessionManager(() => {}, new SessionStore(state), directory);
+  t.after(() => restarted.disposeAll());
+  assert.equal(restarted.get(firstID), undefined);
+  assert.equal(restarted.get(secondID)?.info.parentID, other.info.id);
+  assert.match(texts(restarted.messages(secondID)), /SECOND_TASK_TRANSCRIPT/);
+});
+
+test("collision eval links and record-only discovery resolve the same qualified children", (t) => {
+  const { manager, parent, other, directory } = collidingTasks(t);
+  const children = manager.list(directory).filter((session) => session.parentID !== undefined);
+  assert.equal(children.length, 2);
+  for (const [owner, prompt] of [
+    [parent, "first prompt"],
+    [other, "second prompt"],
+  ] as const) {
+    const child = children.find((session) => session.parentID === owner.info.id);
+    assert.ok(child);
+    assert.equal(
+      evalAgentSession(owner.restored?.piSessionId, { prompt }, new Set(), Date.parse("2026-10-12"))?.sessionID,
+      child.id,
+    );
+    assert.equal(findTaskBySession(child.id)?.data.parent_session_id, owner.restored?.piSessionId);
+  }
+});
+
+test("foreign completed archive is repaired from the canonical host transcript under its legacy id", (t) => {
+  const { manager, parent, store, state, directory } = setup(t);
+  const child = liveRecord(store, "st_child", "completed", "CANONICAL_TASK_TRANSCRIPT");
+  put(child.path, transcript("CANONICAL_TASK_TRANSCRIPT", "correct-child"));
+  const archive = join(state, "children", "st_child.jsonl");
+  put(archive, transcript("FOREIGN_TASK_TRANSCRIPT", "foreign-child"));
+  const childID = ocIdFor("st_child");
+  manager["store"].set(childID, {
+    piSessionId: "foreign-child",
+    piPath: archive,
+    directory,
+    title: "retained title",
+    archived: 1234,
+    parentID: parent.info.id,
+    task: {
+      id: "st_child",
+      parentPiId: "parent-pi",
+      input: {},
+      details: { ...child.data, child_session_id: "foreign-child" },
+    },
+    created: 1,
+    updated: 2,
+  });
+  const restored = manager.get(childID);
+  assert.equal(restored?.info.id, childID);
+  assert.equal(restored.info.title, "retained title");
+  assert.equal(restored.info.time.archived, 1234);
+  assert.match(texts(manager.messages(childID)), /CANONICAL_TASK_TRANSCRIPT/);
+  assert.doesNotMatch(texts(manager.messages(childID)), /FOREIGN_TASK_TRANSCRIPT/);
+  assert.equal(restored.piSessionId, "correct-child");
+  assert.equal(new SessionStore(state).get(childID)?.piSessionId, "correct-child");
+  assert.equal(readFileSync(archive, "utf8"), readFileSync(child.path, "utf8"));
+});
+
+for (const order of ["repair-first", "archive-first"] as const) {
+  test(`foreign archive repair preserves archive-only colliding history: ${order}`, (t) => {
+    const { manager, parent, state, directory, first, second } = collidingTasks(t);
+    const withCost = (raw: string, cost: number) =>
+      `${raw}${JSON.stringify({
+        type: "message",
+        id: "cost",
+        parentId: "z",
+        timestamp: 5,
+        message: { role: "assistant", content: [], usage: { cost: { total: cost } } },
+      })}\n`;
+    put(first.path, withCost(readFileSync(first.path, "utf8"), 1));
+    const retained = withCost(readFileSync(second.path, "utf8"), 2);
+    rmSync(second.path);
+    const archive = join(state, "children", "st_shared.jsonl");
+    put(archive, retained);
+    const firstID = ocIdFor("st_shared");
+    const secondID = ocIdFor("other-parent-pi:st_shared");
+    manager["store"].set(firstID, {
+      piSessionId: "second-child",
+      piPath: archive,
+      directory,
+      parentID: parent.info.id,
+      task: { id: "st_shared", parentPiId: "parent-pi", input: {}, details: first.data },
+      created: 1,
+      updated: 2,
+    });
+    for (const id of order === "repair-first" ? [firstID, secondID] : [secondID, firstID]) {
+      assert.ok(manager.get(id));
+    }
+    assert.match(texts(manager.messages(firstID)), /FIRST_TASK_TRANSCRIPT/);
+    assert.match(texts(manager.messages(secondID)), /SECOND_TASK_TRANSCRIPT/);
+    assert.equal(manager.get(firstID)?.info.cost, 1);
+    assert.equal(manager.get(secondID)?.info.cost, 2);
+    const secondArchive = manager["store"].get(secondID)?.piPath;
+    assert.ok(secondArchive);
+    assert.equal(readFileSync(secondArchive, "utf8"), retained);
+  });
+}
+
+test("foreign completed archive is rejected using child_session_id when canonical history is missing", (t) => {
+  const { manager, parent, state, store } = setup(t);
+  put(join(state, "children", "st_child.jsonl"), transcript("FOREIGN_TASK_TRANSCRIPT", "foreign-child"));
+  put(join(store, "tasks", "st_child.json"), {
+    task_id: "st_child",
+    parent_session_id: "parent-pi",
+    child_session_id: "correct-child",
+    status: "completed",
+    final_response: "CORRECT_FALLBACK",
+  });
+  start(manager, parent, {});
+  result(manager, parent, { task_id: "st_child", status: "completed" });
+  const history = texts(manager.messages(ocIdFor("st_child")));
+  assert.match(history, /CORRECT_FALLBACK/);
+  assert.doesNotMatch(history, /FOREIGN_TASK_TRANSCRIPT/);
+});
+
+test("collision preserves an existing custom registry id and scopes legacy deletion tombstones", (t) => {
+  const { manager, parent, other, state, directory, first } = collidingTasks(t);
+  const customID = "ses_custom_bookmark";
+  const archive = join(state, "children", "st_shared.jsonl");
+  put(archive, readFileSync(first.path, "utf8"));
+  manager["store"].set(customID, {
+    piSessionId: "first-child",
+    piPath: archive,
+    directory,
+    parentID: parent.info.id,
+    task: { id: "st_shared", parentPiId: "parent-pi", input: {}, details: first.data },
+    created: 1,
+    updated: 2,
+  });
+  manager["store"].set(ocIdFor("st_shared"), {
+    deleted: true,
+    piSessionId: "first-child",
+    piPath: archive,
+    directory,
+    parentID: parent.info.id,
+    created: 1,
+    updated: 2,
+  });
+  assert.equal(manager.get(customID)?.info.id, customID);
+  const otherChild = manager.list(directory).find((session) => session.parentID === other.info.id);
+  assert.ok(otherChild, "another parent's task must not inherit a legacy tombstone");
+  assert.notEqual(otherChild.id, customID);
+  assert.match(texts(manager.messages(otherChild.id)), /SECOND_TASK_TRANSCRIPT/);
+  assert.equal(manager.list(directory).filter((session) => session.parentID === parent.info.id).length, 1);
+});
 
 test("single real RPC task creates a linked nested session and strips the suffix", (t) => {
   const { manager, parent, events } = setup(t);
