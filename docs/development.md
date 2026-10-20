@@ -86,7 +86,10 @@ npm run build
 Node's built-in test runner (`tsx --test`). The extension's
 `connector-parity.test.ts` imports `ocIdFor` and `SessionRegistryEntry` from
 `src/session-store.ts`. Changing session ids or registry fields therefore
-means updating the extension in the same change. These tests are hermetic: they don't require a real `pi` or
+means updating the extension in the same change. OmO Work's `src/model.ts`
+imports its snapshot types from `src/work-status.ts`, so a snapshot change
+fails `npm run typecheck` until the section follows; `manifest.test.ts` runs
+the OpenChamber 2.x manifest parser on its `package.json`. These tests are hermetic: they don't require a real `pi` or
 `omo` binary on PATH, and use fixtures under `test/fixtures/` (fake RPC
 processes, fake OmO endpoints, recorded tool-call payloads) to exercise the
 adapter logic in isolation.

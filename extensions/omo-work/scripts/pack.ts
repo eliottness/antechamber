@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SHIPPED_FILES = ["package.json", "status/index.html", "status/main.js", "service/main.js", "README.md"];
+const SHIPPED_FILES = [
+  "package.json",
+  "status/index.html",
+  "status/main.js",
+  "service/main.js",
+  "README.md",
+  "docs/DESIGN.md",
+];
 const ARCHIVE_ROOT = "antechamber-omo-work";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");

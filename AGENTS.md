@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 antechamber is an OpenCode-compatible HTTP/SSE server, so OpenChamber can drive the pi coding agent (default backend: OmO) over JSONL stdio RPC (`<agent> --mode rpc`), with one agent process per session.
-Built with TypeScript 7, Node >=22 and ESM/NodeNext. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` for the bundled extension.
+Built with TypeScript 7, Node >=22 and ESM/NodeNext. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (1.24, OmO Graph) and its 2.x alias `@openchamber/sdk-v2` (OmO Work) for the bundled extensions.
 
 ```
 OpenChamber --HTTP/SSE (OpenCode v1 + v2 /api subset)--> antechamber --JSONL stdio--> omo|pi --mode rpc
@@ -82,7 +82,7 @@ For every bug report:
 - Fabricating success for unsupported OpenCode capabilities (share, MCP, OAuth...). Return 400.
 - Killing processes by command-line pattern, or touching OmO's shared LSP daemon or other clients' task hosts.
 - Personal paths, hostnames or credentials in code, fixtures or docs (this is a PR checklist item).
-- Adding runtime dependencies. There are none today. The published package is `dist/`, the `bin/` shims and the built extension (`files` in package.json).
+- Adding runtime dependencies. There are none today. The published package is `dist/`, the `bin/` shims and the built extensions (`files` in package.json).
 
 ## UNIQUE STYLES
 - Protocol behavior claims in `docs/architecture.md` cite installed OmO bundle files and dated probes. Keep that evidence style when documenting new RPC semantics.
@@ -102,7 +102,7 @@ ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke   # live, costs toke
 npm run build && npm run replay -- [--session ses_x]   # real sessions in a real OpenChamber; no tokens, local only
 antechamber doctor                       # includes installed vs latest vs running adapter versions
 ```
-CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extension, and no `test/`, `contrib/` or extension sources/tests.
+CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests.
 
 ## NOTES
 - `bin/opencode-antechamber` runs `dist/cli.js`, so a fresh checkout needs `npm run build` before OpenChamber can launch it.

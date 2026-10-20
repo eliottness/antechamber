@@ -75,6 +75,25 @@ variables (`OMO_CODING_AGENT_DIR`, `SENPI_CODING_AGENT_DIR`,
 `PI_CODING_AGENT_DIR`) or `ANTECHAMBER_STATE_DIR`. If you set any of them,
 enter the same paths in the panel's Data paths popover.
 
+## Seeing background work
+
+OmO keeps working between turns: terminal monitors watch commands, detached
+eval cells run, background terminal sessions stay up, and the goal
+continuation timer waits to wake the session. On OpenChamber 2.x the bundled
+[OmO Work section](../../extensions/omo-work/README.md) shows all of it, with
+the todo list grouped by phase, in the Work Status panel. OpenChamber 1.x has
+no extension sections; it sees monitors as read-only child sessions instead.
+
+The section's service finds antechamber through the run records in
+`<state dir>/run/`. Like OmO Graph, it starts with OpenChamber's minimal
+environment, so if you set `ANTECHAMBER_STATE_DIR`, enter the same path under
+**Data path** in the section header.
+
+What OmO exposes to antechamber decides what the section can do: Stop works
+for eval cells and Fire now for the goal timer, but monitors and background
+sessions cannot be stopped from OpenChamber, because OmO has no RPC request
+for it. See [docs/architecture.md](../architecture.md#omo-work-status-section).
+
 ## Git diffs and `diff.external`
 
 antechamber's own `GET /session/:id/diff` endpoint always produces a plain
