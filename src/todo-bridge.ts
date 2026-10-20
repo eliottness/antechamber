@@ -9,6 +9,12 @@ export interface Todo {
   readonly priority: "medium";
 }
 
+/** One todo phase as OmO groups it, in its own order (the Work Status section's waves). */
+export interface TodoPhase {
+  readonly name: string;
+  readonly tasks: ReadonlyArray<{ readonly content: string; readonly status: Todo["status"] }>;
+}
+
 export interface TodoUpdated {
   type: "todo.updated";
   properties: { sessionID: string; todos: Todo[] };
@@ -18,39 +24,47 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function flattenTodos(sessionID: string, data: unknown): Todo[] {
+function todoStatus(value: unknown): Todo["status"] {
+  switch (value) {
+    case "in_progress":
+      return "in_progress";
+    case "completed":
+      return "completed";
+    case "abandoned":
+    case "dropped":
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "pending";
+  }
+}
+
+/** The `senpi.todo-state` phases, keeping only well-formed phases and tasks. */
+export function todoPhases(data: unknown): TodoPhase[] {
   if (!record(data) || !Array.isArray(data.phases)) return [];
-  const phases = data.phases.filter(record);
-  return phases.flatMap((phase) => {
+  return data.phases.filter(record).flatMap((phase): TodoPhase[] => {
     if (typeof phase.name !== "string" || !Array.isArray(phase.tasks)) return [];
-    return phase.tasks.filter(record).flatMap((task): Todo[] => {
-      if (typeof task.content !== "string") return [];
-      let status: Todo["status"];
-      switch (task.status) {
-        case "in_progress":
-          status = "in_progress";
-          break;
-        case "completed":
-          status = "completed";
-          break;
-        case "abandoned":
-        case "dropped":
-        case "cancelled":
-          status = "cancelled";
-          break;
-        default:
-          status = "pending";
-      }
-      return [
-        {
-          id: createHash("md5").update(`${sessionID}|${phase.name}|${task.content}`).digest("hex").slice(0, 16),
-          content: phases.length === 1 ? task.content : `${phase.name}: ${task.content}`,
-          status,
-          priority: "medium",
-        },
-      ];
-    });
+    const tasks = phase.tasks
+      .filter(record)
+      .flatMap((task) =>
+        typeof task.content === "string" ? [{ content: task.content, status: todoStatus(task.status) }] : [],
+      );
+    return [{ name: phase.name, tasks }];
   });
+}
+
+export function flattenTodos(sessionID: string, data: unknown): Todo[] {
+  const phases = todoPhases(data);
+  return phases.flatMap((phase) =>
+    phase.tasks.map(
+      (task): Todo => ({
+        id: createHash("md5").update(`${sessionID}|${phase.name}|${task.content}`).digest("hex").slice(0, 16),
+        content: phases.length === 1 ? task.content : `${phase.name}: ${task.content}`,
+        status: task.status,
+        priority: "medium",
+      }),
+    ),
+  );
 }
 
 toolMappers.todo = (args) => ({
@@ -62,6 +76,7 @@ toolMappers.todo = (args) => ({
 /** Per-session snapshots; each card retains the state produced by its own call. */
 export class TodoBridge {
   todos: Todo[] = [];
+  phases: TodoPhase[] = [];
   private awaitingState: OCToolPart[] = [];
 
   constructor(private readonly sessionID: string) {}
@@ -79,6 +94,7 @@ export class TodoBridge {
   entry(entry: unknown, updatePart: (part: OCToolPart) => void = () => {}): TodoUpdated | undefined {
     if (!record(entry) || entry.type !== "custom" || entry.customType !== "senpi.todo-state") return undefined;
     this.todos = flattenTodos(this.sessionID, entry.data);
+    this.phases = todoPhases(entry.data);
     const part = this.awaitingState.shift();
     if (part !== undefined) {
       part.state.input = { todos: this.todos };

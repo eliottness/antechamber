@@ -58,11 +58,20 @@ export function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" }).end(payload);
 }
 
+/** Routes the OmO Work extension service calls with the run-record token instead of the server password. */
+export const EXTENSION_ROUTE_PREFIX = "/antechamber/work-status/";
+
 export class Http {
   private readonly credentials: Buffer | undefined;
   private readonly maxBodyBytes: number;
+  private readonly extensionToken: Buffer | undefined;
 
-  constructor(private serverOrigin?: () => string) {
+  constructor(
+    private serverOrigin?: () => string,
+    extensionToken?: string,
+  ) {
+    this.extensionToken =
+      extensionToken === undefined ? undefined : createHash("sha256").update(`Bearer ${extensionToken}`).digest();
     const maxBodyBytes = Number(envSetting("MAX_BODY_BYTES"));
     this.maxBodyBytes = Number.isSafeInteger(maxBodyBytes) && maxBodyBytes > 0 ? maxBodyBytes : DEFAULT_MAX_BODY_BYTES;
     const password = serverPassword();
@@ -204,6 +213,15 @@ export class Http {
 
   private authorized(req: IncomingMessage): boolean {
     if (this.credentials === undefined) return true;
+    if (
+      this.extensionToken !== undefined && // The router resolves dot segments, %2e and backslashes, so the check must see the same path.
+      new URL(req.url ?? "/", "http://localhost").pathname.startsWith(EXTENSION_ROUTE_PREFIX)
+    ) {
+      const supplied = createHash("sha256")
+        .update(req.headers.authorization ?? "")
+        .digest();
+      if (timingSafeEqual(this.extensionToken, supplied)) return true;
+    }
     const match = req.headers.authorization?.match(/^Basic\s+([A-Za-z0-9+/]+=*)$/i);
     const supplied = createHash("sha256")
       .update(Buffer.from(match?.[1] ?? "", "base64"))

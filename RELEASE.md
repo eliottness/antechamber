@@ -11,8 +11,9 @@ bumps versions or pushes tags by hand. The
 2. **Bump.** `scripts/release.ts` computes the next patch version (for example
    `0.2.1` -> `0.2.2`) and writes it to:
    - `package.json` and `package-lock.json`,
-   - `extensions/omo-dag/package.json` (the OmO Graph extension always carries
-     the same version as the package),
+   - `extensions/omo-dag/package.json`, `extensions/omo-work/package.json` and
+     `extensions/omo-compat/package.json` (the extensions always carry the same
+     version as the package),
    - `CHANGELOG.md`: the `[Unreleased]` notes move under
      `## [X.Y.Z] - YYYY-MM-DD`, and an empty `[Unreleased]` heading is kept.
      If `[Unreleased]` was empty, the notes are the commit subjects since the
@@ -53,6 +54,8 @@ For a deliberate minor or major bump, prepare that release by hand:
 # move the [Unreleased] notes under "## [X.Y.0] - YYYY-MM-DD" in CHANGELOG.md, then:
 npm version X.Y.0 --no-git-tag-version           # package.json + package-lock.json
 npm pkg set version=X.Y.0 --prefix extensions/omo-dag
+npm pkg set version=X.Y.0 --prefix extensions/omo-work
+npm pkg set version=X.Y.0 --prefix extensions/omo-compat
 git commit -am "chore(release): vX.Y.0"
 git tag -a vX.Y.0 -m vX.Y.0
 git push --atomic origin HEAD:main vX.Y.0

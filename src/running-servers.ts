@@ -11,6 +11,8 @@ export interface RunningServer {
   readonly version: string;
   readonly url: string;
   readonly started: string;
+  /** Bearer token for the `/antechamber/work-status` routes; the file is 0600 in a 0700 directory. */
+  readonly token?: string;
 }
 
 type Fs = Pick<typeof fs, "existsSync" | "mkdirSync" | "readdirSync" | "readFileSync" | "rmSync" | "writeFileSync">;

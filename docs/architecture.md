@@ -275,10 +275,10 @@ to OmO or its settings.
 
 ### Background monitors
 
-OpenChamber has no surface for an agent's background watches, but it already
-lists child sessions under Subagents and gives each sidebar row a live dot.
-The connector therefore shows each OmO terminal monitor as a read-only child
-session of the session that started it: `busy` while the watch is live, `idle`
+OpenChamber 1.24 has no surface for an agent's background watches, but it
+already lists child sessions under Subagents and gives each sidebar row a live
+dot. For v1 clients the connector therefore shows each OmO terminal monitor as
+a read-only child session of the session that started it: `busy` while the watch is live, `idle`
 once it ends. Its transcript is one `bash` tool card holding the watched
 command, the filter, the event count and how the watch ended. The parent
 session's own status is untouched, so the composer, queued messages, fork and
@@ -306,6 +306,53 @@ October 15, 2026:
 Monitor child sessions live only in memory, like adapter-authored cards. A
 watch the user deletes is not recreated by a later snapshot. When the agent
 process exits, its watches are marked ended.
+
+OpenChamber 2.x clients do not see these children: `/api/session`,
+`/api/session/active` and the `/api/event` stream leave them out, and the
+OmO Work status section shows the watches instead (next section). The
+`/api/global/event/ws` socket keeps them, because it carries v1-shaped events
+for OpenChamber 1.24.
+
+### OmO Work status section
+
+`extensions/omo-work` is an OpenChamber 2.x Work Status section
+(`contributes.statusSection`) for the session's background work. Its local
+service reads `<state dir>/run/<pid>.json`, which `serve` writes with a random
+`token` (file 0600, directory 0700), and calls
+`/antechamber/work-status/<session>` with that bearer token. The token opens
+only `/antechamber/work-status` routes, so the service never needs the OpenCode server
+password, which OpenChamber does not pass to extension services.
+
+`work-status.ts` builds the snapshot from these sources, read in the installed
+`omo-ai` 5.1.33 / `@code-yeongyu/senpi` 2026.10.13 bundles on October 20,
+2026:
+
+- Todo phases: the `senpi.todo-state` entries the todo bridge already follows,
+  kept with their phase grouping.
+- Monitors: the `terminal_monitor_state` / `terminal_monitor_ended` events
+  above, with the latest matched lines.
+- Detached eval cells: senpi-codemode publishes
+  `wake_source_state {source: "senpi-codemode", activeCount, items}` over RPC
+  (`senpi-codemode/src/index.ts`, `emitWakeSourceState`) and answers
+  `eval_cells.list`, `eval_cells.peek` and `eval_cells.stop`
+  (`src/extension/eval-cells-rpc.ts`). The list is cached for one second per
+  session; without it (no codemode, or a dormant agent) the wake-source items
+  are shown as running cells.
+- Background terminal sessions: their wake source is bus-only
+  (`terminal/extension-state.js`, `onBackgroundState`), but the terminal
+  manifest `<session dir>/extensions/terminal/<encoded session id>.json` is
+  rewritten on every start and exit (`terminal/terminal-manifest.js`). Entries
+  whose recorded `runtime.pid` is gone are dropped, since a crashed agent
+  leaves them behind.
+- Goal continuation: `goal_continuation_timer_state {armed, kind, dueAtMs}`
+  and `goal_continuation_scheduled {wakeSources}` events
+  (`goal/monitor-continuation.js`), and the `goal_continuation_fire_now`
+  extension request (`goal/rpc-wait-surface.js`).
+
+Not available over RPC, so not shown or not actionable: continuation holds
+(loop guard publishes `continuation_hold_state` on the in-process bus only),
+and stopping a monitor or a background session (the terminal extension
+registers no RPC request for it).
 
 ### Subagent lifecycle
 

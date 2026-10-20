@@ -38,6 +38,7 @@ import {
 } from "./session-tree.js";
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
+import { WorkStatusBridge } from "./work-status.js";
 import { sessionDiff } from "./session-diff.js";
 import { announceSessionNotice, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
@@ -161,6 +162,7 @@ export class SessionManager {
   readonly lifecycle: SessionLifecycle;
   readonly subagents: SubagentBridge;
   readonly monitors: MonitorSessions;
+  readonly workStatus: WorkStatusBridge;
   /** directory → last scan freshness (pi dir mtime + wall clock). */
   private scanCache = new Map<string, { mtimeMs: number; at: number }>();
   /** freshness of the all-directories scan (see listAll). */
@@ -178,10 +180,12 @@ export class SessionManager {
       parsePiSessionText(session, getAgentName(), raw),
     );
     this.monitors = new MonitorSessions(this.sessions, this.emit);
+    this.workStatus = new WorkStatusBridge(this.monitors);
     this.events = new PiEventTranslator({
       emit: this.emit,
       subagents: this.subagents,
       monitors: this.monitors,
+      workStatus: this.workStatus,
       store: this.store,
       dirtyDiffs: this.dirtyDiffs,
       ensureMessages: (s) => this.ensureMessages(s),
@@ -374,6 +378,7 @@ export class SessionManager {
       // Its task cards end with the run; the tasks themselves may still run in OmO's shared host.
       this.subagents.finishCalls(s.info.id, true);
       this.monitors.stopParent(s.info.id);
+      this.workStatus.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
         .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
@@ -471,6 +476,7 @@ export class SessionManager {
       this.subagents.owns(sessionId) || this.monitors.owns(sessionId) ? undefined : (s.piPath ?? s.restored?.piPath);
     const child = this.subagents.remove(sessionId);
     this.monitors.remove(sessionId);
+    this.workStatus.stopParent(sessionId);
     if (piPath !== undefined) {
       try {
         unlinkSync(piPath);

@@ -32,6 +32,8 @@ let nestedEntries;
 // OmO cancels a compaction when its tool set changes (e.g. MCP servers connecting after startup).
 let cancelledCompacts = Number(process.env.ANTECHAMBER_TEST_CANCELLED_COMPACTS ?? 0);
 let heldCompact;
+let evalCells;
+let firedGoal = 0;
 const queued = [];
 const commands = [];
 const send = (v) => process.stdout.write(`${JSON.stringify(v)}\n`);
@@ -339,6 +341,33 @@ createInterface({ input: process.stdin })
     }
     // Replays an arbitrary agent frame, e.g. an extension_event OmO would publish.
     if (cmd.type === "emit") send(cmd.frame);
+    // Detached eval cells as senpi-codemode answers eval_cells.list/peek/stop
+    // (senpi-codemode/src/extension/eval-cells-rpc.ts, omo-ai 5.1.33); `set_eval_cells` seeds them.
+    if (cmd.type === "set_eval_cells") evalCells = cmd.cells;
+    if (cmd.type === "eval_cells.list") {
+      if (evalCells === undefined) {
+        success = false;
+        error = "Eval cell controls are unavailable in this session";
+      } else data = evalCells.map(({ outputTail: _tail, ...cell }) => cell);
+    }
+    if (cmd.type === "eval_cells.peek" || cmd.type === "eval_cells.stop") {
+      const cell = evalCells?.find((candidate) => candidate.cellId === cmd.cellId);
+      if (cell === undefined) {
+        send({
+          type: "response",
+          id: cmd.id,
+          command: cmd.type,
+          success: false,
+          error: `Unknown eval cell: ${cmd.cellId}`,
+          errorCode: "eval_cell_not_found",
+        });
+        return;
+      }
+      if (cmd.type === "eval_cells.stop") cell.state = "cancelled";
+      data = { ...cell, outputTail: (cell.outputTail ?? "").slice(-(cmd.tailBytes ?? 8192)) };
+    }
+    if (cmd.type === "extension_request" && cmd.name === "goal_continuation_fire_now") firedGoal++;
+    if (cmd.type === "inspect" && data !== undefined) data = { ...data, firedGoal };
     if (cmd.type === "background_notification") {
       // Raw RPC capture of installed omo-ai 5.1.33 / senpi runtime, 2026-10-17: the custom message
       // frames carry no entry ID and OmO persists the entry without any entry_appended frame.

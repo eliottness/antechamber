@@ -36,7 +36,8 @@ One line per module in `src/`:
 | `approvals.ts` | Permission/question bridging through the agent's extension-UI protocol |
 | `question-forms.ts` | Converts pending native questions into v2 forms and parses form replies |
 | `subagents.ts` | Subagent/task card tracking and child-transcript resolution |
-| `monitor-sessions.ts` | OmO terminal monitors as read-only child sessions |
+| `monitor-sessions.ts` | OmO terminal monitors as read-only child sessions (v1 clients) |
+| `work-status.ts` | Background-work snapshot and actions behind `/antechamber/work-status` for the OmO Work section |
 | `todo-bridge.ts` | Translates the agent's todo tool calls into OpenCode todo state |
 | `thinking-levels.ts` | Maps OmO thinking levels onto OpenChamber's model/variant picker |
 | `tool-map.ts` | Maps pi/OmO tool-call events onto OpenCode v2 `ToolState` |
@@ -57,6 +58,14 @@ the panel runs in a browser iframe. It shares the root toolchain:
 `npm run typecheck`, `npm run lint` and `npm test` cover it. The bundles
 (`panel/main.js`, `service/main.js`) are gitignored but listed in the
 package's `files`. See [extensions/omo-dag/README.md](../extensions/omo-dag/README.md).
+
+`extensions/omo-work/` holds the OmO Work extension for OpenChamber 2.x: a
+Work Status section (`src/status.ts`, `status/index.html`) and a local service
+(`src/service.ts`, `src/discovery.ts`) that finds the running antechamber
+through its run record and relays `/antechamber/work-status`. It imports the
+adapter's snapshot types, uses the 2.x SDK through the `@openchamber/sdk-v2`
+alias, and builds, typechecks and tests with the same root commands. See
+[extensions/omo-work/README.md](../extensions/omo-work/README.md).
 
 `extensions/omo-compat/` holds the OmO Compatibility extension: a manifest with
 no code. It declares OpenChamber display rules (`contributes.tools`) for tool

@@ -46,11 +46,17 @@ export async function serve(options: ServeOptions): Promise<void> {
   try {
     forget = recordRunningServer(
       envSetting("STATE_DIR") ?? defaultStateDir(homedir(), fs.existsSync),
-      { pid: process.pid, version: ADAPTER_VERSION, url: server.url, started: new Date().toISOString() },
+      {
+        pid: process.pid,
+        version: ADAPTER_VERSION,
+        url: server.url,
+        started: new Date().toISOString(),
+        token: server.extensionToken,
+      },
       fs,
     );
   } catch (error) {
-    // Only doctor reads the record; serving must not depend on it.
+    // Doctor and the OmO Work extension read the record; serving must not depend on it.
     console.error(
       `antechamber: cannot record the running version: ${error instanceof Error ? error.message : String(error)}`,
     );

@@ -86,7 +86,7 @@ function main(argv: readonly string[]): void {
   rootPackage.version = version;
   writeJson(lockPath, lock);
 
-  for (const extension of ["omo-dag", "omo-compat"]) {
+  for (const extension of ["omo-dag", "omo-work", "omo-compat"]) {
     const extPath = join(root, "extensions", extension, "package.json");
     const ext = readJson(extPath);
     ext.version = version;

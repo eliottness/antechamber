@@ -34,6 +34,8 @@ jobs:
           assert.ok(paths.includes("dist/cli.js"), "package must contain dist/cli.js");
           for (const file of ["package.json", "icon.svg", "panel/index.html", "panel/main.js", "service/main.js"])
             assert.ok(paths.includes(`extensions/omo-dag/${file}`), `package must contain the built OmO Graph extension (${file})`);
+          for (const file of ["package.json", "status/index.html", "status/main.js", "service/main.js"])
+            assert.ok(paths.includes(`extensions/omo-work/${file}`), `package must contain the built OmO Work extension (${file})`);
           for (const file of ["package.json", "icon.svg"])
             assert.ok(paths.includes(`extensions/omo-compat/${file}`), `package must contain the OmO Compatibility extension (${file})`);
           assert.ok(!paths.some((path) => /^extensions\/[^/]+\/(src|test|scripts)\//.test(path)),

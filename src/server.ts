@@ -1,6 +1,6 @@
 /** HTTP/SSE composition root for the OpenCode API backed by pi. */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { debugLog } from "./misc-routes.js";
@@ -14,6 +14,7 @@ import { handleV1 } from "./routes-v1.js";
 import { handleV2 } from "./routes-v2.js";
 import type { RouteServices } from "./route-services.js";
 import { type SelfUpdateResult, selfUpdate } from "./self-update.js";
+import { handleWorkStatus } from "./work-status.js";
 
 export { isLoopbackHost, serverPassword } from "./http.js";
 
@@ -37,10 +38,12 @@ export class AdapterServer {
   private nextWebSocketEventID = 0;
   private catalogPromise: Promise<Catalog> | undefined;
   private actualPort: number | undefined;
-  private readonly http = new Http(() => this.url);
+  /** Bearer token for the `/antechamber/work-status` routes, published in the run record for the OmO Work extension. */
+  readonly extensionToken = randomBytes(32).toString("base64url");
+  private readonly http = new Http(() => this.url, this.extensionToken);
 
   constructor(private options: AdapterServerOptions) {
-    this.sse = new SSE(options, this.sseClients);
+    this.sse = new SSE(options, this.sseClients, (id) => this.sessions.monitors.owns(id));
     this.sessions = new SessionManager(
       (directory, event) => this.broadcast(directory, event),
       undefined,
@@ -249,6 +252,11 @@ export class AdapterServer {
       // OpenChamber 2.3.2 opens one unscoped /api/event as its global hub (captured);
       // only an explicit directory selector scopes the stream.
       this.handleSSE(req, res, "v2", directory, directoryQuery === null && headerDirectory === undefined);
+      return;
+    }
+
+    if (path.startsWith("/antechamber/work-status/")) {
+      await handleWorkStatus(this.sessions, req, res, url, method);
       return;
     }
 

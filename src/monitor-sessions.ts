@@ -29,10 +29,17 @@ export interface MonitorSnapshot {
   lastFiredAtMs: number | null;
 }
 
-interface MonitorEnding {
+export interface MonitorEnding {
   reason: string;
   exitCode: number | null;
   endedAtMs: number;
+}
+
+/** One watch of a parent, for the Work Status section. */
+export interface MonitorView {
+  monitor: MonitorSnapshot;
+  ending?: MonitorEnding & { label: string };
+  lines: string[];
 }
 
 interface Watch {
@@ -125,6 +132,23 @@ export class MonitorSessions {
     return this.watches.has(id);
   }
 
+  /** A parent's watches, live first then the newest ended ones, with their latest matched lines. */
+  list(parentID: string, maxEnded: number, maxLines: number): MonitorView[] {
+    const watches = [...this.watches.values()].filter((watch) => watch.session.info.parentID === parentID);
+    const live = watches.filter((watch) => watch.ending === undefined);
+    const ended = watches
+      .filter((watch) => watch.ending !== undefined)
+      .sort((a, b) => (b.ending?.endedAtMs ?? 0) - (a.ending?.endedAtMs ?? 0))
+      .slice(0, maxEnded);
+    return [...live.sort((a, b) => b.monitor.startedAtMs - a.monitor.startedAtMs), ...ended].map(
+      ({ monitor, ending, lines }) => ({
+        monitor: { ...monitor },
+        ...(ending ? { ending: { ...ending, label: endingLabel(ending) } } : {}),
+        lines: lines.slice(-maxLines),
+      }),
+    );
+  }
+
   messages(id: string): OCMessageWithParts[] {
     return this.watches.get(id)?.session.messages ?? [];
   }
@@ -182,11 +206,13 @@ export class MonitorSessions {
   remove(id: string): void {
     for (const [childID, watch] of this.watches) {
       if (childID !== id && watch.session.info.parentID !== id) continue;
+      // Emitted while the watch is still owned, so the v2 stream keeps hiding it.
+      if (this.sessions.get(childID) === watch.session) {
+        this.emit(watch.session.info.directory, { type: "session.deleted", properties: { info: watch.session.info } });
+        this.sessions.delete(childID);
+      }
       this.watches.delete(childID);
       this.dismissed.add(childID);
-      if (this.sessions.get(childID) !== watch.session) continue;
-      this.sessions.delete(childID);
-      this.emit(watch.session.info.directory, { type: "session.deleted", properties: { info: watch.session.info } });
     }
   }
 
