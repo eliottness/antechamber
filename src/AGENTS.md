@@ -26,7 +26,8 @@ cli.ts (parseArgs, lazy import per command; no command framework)
 | Registry on disk | `session-store.ts` | directory map, messageID -> entry id, `connectorOwned` |
 | Permissions / questions | `approvals.ts`, `question-forms.ts` | extension-UI sub-protocol |
 | Subagent cards, child transcripts | `subagents.ts` | |
-| Background monitors as child sessions | `monitor-sessions.ts` | fed by `extension_event` frames |
+| Background monitors as child sessions | `monitor-sessions.ts` | fed by `extension_event` frames; hidden from v2 lists/events |
+| OmO Work section data | `work-status.ts` | `/antechamber/work-status`, bearer token from the run record |
 | Todos | `todo-bridge.ts` | todo tool calls -> OpenCode todo state |
 | Slash commands, shell, compact | `session-commands.ts` | |
 | Task-host teardown | `session-hosts.ts`, `pidfd.ts` | Linux only |

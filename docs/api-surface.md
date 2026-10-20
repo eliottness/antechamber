@@ -211,6 +211,23 @@ payload}` frames. `ready` includes `replayReset: true` when `lastEventId`
 predates the retained window. It uses the same authentication and origin
 checks as HTTP routes.
 
+### antechamber routes (not OpenCode)
+
+Served for the OmO Work extension service (`extensions/omo-work`). They accept
+the server password like every route, or `Authorization: Bearer <token>` with
+the token `serve` writes into `<state dir>/run/<pid>.json`; that token opens
+nothing else.
+
+| Method | Path | Status | Notes |
+|---|---|---|---|
+| GET | `/antechamber/work-status/{sessionID}` | 200 | Work snapshot `{version: 1, sessionID, live, generatedAt, todo, monitors, evalCells, evalCellsListed, background, goal, wakeSources}` (`src/work-status.ts`). 400 for a malformed ID, 404 for an unknown session. |
+| GET | `/antechamber/work-status/{sessionID}/eval/{cellID}?tailBytes=N` | 200 | OmO `eval_cells.peek` (output tail, at most 64 KiB). 404 unknown cell, 409 when the agent is not running. |
+| POST | `/antechamber/work-status/{sessionID}/eval/{cellID}/stop` | 200 | OmO `eval_cells.stop`; returns the stopped cell. Same errors as peek. |
+| POST | `/antechamber/work-status/{sessionID}/goal/fire` | 204 | OmO `goal_continuation_fire_now`. 409 when the agent is not running or OmO refuses. |
+
+OmO monitor child sessions are a v1-only projection: `GET /api/session`,
+`GET /api/session/active` and `GET /api/event` omit them.
+
 ### Shared status behavior
 
 - Unknown sessions and resources return typed 404 errors. Invalid JSON, body

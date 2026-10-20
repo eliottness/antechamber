@@ -293,7 +293,7 @@ export async function handleV2(
   }
   // Read-only inventories OpenChamber loads at bootstrap. OmO has no OpenCode-style shells or
   // web-search providers, so each is an honest empty list (mutations stay 400);
-  // OmO monitors appear as child sessions instead (monitor-sessions.ts).
+  // OmO monitors appear in the OmO Work status section instead (work-status.ts).
   if ((path === "/api/shell" || path === "/api/websearch/provider") && method === "GET") {
     json(res, 200, withLocation([]));
     return;
@@ -393,7 +393,10 @@ export async function handleV2(
     const parentID = url.searchParams.get("parentID");
     const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
     const limit = numberParam(url.searchParams.get("limit"));
-    let infos = dir !== null && dir !== "" ? services.sessions.list(dir) : services.sessions.listAll();
+    let infos = (dir !== null && dir !== "" ? services.sessions.list(dir) : services.sessions.listAll()).filter(
+      // OmO monitors are a child session only for v1 clients; 2.x shows them in the OmO Work section.
+      (session) => !services.sessions.monitors.owns(session.id),
+    );
     if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
     if (parentID !== null) infos = infos.filter((session) => session.parentID === parentID);
     let sessions = infos.map((info) => v2Session(services, info));
@@ -446,7 +449,7 @@ export async function handleV2(
   if (path === "/api/session/active" && method === "GET") {
     const data: Record<string, { type: "running" }> = {};
     for (const [id, status] of Object.entries(services.sessions.statuses())) {
-      if (status.type !== "idle") data[id] = { type: "running" };
+      if (status.type !== "idle" && !services.sessions.monitors.owns(id)) data[id] = { type: "running" };
     }
     json(res, 200, { data });
     return;

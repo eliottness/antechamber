@@ -20,9 +20,10 @@ antechamber/
 ├── contrib/   # live-agent smokes/probes, cost tokens, not in CI -> contrib/AGENTS.md
 ├── bin/       # opencode-antechamber: OpenChamber launcher shim (serve, --version, upgrade); opencode-pi = deprecated alias
 ├── extensions/omo-dag/  # OmO Graph OpenChamber extension: sandboxed panel + read-only service -> its README.md
+├── extensions/omo-work/ # OmO Work: OpenChamber 2.x Work Status section + relay service -> its README.md
 └── docs/      # architecture, api-surface (route contract), configuration (env), backends/omo.md
 ```
-Published package = `dist/` + `bin/` shims + the built OmO Graph extension; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
+Published package = `dist/` + `bin/` shims + the built OmO Graph and OmO Work extensions; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
@@ -56,7 +57,7 @@ Centrality measured by counting relative imports across src/test/contrib.
   Do not "clean up" code toward those rules.
 - tsconfig is strict with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`, so build optional props conditionally (`...(x ? {k: x} : {})`).
 - Relative imports carry `.js` suffixes (NodeNext). Filenames are kebab-case.
-- `tsc` compiles only `src/`; `npm run build` then bundles `extensions/omo-dag` with esbuild (own tsconfig, DOM + Node). `npm run typecheck` uses `tsconfig.check.json` and covers `src`, `test` and `contrib`.
+- `tsc` compiles only `src/`; `npm run build` then bundles `extensions/omo-dag` and `extensions/omo-work` with esbuild (own tsconfig, DOM + Node). `npm run typecheck` uses `tsconfig.check.json` and covers `src`, `test` and `contrib`.
 - Env vars use the `ANTECHAMBER_` prefix; `OCPI_` is a deprecated fallback. The agent dir is resolved from `OMO_CODING_AGENT_DIR`, then `SENPI_`, then `PI_` (no prefix).
   Auth uses OpenCode's `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME`.
 - Commits follow Conventional Commits, scoped by area (`fix(session): ...`, `feat(tools): ...`). Add user-visible changes to `[Unreleased]` in `CHANGELOG.md`.
@@ -109,4 +110,4 @@ CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then
 - `reference/` (gitignored) holds shallow clones of openchamber and pi-mono for protocol lookups. It is not part of the build and Biome ignores it.
 - `.omo/` is gitignored and Biome-ignored.
 - The route smoke reads the maintained static route table in `docs/api-surface.md`; parameterized routes are documented separately.
-- `npm run typecheck` runs `tsc -p tsconfig.check.json` and `tsc -p extensions/omo-dag/tsconfig.json`.
+- `npm run typecheck` runs `tsc -p tsconfig.check.json`, `tsc -p extensions/omo-dag/tsconfig.json` and `tsc -p extensions/omo-work/tsconfig.json`.

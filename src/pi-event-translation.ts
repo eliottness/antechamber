@@ -18,6 +18,7 @@ import type { PiFileMessage } from "./session-history.js";
 import type { SessionStore } from "./session-store.js";
 import { evalAgentSession, type SubagentBridge } from "./subagents.js";
 import { MONITOR_NOTIFICATION, type MonitorSessions } from "./monitor-sessions.js";
+import type { WorkStatusBridge } from "./work-status.js";
 import {
   applyProviderToolResults,
   finishProviderToolParts,
@@ -208,6 +209,7 @@ interface PiEventServices {
   readonly emit: (directory: string, event: OCEvent | TodoUpdated) => void;
   readonly subagents: SubagentBridge;
   readonly monitors: MonitorSessions;
+  readonly workStatus: Pick<WorkStatusBridge, "observe">;
   readonly store: Pick<SessionStore, "update">;
   readonly dirtyDiffs: Set<string>;
   readonly ensureMessages: (s: ManagedSession) => OCMessageWithParts[];
@@ -383,6 +385,7 @@ export class PiEventTranslator {
       case "extension_event":
         this.services.monitors.observe(s, ev);
         this.services.subagents.observe(s, ev);
+        this.services.workStatus.observe(s, ev);
         break;
       default:
         break; // turn_start, queue_update — future milestones

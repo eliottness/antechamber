@@ -24,6 +24,21 @@ type ReplayRecord = {
   v2?: unknown;
 };
 
+/** The session an event belongs to, when it names one. */
+export function eventSessionID(event: OCEvent | TodoUpdated): string | undefined {
+  const properties = event.properties as Record<string, unknown>;
+  const nested = (key: "info" | "part"): unknown => {
+    const value = properties[key];
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+  };
+  if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted")
+    return event.properties.info.id;
+  const info = nested("info") as Record<string, unknown> | undefined;
+  const part = nested("part") as Record<string, unknown> | undefined;
+  const id = properties.sessionID ?? info?.sessionID ?? part?.sessionID;
+  return typeof id === "string" ? id : undefined;
+}
+
 export class SSE {
   private v2events = new V2EventTranslator();
   private nextEventID = 0;
@@ -33,6 +48,8 @@ export class SSE {
     private options: { defaultDirectory: string },
     /** SSE subscribers tagged by protocol flavor and explicit directory scope. */
     readonly clients: Map<ServerResponse, SSESubscriber>,
+    /** Sessions v2 clients must not see (OmO monitor children, shown by the OmO Work section). */
+    private hiddenFromV2: (sessionID: string) => boolean = () => false,
   ) {}
 
   close(): void {
@@ -43,8 +60,10 @@ export class SSE {
   }
 
   broadcast(directory: string, event: OCEvent | TodoUpdated): void {
-    const v2Frames =
-      event.type === "todo.updated"
+    const hidden = this.hiddenFromV2(eventSessionID(event) ?? "");
+    const v2Frames = hidden
+      ? []
+      : event.type === "todo.updated"
         ? [{ id: `evt_${randomUUID()}`, type: event.type, location: { directory }, data: event.properties }]
         : this.v2events.translate(directory, event);
     const records =

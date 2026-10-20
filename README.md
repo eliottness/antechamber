@@ -40,6 +40,9 @@ an **external OpenCode server** and sessions run on OmO.
 - An optional OpenChamber extension, **OmO Graph**, that draws the OmO
   sub-agents behind the open session as a live, clickable graph (see
   [OpenChamber extension](#openchamber-extension-omo-graph)).
+- An optional OpenChamber 2.x Work Status section, **OmO Work**, for the
+  session's todo phases, monitors, eval cells and background work (see
+  [OmO Work](#openchamber-extension-omo-work)).
 
 ## Supported backends
 
@@ -233,6 +236,24 @@ open it from the rail icon. Don't install it from the repository's Git URL:
 OpenChamber clones the repository root, which is antechamber itself, not the
 extension, and refuses it as an invalid manifest. Details:
 [extensions/omo-dag/README.md](extensions/omo-dag/README.md).
+
+## OpenChamber extension: OmO Work
+
+`extensions/omo-work` adds an **OmO Work** section to OpenChamber 2.x's Work
+Status panel (OpenChamber 2.3.2 or newer; 1.x has no extension sections). For
+the open session it shows the OmO todo list grouped by phase, terminal
+monitors with their matched lines, detached eval cells with their output and a
+Stop button, background terminal sessions, and the goal continuation timer
+with a Fire now button. On 2.x, monitors appear here instead of as subagent
+sessions.
+
+Add it like OmO Graph: the folder `antechamber setup` prints
+(`.../extensions/omo-work`, built by `npm run build`), or
+`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-work.zip`.
+Approve its local service. It needs an antechamber version that writes a
+work-status token into its run record (this release or newer) and an
+OpenChamber restart after upgrading. Details:
+[extensions/omo-work/README.md](extensions/omo-work/README.md).
 
 ## OpenChamber extension: OmO Compatibility
 

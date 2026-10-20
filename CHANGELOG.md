@@ -7,6 +7,19 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OmO Work, an OpenChamber 2.x Work Status section (`extensions/omo-work`). For the open session it
+  shows OmO's todo list by phase, terminal monitors with their matched lines, detached eval cells
+  (output peek and Stop), background terminal sessions and the goal continuation timer (Fire now).
+  Its service reaches antechamber through new `/antechamber/work-status` routes, authenticated by a
+  token `serve` writes into its run record.
+
+### Changed
+
+- On OpenChamber 2.x, OmO monitors are no longer listed as subagent sessions; the OmO Work section
+  shows them. OpenChamber 1.24 still sees them as child sessions.
+
 ## [1.0.0] - 2026-10-20
 
 - First stable release. No functional changes since 0.2.37.
