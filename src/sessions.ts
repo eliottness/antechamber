@@ -427,10 +427,10 @@ export class SessionManager {
     this.subagents.restoreAll();
     if (directory !== undefined) {
       this.ensureScanned(directory);
-      return [...this.sessions.values()].map((s) => s.info).filter((s) => s.directory === directory);
+      return [...this.sessions.values()].filter((s) => s.info.directory === directory).map((s) => this.sessionInfo(s));
     }
     // Unfiltered: keep the old semantics — live sessions only.
-    return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => s.info);
+    return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => this.sessionInfo(s));
   }
 
   /**
@@ -442,7 +442,12 @@ export class SessionManager {
     this.refreshNativeTitles();
     this.ensureAllScanned();
     this.subagents.restoreAll();
-    return [...this.sessions.values()].map((s) => s.info);
+    return [...this.sessions.values()].map((s) => this.sessionInfo(s));
+  }
+
+  private sessionInfo(s: ManagedSession): OCSession {
+    if (s.restored !== undefined) this.ensureMessages(s);
+    return s.info;
   }
 
   get(sessionId: string): ManagedSession | undefined {
@@ -450,9 +455,12 @@ export class SessionManager {
     const live = this.sessions.get(sessionId);
     if (live !== undefined) {
       this.refreshNativeTitles();
+      this.sessionInfo(live);
       return live;
     }
-    return this.subagents.restore(sessionId) ?? this.resolveRestored(sessionId);
+    const restored = this.subagents.restore(sessionId) ?? this.resolveRestored(sessionId);
+    if (restored !== undefined) this.sessionInfo(restored);
+    return restored;
   }
 
   async remove(sessionId: string): Promise<boolean> {

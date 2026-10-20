@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore main-session costs before listing sessions after a restart, and keep live usage totals cumulative
+  across assistant steps.
+- Keep subagents with colliding task IDs in different sessions separate, and recover a foreign child
+  archive from its own retained transcript.
+
 ## [1.0.0] - 2026-10-20
 
 - First stable release. No functional changes since 0.2.37.

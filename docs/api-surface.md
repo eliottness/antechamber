@@ -232,7 +232,7 @@ checks as HTTP routes.
 
 | SDK method | Purpose in OpenChamber | pi counterpart |
 |---|---|---|
-| `session.list` | session list per directory | scan pi `--session-dir` JSONL files. `Session.cost` is the session's own spend: the sum of its assistant messages' OmO `usage.cost.total`, set once history is loaded and refreshed on each assistant `message_end` (announced with `session.updated`). Subagent sessions carry their own cost and `parentID`; OpenChamber's work-status rollup sums the subtree, so a parent never includes child spend. |
+| `session.list` | session list per directory | scan pi `--session-dir` JSONL files. `Session.cost` is the session's own spend: the sum of its assistant messages' OmO `usage.cost.total`, restored before metadata is returned and refreshed on each assistant `message_end` (announced with `session.updated`, translated to cumulative `session.usage.updated` on v2). Subagent sessions carry their own cost and `parentID`; OpenChamber's work-status rollup sums the subtree, so a parent never includes child spend. |
 | `session.create` | new session | spawn `pi --mode rpc` (fresh session) |
 | `session.get` | session detail | RPC `get_state` |
 | `session.update` | rename/archive/metadata | adapter-side title + `time.archived` (persisted in the registry; `archived=true/false` list filtering honored on `/session` and `/experimental/session`) |

@@ -107,7 +107,7 @@ export class TaskStore {
         const path = join(dir, "tasks", file);
         if (!isRegularFile(path)) continue;
         const task = this.tasks.read(path, normalizeTask);
-        if (task) out.set(task.task_id, task);
+        if (task) out.set(JSON.stringify([task.parent_session_id, task.task_id]), task);
       }
     }
     return [...out.values()];

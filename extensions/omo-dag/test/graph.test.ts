@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { buildGraph, nodeState, ocIdFor, type Registry, type TaskRecord } from "../src/graph.ts";
+import { buildGraph, nodeState, normalizeRegistry, ocIdFor, type Registry, type TaskRecord } from "../src/graph.ts";
 import { CARD_H, CARD_W, layoutGraph, reach } from "../src/layout.ts";
 
 const ROOT = "01a1-root";
@@ -36,6 +36,62 @@ const tasks: TaskRecord[] = [
 ];
 
 describe("buildGraph", () => {
+  test("colliding task ids keep their registered parent and child links", () => {
+    const id = "st_shared001";
+    const otherRoot = "another-root";
+    const legacy = ocIdFor(id);
+    const qualified = ocIdFor(`${otherRoot}:${id}`);
+    const records = [task(id, 0, 1), task(id, 0, 1, { parent_session_id: otherRoot, root_session_id: otherRoot })];
+    const entries: Registry = {
+      ...registry,
+      ses_other: { piSessionId: otherRoot },
+      [legacy]: { task: { id, parentPiId: ROOT }, parentID: rootOc },
+      [qualified]: { task: { id, parentPiId: otherRoot }, parentID: "ses_other" },
+    };
+
+    const first = buildGraph(rootOc, records, entries);
+    const second = buildGraph(qualified, records, entries);
+
+    assert.equal(first.nodes.find((node) => node.kind === "task")?.sessionId, legacy);
+    assert.equal(second.rootId, "ses_other");
+    assert.equal(second.focusId, id);
+    assert.equal(second.nodes.find((node) => node.kind === "task")?.sessionId, qualified);
+  });
+
+  test("unregistered colliding tasks use parent-qualified links", () => {
+    const id = "st_shared001";
+    const records = [
+      task(id, 0, 1),
+      task(id, 0, 1, { parent_session_id: "another-root", root_session_id: "another-root" }),
+    ];
+    const graph = buildGraph(rootOc, records, registry);
+
+    assert.equal(graph.nodes.find((node) => node.kind === "task")?.sessionId, ocIdFor(`${ROOT}:${id}`));
+    assert.equal(buildGraph(ocIdFor(id), records, registry).status, "unknown-session");
+  });
+
+  test("legacy tombstones retain their owning parent's identity", () => {
+    const id = "st_shared001";
+    const records = [
+      task(id, 0, 1),
+      task(id, 0, 1, { parent_session_id: "another-root", root_session_id: "another-root" }),
+    ];
+    const entries = normalizeRegistry({
+      ...registry,
+      ses_other: { piSessionId: "another-root" },
+      [ocIdFor(id)]: { deleted: true, parentID: rootOc },
+    });
+    assert.ok(entries);
+    assert.equal(
+      buildGraph(rootOc, records, entries).nodes.find((node) => node.kind === "task")?.sessionId,
+      ocIdFor(id),
+    );
+    assert.equal(
+      buildGraph("ses_other", records, entries).nodes.find((node) => node.kind === "task")?.sessionId,
+      ocIdFor(`another-root:${id}`),
+    );
+  });
+
   const g = buildGraph(rootOc, tasks, registry);
   const node = (id: string) => g.nodes.find((n) => n.id === id);
 
