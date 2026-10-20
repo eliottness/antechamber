@@ -428,14 +428,18 @@ export class SessionManager {
   }
 
   list(directory?: string): OCSession[] {
-    this.refreshNativeTitles();
-    this.subagents.restoreAll();
-    if (directory !== undefined) {
-      this.ensureScanned(directory);
-      return [...this.sessions.values()].filter((s) => s.info.directory === directory).map((s) => this.sessionInfo(s));
-    }
-    // Unfiltered: keep the old semantics — live sessions only.
-    return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => this.sessionInfo(s));
+    return this.store.batch(() => {
+      this.refreshNativeTitles();
+      this.subagents.restoreAll();
+      if (directory !== undefined) {
+        this.ensureScanned(directory);
+        return [...this.sessions.values()]
+          .filter((s) => s.info.directory === directory)
+          .map((s) => this.sessionInfo(s));
+      }
+      // Unfiltered: keep the old semantics — live sessions only.
+      return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => this.sessionInfo(s));
+    });
   }
 
   /**
@@ -444,10 +448,12 @@ export class SessionManager {
    * global/recent view; `list(directory)` stays the per-project source of truth.
    */
   listAll(): OCSession[] {
-    this.refreshNativeTitles();
-    this.ensureAllScanned();
-    this.subagents.restoreAll();
-    return [...this.sessions.values()].map((s) => this.sessionInfo(s));
+    return this.store.batch(() => {
+      this.refreshNativeTitles();
+      this.ensureAllScanned();
+      this.subagents.restoreAll();
+      return [...this.sessions.values()].map((s) => this.sessionInfo(s));
+    });
   }
 
   private sessionInfo(s: ManagedSession): OCSession {
@@ -456,16 +462,18 @@ export class SessionManager {
   }
 
   get(sessionId: string): ManagedSession | undefined {
-    if (this.disposed) return undefined;
-    const live = this.sessions.get(sessionId);
-    if (live !== undefined) {
-      this.refreshNativeTitles();
-      this.sessionInfo(live);
-      return live;
-    }
-    const restored = this.subagents.restore(sessionId) ?? this.resolveRestored(sessionId);
-    if (restored !== undefined) this.sessionInfo(restored);
-    return restored;
+    return this.store.batch(() => {
+      if (this.disposed) return undefined;
+      const live = this.sessions.get(sessionId);
+      if (live !== undefined) {
+        this.refreshNativeTitles();
+        this.sessionInfo(live);
+        return live;
+      }
+      const restored = this.subagents.restore(sessionId) ?? this.resolveRestored(sessionId);
+      if (restored !== undefined) this.sessionInfo(restored);
+      return restored;
+    });
   }
 
   async remove(sessionId: string): Promise<boolean> {

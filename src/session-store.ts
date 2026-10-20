@@ -463,6 +463,12 @@ export class SessionStore {
   readonly stateDir: string;
   private readonly file: string;
   private entries: Map<string, SessionRegistryEntry> | undefined;
+  private batchState:
+    | {
+        entries: Map<string, SessionRegistryEntry>;
+        changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean>;
+      }
+    | undefined;
 
   constructor(stateDir?: string) {
     const dir = stateDir ?? envSetting("STATE_DIR") ?? defaultStateDir();
@@ -471,6 +477,7 @@ export class SessionStore {
   }
 
   private load(): Map<string, SessionRegistryEntry> {
+    if (this.batchState !== undefined) return this.batchState.entries;
     if (this.entries !== undefined) return this.entries;
     this.entries = this.readEntries();
     return this.entries;
@@ -532,11 +539,38 @@ export class SessionStore {
   }
 
   private mutate(change: (entries: Map<string, SessionRegistryEntry>) => boolean): void {
+    if (this.batchState !== undefined) {
+      this.batchState.changes.push(change);
+      change(this.batchState.entries);
+      return;
+    }
     this.withRegistryLock(() => {
       const entries = this.readEntries();
       if (change(entries)) this.persist(entries);
       this.entries = entries;
     });
+  }
+
+  /** Synchronous restoration reads its own changes, then merges them under one short-lived write lock. */
+  batch<T>(action: () => T): T {
+    if (this.batchState !== undefined) return action();
+    const changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean> = [];
+    const batch = { entries: structuredClone(this.load()), changes };
+    this.batchState = batch;
+    try {
+      const result = action();
+      this.batchState = undefined;
+      if (batch.changes.length !== 0) {
+        this.mutate((entries) => {
+          let changed = false;
+          for (const change of batch.changes) if (change(entries)) changed = true;
+          return changed;
+        });
+      }
+      return result;
+    } finally {
+      this.batchState = undefined;
+    }
   }
 
   get(ocSessionId: string): SessionRegistryEntry | undefined {
@@ -554,18 +588,23 @@ export class SessionStore {
   }
 
   set(ocSessionId: string, entry: SessionRegistryEntry): void {
+    const saved = this.batchState === undefined ? entry : structuredClone(entry);
     this.mutate((entries) => {
-      entries.set(ocSessionId, entry);
+      entries.set(ocSessionId, this.batchState === undefined ? saved : structuredClone(saved));
       return true;
     });
   }
 
   /** Merge a partial update (e.g. title override, updated timestamp). */
   update(ocSessionId: string, patch: Partial<SessionRegistryEntry>): void {
+    const saved = this.batchState === undefined ? patch : structuredClone(patch);
     this.mutate((entries) => {
       const previous = entries.get(ocSessionId);
       if (previous === undefined) return false;
-      entries.set(ocSessionId, { ...previous, ...patch });
+      entries.set(ocSessionId, {
+        ...previous,
+        ...(this.batchState === undefined ? saved : structuredClone(saved)),
+      });
       return true;
     });
   }

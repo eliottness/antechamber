@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reduce startup CPU usage and boot delays for large session histories by committing restoration metadata
+  in one registry write, while preserving restored costs, child sessions and independent registry writers.
+
 ## [1.0.4] - 2026-10-20
 
 ### Fixed

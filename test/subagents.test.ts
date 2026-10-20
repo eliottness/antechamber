@@ -956,6 +956,52 @@ test("omo.task.updated snapshots drive child status and ignore older updates", a
   assert.equal(manager.get(childID)?.status.type, "busy", "a newer run reopens it");
 });
 
+for (const global of [false, true]) {
+  test(`cold ${global ? "global" : "project"} listing restores children without per-child registry rewrites`, async (t) => {
+    const { manager, parent, store, directory, state } = setup(t);
+    for (let index = 0; index < 4; index++) {
+      const taskID = `st_cold_${index}`;
+      liveRecord(store, taskID, "completed", `retained result ${index}`);
+      start(manager, parent, { task_summary: `Child ${index}` }, `spawn-${index}`);
+      result(manager, parent, { task_id: taskID, status: "completed" }, "done", true, `spawn-${index}`);
+    }
+    await manager.disposeAll();
+    rmSync(store, { recursive: true });
+    const registry = new SessionStore(state);
+    const persist = t.mock.fn(registry["persist"].bind(registry));
+    registry["persist"] = persist;
+    const restarted = new SessionManager(() => {}, registry, directory);
+    t.after(() => restarted.disposeAll());
+
+    const listed = global ? restarted.listAll() : restarted.list(directory);
+    const children = listed.filter((session) => session.parentID === parent.info.id);
+    assert.equal(children.length, 4);
+    assert.ok(persist.mock.callCount() <= 1, `listing rewrote the whole registry ${persist.mock.callCount()} times`);
+    for (const child of children) {
+      assert.match(texts(restarted.messages(child.id)), /retained result/);
+      assert.equal(new SessionStore(state).get(child.id)?.parentID, parent.info.id);
+    }
+    assert.equal(restarted.liveSessions().length, 0);
+  });
+}
+
+test("a failed restoration batch returns a persistence error instead of a successful list", async (t) => {
+  const { manager, store, directory, state } = setup(t);
+  liveRecord(store, "st_restore_failure", "completed");
+  await manager.disposeAll();
+  rmSync(state, { recursive: true, force: true });
+  writeFileSync(state, "not a directory");
+  const server = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
+  await server.start();
+  t.after(() => server.stop());
+
+  const response = await fetch(`${server.url}/experimental/session`);
+  assert.equal(response.status, 500);
+  const error = (await response.json()) as { name: string; data: { message: string } };
+  assert.equal(error.name, "UnknownError");
+  assert.match(error.data.message, /ENOTDIR/);
+});
+
 test("restart resolves archived children by id through real session and message routes", async (t) => {
   const { manager, parent, store, directory } = setup(t);
   const { path } = liveRecord(store, "st_child", "completed", "survives eviction");
