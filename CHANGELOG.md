@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-20
+
 ### Fixed
 
 - Allow messages in restored sessions whose active goal has already resumed a response, without
