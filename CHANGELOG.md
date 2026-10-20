@@ -15,6 +15,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Avoid copying the entire session registry for cached session lookups, preventing session lists
+  from blocking transcript loading after startup.
 - Reduce startup CPU usage and boot delays for large session histories by committing restoration metadata
   in one registry write, while preserving restored costs, child sessions and independent registry writers.
 
