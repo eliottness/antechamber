@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop saving child-task spawn specs in the session registry; OmO's task records already hold them.
+  This shrinks the registry by about a third in sessions with hundreds of child tasks.
+
 ## [1.0.11] - 2026-10-21
 
 ### Fixed
