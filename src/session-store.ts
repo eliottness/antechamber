@@ -455,6 +455,17 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
   return true;
 }
 
+/**
+ * OmO keeps a task's spawn spec in its own task record, which is where the adapter reads it
+ * (adoption, eval-agent matching). The registry copy was never read back and made up about a third
+ * of the file in sessions with hundreds of children.
+ */
+function persistedEntry(entry: SessionRegistryEntry): SessionRegistryEntry {
+  if (entry.task === undefined || !("spawn_spec" in entry.task.details)) return entry;
+  const { spawn_spec: _spec, ...details } = entry.task.details;
+  return { ...entry, task: { ...entry.task, details } };
+}
+
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error ? String(error.code) : undefined;
 }
@@ -553,7 +564,7 @@ export class SessionStore {
   }
 
   private persist(entries: Map<string, SessionRegistryEntry>): Buffer {
-    const obj = Object.fromEntries(entries);
+    const obj = Object.fromEntries([...entries].map(([id, entry]) => [id, persistedEntry(entry)]));
     const tmp = `${this.file}.${process.pid}.tmp`;
     const data = Buffer.from(JSON.stringify(obj));
     writeFileSync(tmp, data, { mode: REGISTRY_FILE_MODE });
