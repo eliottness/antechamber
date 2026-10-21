@@ -337,11 +337,13 @@ export class SessionManager {
   }
 
   private refreshNativeTitles(): void {
-    for (const s of this.sessions.values()) {
-      if (s.pi !== undefined || s.restored === undefined || !existsSync(s.restored.piPath)) continue;
-      const metadata = readSessionTitle(s.restored.piPath, s.restored.piSessionId);
-      if (metadata.titleSource === "native") this.applyNativeTitle(s, metadata.title);
-    }
+    for (const s of this.sessions.values()) this.refreshNativeTitle(s);
+  }
+
+  private refreshNativeTitle(s: ManagedSession): void {
+    if (s.pi !== undefined || s.restored === undefined || !existsSync(s.restored.piPath)) return;
+    const metadata = readSessionTitle(s.restored.piPath, s.restored.piSessionId);
+    if (metadata.titleSource === "native") this.applyNativeTitle(s, metadata.title);
   }
 
   private wirePi(s: ManagedSession, pi: PiRpcClient): void {
@@ -467,7 +469,7 @@ export class SessionManager {
       if (this.disposed) return undefined;
       const live = this.sessions.get(sessionId);
       if (live !== undefined) {
-        this.refreshNativeTitles();
+        this.refreshNativeTitle(live);
         this.sessionInfo(live);
         return live;
       }

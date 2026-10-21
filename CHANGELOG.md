@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reduce repeated native-title scans and task-record lookups while restoring and listing sessions,
+  preserving first-list costs, child-session identities and later native updates.
+
 ## [1.0.8] - 2026-10-20
 
 ### Fixed

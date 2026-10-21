@@ -243,9 +243,94 @@ function childRecord(id: string, path: string): Record<string, unknown> | undefi
   return data?.task_id === id && typeof data.parent_session_id === "string" ? data : undefined;
 }
 
+interface TaskRecord {
+  id: string;
+  path: string;
+  data: Record<string, unknown>;
+}
+
+interface TaskLookupPass {
+  store: SessionStore;
+  childIds: string[];
+  identities: Map<string, Map<string, string>>;
+  childByPi: Map<string, string>;
+  piByChild: Map<string, string>;
+  records?: { all: TaskRecord[]; byId: Map<string, TaskRecord[]>; byParent: Map<string, TaskRecord[]> };
+}
+
+// History parsing calls the exported helpers synchronously, including from nested child discovery.
+let taskLookupPass: TaskLookupPass | undefined;
+
+function withTaskLookups<T>(store: SessionStore, action: () => T): T {
+  if (taskLookupPass?.store === store) return action();
+  const previous = taskLookupPass;
+  const pass: TaskLookupPass = {
+    store,
+    childIds: store.childIds(),
+    identities: new Map(),
+    childByPi: new Map(),
+    piByChild: new Map(),
+  };
+  try {
+    taskLookupPass = pass;
+    for (const id of pass.childIds) {
+      const entry = store.get(id);
+      if (entry?.task) indexChildIdentity(store, id, entry.task, entry.deleted ? undefined : entry.piSessionId);
+    }
+    return action();
+  } finally {
+    taskLookupPass = previous;
+  }
+}
+
+function indexChildIdentity(store: SessionStore, id: string, task: ChildTask, piSessionId?: string): void {
+  const pass = taskLookupPass;
+  if (pass?.store !== store) return;
+  let parents = pass.identities.get(task.id);
+  if (parents === undefined) pass.identities.set(task.id, (parents = new Map()));
+  if (!parents.has(task.parentPiId)) parents.set(task.parentPiId, id);
+  if (piSessionId !== undefined) {
+    const previous = pass.piByChild.get(id);
+    if (previous !== undefined && previous !== piSessionId && pass.childByPi.get(previous) === id)
+      pass.childByPi.delete(previous);
+    pass.piByChild.set(id, piSessionId);
+    pass.childByPi.set(piSessionId, id);
+  }
+}
+
+function indexedTaskRecords(): NonNullable<TaskLookupPass["records"]> | undefined {
+  const pass = taskLookupPass;
+  if (pass === undefined) return undefined;
+  if (pass.records !== undefined) return pass.records;
+  const all: TaskRecord[] = [];
+  const byId = new Map<string, TaskRecord[]>();
+  const byParent = new Map<string, TaskRecord[]>();
+  for (const { id, path } of taskFiles()) {
+    const data = childRecord(id, path);
+    if (data === undefined) continue;
+    const row = { id, path, data };
+    all.push(row);
+    const sameId = byId.get(id) ?? [];
+    sameId.push(row);
+    byId.set(id, sameId);
+    const parent = String(data.parent_session_id);
+    const sameParent = byParent.get(parent) ?? [];
+    sameParent.push(row);
+    byParent.set(parent, sameParent);
+  }
+  return (pass.records = { all, byId, byParent });
+}
+
 /** Keep bookmarks for known tasks; a bare native id is only safe while it has one parent. */
-export function taskSessionId(id: string, parentPiId: string, store = new SessionStore()): string {
-  for (const sessionID of store.childIds()) {
+export function taskSessionId(
+  id: string,
+  parentPiId: string,
+  store = taskLookupPass?.store ?? new SessionStore(),
+): string {
+  const pass = taskLookupPass?.store === store ? taskLookupPass : undefined;
+  const known = pass?.identities.get(id)?.get(parentPiId);
+  if (known !== undefined) return known;
+  for (const sessionID of pass === undefined ? store.childIds() : []) {
     const task = store.get(sessionID)?.task;
     if (task?.id === id && task.parentPiId === parentPiId) return sessionID;
   }
@@ -257,6 +342,10 @@ export function taskSessionId(id: string, parentPiId: string, store = new Sessio
   }
   const qualifiedID = ocIdFor(`${parentPiId}:${id}`);
   if (store.get(qualifiedID)) return qualifiedID;
+  const indexed = indexedTaskRecords();
+  if (indexed !== undefined) {
+    return indexed.byId.get(id)?.some(({ data }) => data.parent_session_id !== parentPiId) ? qualifiedID : legacyID;
+  }
   for (const root of taskStores()) {
     const data = childRecord(id, join(root, "tasks", `${id}.json`));
     if (data && data.parent_session_id !== parentPiId) return qualifiedID;
@@ -267,11 +356,12 @@ export function taskSessionId(id: string, parentPiId: string, store = new Sessio
 /** Reverse lookup never resolves an unbound, ambiguous bare id by store enumeration order. */
 export function findTaskBySession(
   sessionId: string,
-  store = new SessionStore(),
+  store = taskLookupPass?.store ?? new SessionStore(),
 ): { path: string; data: Record<string, unknown> } | undefined {
   let found: { path: string; data: Record<string, unknown> } | undefined;
-  for (const { id, path } of taskFiles()) {
-    const data = childRecord(id, path);
+  const rows: { id: string; path: string; data?: Record<string, unknown> }[] = indexedTaskRecords()?.all ?? taskFiles();
+  for (const { id, path, data: cached } of rows) {
+    const data = cached ?? childRecord(id, path);
     if (!data || taskSessionId(id, String(data.parent_session_id), store) !== sessionId) continue;
     if (found && found.data.parent_session_id !== data.parent_session_id) return undefined;
     found = { path, data };
@@ -304,9 +394,11 @@ export function evalAgentSession(
 ): EvalAgent | null | undefined {
   if (parentPiId === undefined || typeof args.prompt !== "string") return undefined;
   let best: { id: string; created: number; data: Record<string, unknown> } | undefined;
-  for (const { id, path } of taskFiles()) {
+  const rows: { id: string; path: string; data?: Record<string, unknown> }[] =
+    indexedTaskRecords()?.byParent.get(parentPiId) ?? (taskLookupPass ? [] : taskFiles());
+  for (const { id, path, data: cached } of rows) {
     if (claimed.has(id)) continue;
-    const data = childRecord(id, path);
+    const data = cached ?? childRecord(id, path);
     if (data?.parent_session_id !== parentPiId) continue;
     const spec = record(data.spawn_spec) ? data.spawn_spec : {};
     if (!recordedMatch(args.prompt, spec.prompt)) continue;
@@ -333,6 +425,8 @@ export function evalAgentSession(
 
 export function findTask(id: string, parentPiId: string): { path: string; data: Record<string, unknown> } | undefined {
   if (!taskId(id)) return undefined;
+  const indexed = indexedTaskRecords();
+  if (indexed !== undefined) return indexed.byId.get(id)?.find(({ data }) => data.parent_session_id === parentPiId);
   for (const store of taskStores()) {
     const path = join(store, "tasks", `${id}.json`);
     const data = jsonObject(path);
@@ -440,8 +534,6 @@ export class SubagentBridge {
   private readonly children = new Map<string, Child>();
   private readonly calls = new Map<string, OCToolPart[]>();
   private readonly removed = new Set<string>();
-  /** Parent pi session of each task record already read; a record's parent never changes. */
-  private readonly taskParents = new Map<string, string>();
 
   constructor(
     private readonly store: SessionStore,
@@ -554,10 +646,12 @@ export class SubagentBridge {
   }
 
   discover(parent: ManagedSession, messages: OCMessageWithParts[]): void {
-    this.discoverParts(
-      parent,
-      messages.flatMap((message) => message.parts),
-      false,
+    withTaskLookups(this.store, () =>
+      this.discoverParts(
+        parent,
+        messages.flatMap((message) => message.parts),
+        false,
+      ),
     );
   }
 
@@ -620,21 +714,24 @@ export class SubagentBridge {
     };
     this.children.set(session.info.id, child);
     this.sessions.set(session.info.id, session);
+    indexChildIdentity(this.store, session.info.id, task);
     this.wire(session);
     this.emit(session.info.directory, { type: "session.created", properties: { info: session.info } });
     return child;
   }
 
   restore(id: string): ManagedSession | undefined {
-    const known = this.children.get(id);
-    if (known) return known.session;
-    const entry = this.store.get(id);
-    if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
-    if (entry.deleted || !entry.task || !entry.parentID) return undefined;
-    const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task, id);
-    child.session.info.title = entry.title ?? child.session.info.title;
-    this.refresh(child, false);
-    return child.session;
+    return withTaskLookups(this.store, () => {
+      const known = this.children.get(id);
+      if (known) return known.session;
+      const entry = this.store.get(id);
+      if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
+      if (entry.deleted || !entry.task || !entry.parentID) return undefined;
+      const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task, id);
+      child.session.info.title = entry.title ?? child.session.info.title;
+      this.refresh(child, false);
+      return child.session;
+    });
   }
 
   /**
@@ -687,6 +784,7 @@ export class SubagentBridge {
   }
 
   private childIdsByPi(): Map<string, string> {
+    if (taskLookupPass?.store === this.store) return taskLookupPass.childByPi;
     const byPi = new Map<string, string>();
     for (const id of this.store.childIds()) {
       const entry = this.store.get(id);
@@ -722,21 +820,17 @@ export class SubagentBridge {
   }
 
   restoreAll(): void {
-    for (const id of this.store.childIds()) this.restore(id);
-    const childByPi = this.childIdsByPi();
-    for (const { id, path } of taskFiles()) {
-      let parentPi = this.taskParents.get(path);
-      if (parentPi === undefined) {
-        const parent = childRecord(id, path)?.parent_session_id;
-        if (typeof parent !== "string") continue;
-        this.taskParents.set(path, (parentPi = parent));
+    withTaskLookups(this.store, () => {
+      for (const id of taskLookupPass?.childIds ?? []) this.restore(id);
+      const childByPi = this.childIdsByPi();
+      for (const { id, path, data } of indexedTaskRecords()?.all ?? []) {
+        const parentPi = String(data.parent_session_id);
+        const sessionId = taskSessionId(id, parentPi, this.store);
+        if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
+        if (!this.parentFor(parentPi, childByPi)) continue;
+        this.adopt(sessionId, { path, data });
       }
-      const sessionId = taskSessionId(id, parentPi, this.store);
-      if (this.children.has(sessionId) || this.removed.has(sessionId) || this.store.get(sessionId)) continue;
-      if (!this.parentFor(parentPi, childByPi)) continue;
-      const data = childRecord(id, path);
-      if (data) this.adopt(sessionId, { path, data });
-    }
+    });
   }
 
   owns(id: string): boolean {
@@ -1005,6 +1099,7 @@ export class SubagentBridge {
         created: info.time.created,
         updated: info.time.updated,
       });
+      indexChildIdentity(this.store, info.id, child.task, child.session.piSessionId ?? child.task.id);
     } catch (error) {
       if (!(error instanceof SessionPersistenceError)) throw error;
       this.emit(info.directory, {
