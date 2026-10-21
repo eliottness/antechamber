@@ -956,6 +956,59 @@ test("omo.task.updated snapshots drive child status and ignore older updates", a
   assert.equal(manager.get(childID)?.status.type, "busy", "a newer run reopens it");
 });
 
+test("unchanged task snapshots ignore nested values and live progress without registry writes", (t) => {
+  const { manager, parent, store, events } = setup(t);
+  const child = liveRecord(store, "st_child", "completed");
+  start(manager, parent, { task_summary: "Snapshot child" });
+  result(manager, parent, child.data, "done", true);
+  const registry = manager["store"];
+  const persist = t.mock.fn(registry["persist"].bind(registry));
+  registry["persist"] = persist;
+  const rows = [{ ...child.data, live_progress: { text: "progress" } }];
+  const eventCount = events.length;
+
+  manager["onPiEvent"](parent, {
+    type: "extension_event",
+    name: "omo.task.updated",
+    data: { tasks: structuredClone(rows) },
+  });
+
+  assert.equal(persist.mock.callCount(), 0);
+  assert.equal(events.length, eventCount);
+  assert.equal(manager.get(ocIdFor("st_child"))?.status.type, "idle");
+});
+
+test("a large task snapshot persists changed children in one registry write", (t) => {
+  const { manager, parent, store, state } = setup(t);
+  const registry = manager["store"];
+  const rows: Record<string, unknown>[] = [];
+  registry.batch(() => {
+    for (let index = 0; index < 142; index++) {
+      const taskID = `st_snapshot_${index}`;
+      const child = liveRecord(store, taskID, "completed", `result ${index}`);
+      start(manager, parent, { task_summary: `Snapshot child ${index}` }, taskID);
+      result(manager, parent, child.data, "done", true, taskID);
+      rows.push({ ...child.data, final_response: `updated result ${index}` });
+    }
+  });
+  const persist = t.mock.fn(registry["persist"].bind(registry));
+  registry["persist"] = persist;
+
+  manager["onPiEvent"](parent, {
+    type: "extension_event",
+    name: "omo.task.updated",
+    data: { tasks: structuredClone(rows) },
+  });
+
+  assert.equal(persist.mock.callCount(), 1);
+  const saved = new SessionStore(state);
+  for (let index = 0; index < rows.length; index++) {
+    const childID = ocIdFor(`st_snapshot_${index}`);
+    assert.equal(saved.get(childID)?.task?.details.final_response, `updated result ${index}`);
+    assert.equal(manager.get(childID)?.status.type, "idle");
+  }
+});
+
 for (const global of [false, true]) {
   test(`cold ${global ? "global" : "project"} listing restores children without per-child registry rewrites`, async (t) => {
     const { manager, parent, store, directory, state } = setup(t);

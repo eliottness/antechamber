@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep sessions with many child tasks responsive by ignoring unchanged task snapshots and saving
+  each snapshot's changes in one registry write.
+
 ## [1.0.9] - 2026-10-21
 
 ### Fixed
