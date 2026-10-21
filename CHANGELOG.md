@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-10-21
+
 ### Fixed
 
 - Cut the event-loop stall of each session registry write by reusing the in-memory registry while
