@@ -463,9 +463,13 @@ export class SessionStore {
   readonly stateDir: string;
   private readonly file: string;
   private entries: Map<string, SessionRegistryEntry> | undefined;
+  /** The registry bytes `entries` was parsed from or last written as; equal bytes on disk mean the cache is current. */
+  private raw: Buffer | undefined;
   private batchState:
     | {
         entries: Map<string, SessionRegistryEntry> | undefined;
+        /** Entries already cloned for this batch, so staged reads can be mutated without touching the cache. */
+        isolated: WeakSet<SessionRegistryEntry>;
         changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean>;
       }
     | undefined;
@@ -478,22 +482,37 @@ export class SessionStore {
 
   private load(): Map<string, SessionRegistryEntry> {
     if (this.batchState !== undefined) {
-      this.batchState.entries ??= structuredClone((this.entries ??= this.readEntries()));
+      // Shallow: changes replace whole entries, and get() clones an entry before handing it out.
+      this.batchState.entries ??= new Map(this.committed());
       return this.batchState.entries;
     }
+    return this.committed();
+  }
+
+  private committed(): Map<string, SessionRegistryEntry> {
     if (this.entries !== undefined) return this.entries;
-    this.entries = this.readEntries();
+    this.raw = this.readRaw();
+    this.entries = this.parseEntries(this.raw);
     return this.entries;
   }
 
-  private readEntries(): Map<string, SessionRegistryEntry> {
-    const entries = new Map<string, SessionRegistryEntry>();
+  private readRaw(): Buffer | undefined {
     try {
-      const raw: unknown = JSON.parse(readFileSync(this.file, "utf8"));
-      if (!record(raw)) return entries;
-      for (const [id, value] of Object.entries(raw)) if (registryEntry(value)) entries.set(id, value);
+      return readFileSync(this.file);
     } catch {
-      /* missing or corrupt — start empty */
+      return undefined;
+    }
+  }
+
+  private parseEntries(raw: Buffer | undefined): Map<string, SessionRegistryEntry> {
+    const entries = new Map<string, SessionRegistryEntry>();
+    if (raw === undefined) return entries;
+    try {
+      const parsed: unknown = JSON.parse(raw.toString("utf8"));
+      if (!record(parsed)) return entries;
+      for (const [id, value] of Object.entries(parsed)) if (registryEntry(value)) entries.set(id, value);
+    } catch {
+      /* corrupt — start empty */
     }
     return entries;
   }
@@ -533,12 +552,14 @@ export class SessionStore {
     }
   }
 
-  private persist(entries: Map<string, SessionRegistryEntry>): void {
+  private persist(entries: Map<string, SessionRegistryEntry>): Buffer {
     const obj = Object.fromEntries(entries);
     const tmp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: REGISTRY_FILE_MODE });
+    const data = Buffer.from(JSON.stringify(obj));
+    writeFileSync(tmp, data, { mode: REGISTRY_FILE_MODE });
     chmodSync(tmp, REGISTRY_FILE_MODE);
     renameSync(tmp, this.file);
+    return data;
   }
 
   private mutate(change: (entries: Map<string, SessionRegistryEntry>) => boolean): void {
@@ -548,9 +569,15 @@ export class SessionStore {
       return;
     }
     this.withRegistryLock(() => {
-      const entries = this.readEntries();
-      if (change(entries)) this.persist(entries);
+      // Another process may have written since; only parse again when the bytes differ.
+      const raw = this.readRaw();
+      const entries =
+        this.entries !== undefined && raw !== undefined && this.raw !== undefined && raw.equals(this.raw)
+          ? new Map(this.entries)
+          : this.parseEntries(raw);
+      const written = change(entries) ? this.persist(entries) : raw;
       this.entries = entries;
+      this.raw = written;
     });
   }
 
@@ -558,7 +585,7 @@ export class SessionStore {
   batch<T>(action: () => T): T {
     if (this.batchState !== undefined) return action();
     const changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean> = [];
-    const batch = { entries: undefined, changes };
+    const batch = { entries: undefined, isolated: new WeakSet<SessionRegistryEntry>(), changes };
     this.batchState = batch;
     try {
       const result = action();
@@ -577,7 +604,13 @@ export class SessionStore {
   }
 
   get(ocSessionId: string): SessionRegistryEntry | undefined {
-    return this.load().get(ocSessionId);
+    const entries = this.load();
+    const entry = entries.get(ocSessionId);
+    if (this.batchState === undefined || entry === undefined || this.batchState.isolated.has(entry)) return entry;
+    const staged = structuredClone(entry);
+    entries.set(ocSessionId, staged);
+    this.batchState.isolated.add(staged);
+    return staged;
   }
 
   idFor(piSessionId: string): string | undefined {

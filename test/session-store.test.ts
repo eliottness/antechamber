@@ -106,6 +106,25 @@ test("registry batches merge against independent writers at commit", (t) => {
   assert.deepEqual(first.get("ses_other"), restored.get("ses_other"));
 });
 
+test("a cached registry picks up a same-size write from another process before its next write", (t) => {
+  const state = mkdtempSync(join(tmpdir(), "antechamber-store-cache-"));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const first = new SessionStore(state);
+  const second = new SessionStore(state);
+  const entry = {
+    piSessionId: "shared",
+    piPath: "/nonexistent/shared.jsonl",
+    directory: state,
+    created: 1,
+    updated: 2,
+  };
+  first.set("ses_shared", { ...entry, title: "aaaa" });
+  second.update("ses_shared", { title: "bbbb" });
+  first.update("ses_shared", { updated: 3 });
+
+  assert.deepEqual(new SessionStore(state).get("ses_shared"), { ...entry, title: "bbbb", updated: 3 });
+});
+
 for (const failure of ["callback", "commit"] as const) {
   test(`failed batch ${failure} preserves the committed registry cache`, (t) => {
     const root = mkdtempSync(join(tmpdir(), "antechamber-store-batch-failure-"));
