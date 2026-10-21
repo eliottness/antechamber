@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-10-21
+
 ### Fixed
 
 - Keep sessions with many child tasks responsive by ignoring unchanged task snapshots and saving
