@@ -125,6 +125,30 @@ test("a cached registry picks up a same-size write from another process before i
   assert.deepEqual(new SessionStore(state).get("ses_shared"), { ...entry, title: "bbbb", updated: 3 });
 });
 
+test("child task spawn specs stay in memory but are not written to the registry", (t) => {
+  const state = mkdtempSync(join(tmpdir(), "antechamber-store-spawn-spec-"));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const store = new SessionStore(state);
+  const details = { task_id: "st_spec0001", status: "running", spawn_spec: { prompt: "large prompt" } };
+  store.set("ses_child", {
+    piSessionId: "st_spec0001",
+    piPath: "/nonexistent/child.jsonl",
+    directory: state,
+    parentID: "ses_parent",
+    task: { id: "st_spec0001", parentPiId: "root-pi", input: { prompt: "large prompt" }, details },
+    created: 1,
+    updated: 2,
+  });
+
+  assert.deepEqual(store.get("ses_child")?.task?.details, details);
+  assert.deepEqual(new SessionStore(state).get("ses_child")?.task, {
+    id: "st_spec0001",
+    parentPiId: "root-pi",
+    input: { prompt: "large prompt" },
+    details: { task_id: "st_spec0001", status: "running" },
+  });
+});
+
 for (const failure of ["callback", "commit"] as const) {
   test(`failed batch ${failure} preserves the committed registry cache`, (t) => {
     const root = mkdtempSync(join(tmpdir(), "antechamber-store-batch-failure-"));
