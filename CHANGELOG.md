@@ -11,6 +11,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - Cut the event-loop stall of each session registry write by reusing the in-memory registry while
   the file is unchanged, cloning only the entries a batch reads, and writing compact JSON.
+- Stop saving child-task spawn specs in the session registry; OmO's task records already hold them.
+  This shrinks the registry by about a third in sessions with hundreds of child tasks.
 
 ## [1.0.10] - 2026-10-21
 
