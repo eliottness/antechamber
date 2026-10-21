@@ -14,6 +14,7 @@ import {
   type FSWatcher,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { piAgentDir } from "./agent-dir.js";
 import { syncSessionCost } from "./pi-event-translation.js";
 import { ocIdFor, SessionPersistenceError, SessionStore } from "./session-store.js";
@@ -609,25 +610,30 @@ export class SubagentBridge {
    */
   observe(parent: ManagedSession, ev: Record<string, unknown>): void {
     if (ev.name !== "omo.task.updated" || !record(ev.data) || !Array.isArray(ev.data.tasks)) return;
-    for (const row of ev.data.tasks) {
-      if (!record(row) || !taskId(row.task_id)) continue;
-      if (
-        typeof row.parent_session_id === "string" &&
-        row.parent_session_id !== (parent.piSessionId ?? parent.restored?.piSessionId)
-      )
-        continue;
-      const id = this.sessionId(parent, row.task_id);
-      if (!this.children.has(id)) this.restore(id);
-      const child = this.children.get(id);
-      if (!child || child.session.info.parentID !== parent.info.id) continue;
-      const data = snapshotState(row);
-      // OmO re-sends every row ~150 ms after each progress event of any task; only changes matter.
-      if (Object.entries(data).every(([key, value]) => child.task.details[key] === value)) continue;
-      this.wire(parent);
-      if (!this.applyNative(child, data)) continue;
-      child.live = true;
-      this.refresh(child, true, false);
-    }
+    const rows = ev.data.tasks;
+    this.store.batch(() =>
+      withTaskLookups(this.store, () => {
+        for (const row of rows) {
+          if (!record(row) || !taskId(row.task_id)) continue;
+          if (
+            typeof row.parent_session_id === "string" &&
+            row.parent_session_id !== (parent.piSessionId ?? parent.restored?.piSessionId)
+          )
+            continue;
+          const id = this.sessionId(parent, row.task_id);
+          if (!this.children.has(id)) this.restore(id);
+          const child = this.children.get(id);
+          if (!child || child.session.info.parentID !== parent.info.id) continue;
+          const data = snapshotState(row);
+          // OmO re-sends every row ~150 ms after each progress event of any task; only changes matter.
+          if (Object.entries(data).every(([key, value]) => isDeepStrictEqual(child.task.details[key], value))) continue;
+          this.wire(parent);
+          if (!this.applyNative(child, data)) continue;
+          child.live = true;
+          this.refresh(child, true, false);
+        }
+      }),
+    );
   }
 
   /**
