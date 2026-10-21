@@ -172,8 +172,8 @@ test("v2 session listing shares one registry snapshot across cached session look
   assert.deepEqual(new Set(page.data.map((item) => record(item, "session").id)), ids);
   assert.equal(
     clone.mock.calls.filter((call) => call.arguments[0] instanceof Map).length,
-    1,
-    "cached lookups must not clone the whole registry for each listed session",
+    0,
+    "cached lookups must not deep-clone the whole registry",
   );
 });
 
