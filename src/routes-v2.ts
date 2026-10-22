@@ -38,13 +38,16 @@ async function v2Agents(services: RouteServices): Promise<
     mode: string;
     hidden: boolean;
     options: Record<string, unknown>;
-    model?: { providerID: string; modelID: string };
-    variant?: string;
+    model?: { id: string; providerID: string; variant?: string };
   }>
 > {
-  return (await agentDescriptors(services)).map((agent) => ({
+  return (await agentDescriptors(services)).map(({ model, variant, ...agent }) => ({
     id: agent.name,
     ...agent,
+    // v2 nests the effort in the agent's ModelRef; OpenChamber 2.x preselects only `model.id` + `model.variant`.
+    ...(model !== undefined
+      ? { model: { id: model.modelID, providerID: model.providerID, ...(variant !== undefined ? { variant } : {}) } }
+      : {}),
     request: { settings: {}, headers: {}, body: {} },
     permissions: agent.permission.map((rule) => ({
       action: rule.permission,

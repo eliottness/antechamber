@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -108,6 +108,44 @@ test("v2 session record follows the applied thinking level", async (t) => {
     providerID: "fake",
     variant: "high",
   });
+});
+
+test("a cold-restored v2 session record reports the model and level its file last ran with", async (t) => {
+  const { directory } = setup(t);
+  const first = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  let firstStopped = false;
+  t.after(() => (firstStopped ? undefined : first.stop()));
+  await first.start();
+  const ids: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const session = (await (await fetch(`${first.url}/session`, { method: "POST", body: "{}" })).json()) as {
+      id: string;
+    };
+    const selected = await fetch(`${first.url}/api/session/${session.id}/model`, {
+      method: "POST",
+      body: JSON.stringify({ model: { providerID: "fake", id: "mapped", variant: "high" } }),
+    });
+    assert.equal(selected.status, 204);
+    ids.push(session.id);
+  }
+  await first.stop();
+  firstStopped = true;
+  // A session that never ran through this adapter has no registry model; only its file records one.
+  const registryPath = join(directory, "state", "sessions.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as Record<string, { model?: unknown }>;
+  delete registry[ids[1]!]!.model;
+  writeFileSync(registryPath, JSON.stringify(registry));
+
+  const second = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  t.after(() => second.stop());
+  await second.start();
+  // OpenChamber 2.x restores a reopened session's effort from this record and resends it.
+  for (const id of ids) {
+    const response = await fetch(`${second.url}/api/session/${id}`);
+    assert.equal(response.status, 200);
+    const record = ((await response.json()) as { data: { model?: unknown } }).data.model;
+    assert.deepEqual(record, { id: "mapped", providerID: "fake", variant: "high" });
+  }
 });
 
 test("a selected level sends one thinking command", async (t) => {

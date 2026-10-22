@@ -50,7 +50,7 @@ import {
   scanPiSessions,
   SessionStore,
   type ScannedSession,
-  readSessionTitle,
+  readSessionFileMeta,
   type TitleSource,
 } from "./session-store.js";
 import type {
@@ -342,7 +342,7 @@ export class SessionManager {
 
   private refreshNativeTitle(s: ManagedSession): void {
     if (s.pi !== undefined || s.restored === undefined || !existsSync(s.restored.piPath)) return;
-    const metadata = readSessionTitle(s.restored.piPath, s.restored.piSessionId);
+    const metadata = readSessionFileMeta(s.restored.piPath, s.restored.piSessionId);
     if (metadata.titleSource === "native") this.applyNativeTitle(s, metadata.title);
   }
 
@@ -1389,6 +1389,7 @@ export class SessionManager {
       s.piPath = restored.piPath;
       s.piSessionId = restored.piSessionId;
       this.applyPiModel(s, state.data.model?.provider, state.data.model?.id);
+      this.syncRecordVariant(s);
       this.refreshMessageCache(s);
       this.persistMeta(s);
       delete s.restored;
@@ -1507,6 +1508,9 @@ export class SessionManager {
       reg?.titleSource ??
       (reg?.title && reg.title !== "New session" && reg.title !== sc.fallbackTitle ? "user" : "fallback");
     const useRegistry = titleSource === "user" || (sc.titleSource !== "native" && titleSource === "generated");
+    // A session never run through this adapter has no registry model, but its file records one. OpenChamber 2.x
+    // restores a reopened session's effort from this record, and only the file knows the level it last ran with.
+    const model = reg?.model ?? sc.model;
     const info: OCSession = {
       id: ocId,
       projectID: sc.directory,
@@ -1520,9 +1524,13 @@ export class SessionManager {
       ...(reg?.metadata !== undefined ? { metadata: reg.metadata } : {}),
       ...(reg?.parentID !== undefined ? { parentID: reg.parentID } : {}),
       ...(reg?.parentMessageID !== undefined ? { parentMessageID: reg.parentMessageID } : {}),
-      ...(reg?.model !== undefined
+      ...(model !== undefined
         ? {
-            model: { id: reg.model.modelID, providerID: reg.model.providerID, variant: reg.model.variant ?? "default" },
+            model: {
+              id: model.modelID,
+              providerID: model.providerID,
+              variant: sc.thinkingLevel ?? reg?.model?.variant ?? "default",
+            },
           }
         : {}),
       ...(reg?.tree?.revert ? { revert: { messageID: reg.tree.revert.messageID } } : {}),
@@ -1540,7 +1548,7 @@ export class SessionManager {
       pi: undefined,
       messages: undefined,
       status: { type: "idle" },
-      model: reg?.model !== undefined ? { providerID: reg.model.providerID, modelID: reg.model.modelID } : undefined,
+      model: model !== undefined ? { providerID: model.providerID, modelID: model.modelID } : undefined,
       streaming: undefined,
       toolByCallId: new Map(),
       restored: { piSessionId: sc.piSessionId, piPath: sc.piPath },
@@ -1563,7 +1571,7 @@ export class SessionManager {
         piSessionId: reg.piSessionId,
         piPath: reg.piPath,
         directory: reg.directory,
-        ...readSessionTitle(reg.piPath, reg.piSessionId),
+        ...readSessionFileMeta(reg.piPath, reg.piSessionId),
         created: reg.created,
         updated: reg.updated,
       });

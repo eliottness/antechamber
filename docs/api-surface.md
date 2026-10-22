@@ -64,7 +64,7 @@ invented resource IDs.
 | `GET /api/provider` | 200 | `{location, data: Provider[]}` from the agent catalog. |
 | `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog; `variants` lists thinking levels as `{id, settings}[]`. |
 | `GET /api/model/default` | 200 | `{location, data: Model \| null}` for the active model, same `variants` shape. |
-| `GET /api/agent` | 200 | `{location, data: Agent[]}`. |
+| `GET /api/agent` | 200 | `{location, data: Agent[]}`; the default model and thinking level are `model: {id, providerID, variant?}`. |
 | `GET /api/command` | 200 | `{location, data: Command[]}`. |
 | `GET /api/skill` | 200 | `{location, data: []}`; skill inventory is unavailable. |
 | `DELETE /api/debug/location` | 204 | Empty, as OpenCode answers. OpenChamber evicts a location after git worktree changes; antechamber keeps no per-location instance, so there is nothing to evict. |
