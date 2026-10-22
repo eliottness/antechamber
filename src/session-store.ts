@@ -56,6 +56,9 @@ export interface ScannedSession {
   title: string;
   titleSource?: TitleSource;
   fallbackTitle?: string;
+  /** The last model and thinking level the file records; OmO appends both at start and on every change. */
+  model?: { providerID: string; modelID: string };
+  thinkingLevel?: string;
   created: number;
   updated: number;
 }
@@ -158,28 +161,40 @@ function titleFromHead(head: string, piSessionId: string): string {
   return `pi session ${piSessionId.slice(0, 8)}`;
 }
 
-const titleCache = new Map<
-  string,
-  { mtimeMs: number; size: number; title: string; fallbackTitle: string; titleSource: TitleSource }
->();
+interface SessionFileMeta {
+  title: string;
+  fallbackTitle: string;
+  titleSource: TitleSource;
+  model?: { providerID: string; modelID: string };
+  thinkingLevel?: string;
+}
 
-/** Native renames append anywhere in the transcript; directory mtimes do not change. */
-export function readSessionTitle(
-  piPath: string,
-  piSessionId: string,
-): { title: string; fallbackTitle: string; titleSource: TitleSource } {
+const fileMetaCache = new Map<string, SessionFileMeta & { mtimeMs: number; size: number }>();
+
+/** Native renames and model/thinking changes append anywhere in the transcript; directory mtimes do not change. */
+export function readSessionFileMeta(piPath: string, piSessionId: string): SessionFileMeta {
   const stat = statSync(piPath);
-  const cached = titleCache.get(piPath);
+  const cached = fileMetaCache.get(piPath);
   if (cached?.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached;
   const raw = readFileSync(piPath, "utf8");
   const fallbackTitle = titleFromHead(raw, piSessionId);
   let native: string | undefined;
+  let model: SessionFileMeta["model"];
+  let thinkingLevel: string | undefined;
   for (const line of raw.split("\n")) {
     try {
       const entry = JSON.parse(line);
       if (entry?.type === "session_info" && typeof entry.name === "string") {
         const name = entry.name.trim().replace(/\s+/g, " ");
         if (name !== "") native = name;
+      } else if (
+        entry?.type === "model_change" &&
+        typeof entry.provider === "string" &&
+        typeof entry.modelId === "string"
+      ) {
+        model = { providerID: entry.provider, modelID: entry.modelId };
+      } else if (entry?.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
+        thinkingLevel = entry.thinkingLevel;
       }
     } catch {
       // Partial trailing writes do not erase the last valid title.
@@ -191,8 +206,10 @@ export function readSessionTitle(
     title: native ?? fallbackTitle,
     fallbackTitle,
     titleSource: native === undefined ? ("fallback" as const) : ("native" as const),
+    ...(model !== undefined ? { model } : {}),
+    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
   };
-  titleCache.set(piPath, metadata);
+  fileMetaCache.set(piPath, metadata);
   return metadata;
 }
 
@@ -222,7 +239,7 @@ function buildScanned(piPath: string, directory: string, header: SessionHeader):
     piSessionId,
     piPath,
     directory,
-    ...readSessionTitle(piPath, piSessionId),
+    ...readSessionFileMeta(piPath, piSessionId),
     created: Number.isNaN(created) ? Math.floor(updated) : created,
     updated: Math.floor(updated),
   };

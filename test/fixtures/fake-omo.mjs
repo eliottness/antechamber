@@ -188,6 +188,18 @@ input.on("line", (line) => {
     };
   if (command.type === "set_model") {
     model = { provider: command.provider, id: command.modelId };
+    // Real OmO appends a model_change tree entry on every switch (provider, modelId; seen in OmO session JSONL).
+    const entry = {
+      type: "model_change",
+      id: randomUUID(),
+      parentId: leaf,
+      timestamp: Date.now(),
+      provider: model.provider,
+      modelId: model.id,
+    };
+    leaf = entry.id;
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+    records.push(entry);
     data = model;
   }
   if (command.type === "compact") record("assistant", "Compacted summary");

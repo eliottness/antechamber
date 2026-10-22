@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preselect OmO's real effort in OpenChamber 2.x instead of "Default": `/api/agent` now nests the agent's
+  default model and level as `model: {id, providerID, variant}`, and a reopened session reports the model and
+  level its session file last ran with instead of `variant: "default"`.
+
 ## [1.0.13] - 2026-10-22
 
 ### Fixed

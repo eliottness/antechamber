@@ -205,7 +205,9 @@ test("build agent is hidden when OmO is resolved", () => {
   }
 });
 
-function agentDefaultsFor(level: string): Array<{ model?: unknown; variant?: unknown }> {
+type AgentDefaults = Array<{ model?: unknown; variant?: unknown }>;
+
+function agentDefaultsFor(level: string): { v1: AgentDefaults; v2: AgentDefaults } {
   const state = mkdtempSync(join(tmpdir(), "antechamber-agent-effort-"));
   try {
     const result = fetchConfigs({
@@ -216,25 +218,36 @@ function agentDefaultsFor(level: string): Array<{ model?: unknown; variant?: unk
       ANTECHAMBER_TEST_DIRECTORY: state,
       FAKE_THINKING_LEVEL: level,
     });
-    const v2 = (result.v2Agents as unknown as { data: Array<{ model?: unknown; variant?: unknown }> }).data;
-    return [...(result.v1Agents as Array<{ model?: unknown; variant?: unknown }>), ...v2];
+    const v2 = (result.v2Agents as unknown as { data: AgentDefaults }).data;
+    const v1 = result.v1Agents as AgentDefaults;
+    assert.equal(v1.length, 2);
+    assert.equal(v2.length, 2);
+    return { v1, v2 };
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
 }
 
 test("agents advertise OmO's resolved model and thinking level as their default", () => {
-  for (const agent of agentDefaultsFor("medium")) {
+  const { v1, v2 } = agentDefaultsFor("medium");
+  for (const agent of v1) {
     assert.deepEqual(agent.model, { providerID: "fake", modelID: "fake-model" });
     assert.equal(agent.variant, "medium");
+  }
+  // OpenCode 2.x nests the level in the agent's ModelRef, the only place OpenChamber 2.x reads it.
+  for (const agent of v2) {
+    assert.deepEqual(agent.model, { id: "fake-model", providerID: "fake", variant: "medium" });
+    assert.equal(agent.variant, undefined);
   }
 });
 
 test("a thinking level the model does not offer is not advertised", () => {
-  for (const agent of agentDefaultsFor("off")) {
+  const { v1, v2 } = agentDefaultsFor("off");
+  for (const agent of v1) {
     assert.deepEqual(agent.model, { providerID: "fake", modelID: "fake-model" });
     assert.equal(agent.variant, undefined);
   }
+  for (const agent of v2) assert.deepEqual(agent.model, { id: "fake-model", providerID: "fake" });
 });
 
 test("build agent is visible when no OmO name is resolved", () => {
