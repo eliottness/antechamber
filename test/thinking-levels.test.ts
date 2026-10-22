@@ -59,6 +59,26 @@ test("catalog advertises only supported reasoning variants", async (t) => {
   assert.equal(models.unknown?.variants, undefined);
 });
 
+test("v2 model routes list each model's thinking levels", async (t) => {
+  const { directory } = setup(t);
+  const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  t.after(() => server.stop());
+  await server.start();
+  type Model = { id: string; variants: Array<{ id: string }> };
+  const read = async <T>(path: string): Promise<T> => {
+    const response = await fetch(server.url + path);
+    assert.equal(response.status, 200);
+    return ((await response.json()) as { data: T }).data;
+  };
+  // OpenChamber 2.x shows the effort picker only for ids in this array.
+  const ids = (model: Model | undefined) => model?.variants.map((variant) => variant.id);
+  const models = await read<Model[]>("/api/model");
+  assert.deepEqual(ids(models.find((m) => m.id === "fake-model")), ["off", "low", "medium", "high"]);
+  assert.deepEqual(ids(models.find((m) => m.id === "mapped")), ["low", "high"]);
+  assert.deepEqual(ids(models.find((m) => m.id === "plain")), []);
+  assert.deepEqual(ids(await read<Model>("/api/model/default")), ["off", "low", "medium", "high"]);
+});
+
 test("a selected level sends one thinking command", async (t) => {
   const { directory, manager } = setup(t);
   const session = await manager.create(directory);

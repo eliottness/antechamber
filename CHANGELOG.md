@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show the effort (thinking level) picker again in OpenChamber 2.x: `/api/model` and `/api/model/default`
+  now list each model's thinking levels in `variants` instead of an empty array.
+
 ## [1.0.12] - 2026-10-21
 
 ### Fixed

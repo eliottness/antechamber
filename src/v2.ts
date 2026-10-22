@@ -85,6 +85,8 @@ interface CatalogModelLike {
   capabilities: { input: Record<string, boolean> };
   cost: { input: number; output: number; cache: { read: number; write: number } };
   limit: { context: number; output: number };
+  /** Thinking levels keyed by id, the v1 shape. */
+  variants?: Record<string, Record<string, unknown>>;
 }
 
 interface CatalogProviderLike {
@@ -110,7 +112,8 @@ function toV2Model(m: CatalogModelLike): V2Model {
     providerID: m.providerID,
     name: m.name,
     capabilities: { tools: true, input: inputs.length > 0 ? inputs : ["text"], output: ["text"] },
-    variants: [],
+    // OpenChamber 2.x reads a model's efforts only from this array; empty hides the picker.
+    variants: Object.entries(m.variants ?? {}).map(([id, settings]) => ({ id, settings })),
     time: { released: 0 },
     cost: [
       { input: m.cost.input, output: m.cost.output, cache: { read: m.cost.cache.read, write: m.cost.cache.write } },

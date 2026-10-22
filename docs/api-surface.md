@@ -62,8 +62,8 @@ invented resource IDs.
 | `GET /api/shell` | 200 | `{location, data: []}`; OmO has no background shells to list. |
 | `GET /api/websearch/provider` | 200 | `{location, data: []}`; no web-search providers are configured through antechamber. |
 | `GET /api/provider` | 200 | `{location, data: Provider[]}` from the agent catalog. |
-| `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog. |
-| `GET /api/model/default` | 200 | `{location, data: Model \| null}` for the active model. |
+| `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog; `variants` lists thinking levels as `{id, settings}[]`. |
+| `GET /api/model/default` | 200 | `{location, data: Model \| null}` for the active model, same `variants` shape. |
 | `GET /api/agent` | 200 | `{location, data: Agent[]}`. |
 | `GET /api/command` | 200 | `{location, data: Command[]}`. |
 | `GET /api/skill` | 200 | `{location, data: []}`; skill inventory is unavailable. |
