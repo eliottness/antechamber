@@ -985,6 +985,7 @@ export class SessionManager {
     // not cost a round-trip nor emit a phantom "model switched" marker.
     if (s.model !== undefined && s.model.providerID === ref.providerID && s.model.modelID === ref.modelID) {
       await setThinkingLevel(s, pi, ref.variant);
+      this.syncRecordVariant(s);
       return s.model;
     }
     const res = await pi.command<{ provider?: string; id?: string; responseModel?: string }>({
@@ -1014,7 +1015,16 @@ export class SessionManager {
     };
     this.applyPiModel(s, resolved.providerID, resolved.modelID);
     await setThinkingLevel(s, pi, ref.variant);
+    this.syncRecordVariant(s);
     return resolved;
+  }
+
+  /**
+   * On a device with no saved pick, OpenChamber 2.x restores a reopened session's effort from this
+   * record and resends it with the next prompt, so a stale level silently resets the user's choice.
+   */
+  private syncRecordVariant(s: ManagedSession): void {
+    if (s.info.model !== undefined) s.info.model = { ...s.info.model, variant: s.thinkingLevel ?? "default" };
   }
 
   /**
