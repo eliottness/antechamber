@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-10-22
+
 ### Fixed
 
 - Show the effort (thinking level) picker again in OpenChamber 2.x: `/api/model` and `/api/model/default`
