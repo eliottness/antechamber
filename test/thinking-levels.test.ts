@@ -79,6 +79,37 @@ test("v2 model routes list each model's thinking levels", async (t) => {
   assert.deepEqual(ids(await read<Model>("/api/model/default")), ["off", "low", "medium", "high"]);
 });
 
+test("v2 session record follows the applied thinking level", async (t) => {
+  const { directory } = setup(t);
+  const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  t.after(() => server.stop());
+  await server.start();
+  const session = (await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
+    id: string;
+  };
+  // OpenChamber 2.x restores a reopened session's effort from this record and resends it.
+  const recordAfter = async (model: { providerID: string; id: string; variant: string }) => {
+    const selected = await fetch(`${server.url}/api/session/${session.id}/model`, {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    });
+    assert.equal(selected.status, 204);
+    const response = await fetch(`${server.url}/api/session/${session.id}`);
+    assert.equal(response.status, 200);
+    return ((await response.json()) as { data: { model?: unknown } }).data.model;
+  };
+  assert.deepEqual(await recordAfter({ providerID: "fake", id: "fake-model", variant: "low" }), {
+    id: "fake-model",
+    providerID: "fake",
+    variant: "low",
+  });
+  assert.deepEqual(await recordAfter({ providerID: "fake", id: "mapped", variant: "high" }), {
+    id: "mapped",
+    providerID: "fake",
+    variant: "high",
+  });
+});
+
 test("a selected level sends one thinking command", async (t) => {
   const { directory, manager } = setup(t);
   const session = await manager.create(directory);
