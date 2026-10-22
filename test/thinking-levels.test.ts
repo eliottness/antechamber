@@ -132,7 +132,10 @@ test("a cold-restored v2 session record reports the model and level its file las
   firstStopped = true;
   // A session that never ran through this adapter has no registry model; only its file records one.
   const registryPath = join(directory, "state", "sessions.json");
-  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as Record<string, { model?: unknown }>;
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as Record<
+    string,
+    { model?: unknown; piPath: string }
+  >;
   delete registry[ids[1]!]!.model;
   writeFileSync(registryPath, JSON.stringify(registry));
 
@@ -140,12 +143,56 @@ test("a cold-restored v2 session record reports the model and level its file las
   t.after(() => second.stop());
   await second.start();
   // OpenChamber 2.x restores a reopened session's effort from this record and resends it.
-  for (const id of ids) {
+  const record = async (id: string) => {
     const response = await fetch(`${second.url}/api/session/${id}`);
     assert.equal(response.status, 200);
-    const record = ((await response.json()) as { data: { model?: unknown } }).data.model;
-    assert.deepEqual(record, { id: "mapped", providerID: "fake", variant: "high" });
-  }
+    return ((await response.json()) as { data: { model?: unknown } }).data.model;
+  };
+  for (const id of ids) assert.deepEqual(await record(id), { id: "mapped", providerID: "fake", variant: "high" });
+
+  // Another OmO client continues the dormant session and changes the level; resending the old one would undo it.
+  const piPath = registry[ids[0]!]!.piPath;
+  const lines = readFileSync(piPath, "utf8").trim().split("\n");
+  const parentId = (JSON.parse(lines.at(-1)!) as { id: string }).id;
+  const external = {
+    type: "thinking_level_change",
+    id: "external",
+    parentId,
+    timestamp: Date.now(),
+    thinkingLevel: "low",
+  };
+  writeFileSync(piPath, `${[...lines, JSON.stringify(external)].join("\n")}\n`);
+  assert.deepEqual(await record(ids[0]!), { id: "mapped", providerID: "fake", variant: "low" });
+});
+
+test("a revived session's v2 record reports the level OmO resumed with", async (t) => {
+  const { directory } = setup(t);
+  const first = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  let firstStopped = false;
+  t.after(() => (firstStopped ? undefined : first.stop()));
+  await first.start();
+  const session = (await (await fetch(`${first.url}/session`, { method: "POST", body: "{}" })).json()) as {
+    id: string;
+  };
+  await first.stop();
+  firstStopped = true;
+
+  const second = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
+  t.after(() => second.stop());
+  await second.start();
+  const record = async () => {
+    const response = await fetch(`${second.url}/api/session/${session.id}`);
+    assert.equal(response.status, 200);
+    return ((await response.json()) as { data: { model?: unknown } }).data.model;
+  };
+  // The fake's file records no level, so the dormant record has none until OmO resumes the session.
+  assert.deepEqual(await record(), { id: "fake-model", providerID: "fake", variant: "default" });
+  const prompted = await fetch(`${second.url}/session/${session.id}/message`, {
+    method: "POST",
+    body: JSON.stringify({ parts: [{ type: "text", text: "REVIVE" }] }),
+  });
+  assert.equal(prompted.status, 200);
+  assert.deepEqual(await record(), { id: "fake-model", providerID: "fake", variant: "medium" });
 });
 
 test("a selected level sends one thinking command", async (t) => {

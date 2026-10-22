@@ -48,17 +48,20 @@ export function ocIdFor(piSessionId: string): string {
   return `ses_${createHash("md5").update(piSessionId).digest("hex")}`;
 }
 
+/** The model and thinking level OmO resumes a session file with. */
+export interface SessionSelection {
+  model?: { providerID: string; modelID: string };
+  thinkingLevel?: string;
+}
+
 /** One *.jsonl discovered on disk, not (yet) backed by a live pi process. */
-export interface ScannedSession {
+export interface ScannedSession extends SessionSelection {
   piSessionId: string;
   piPath: string;
   directory: string;
   title: string;
   titleSource?: TitleSource;
   fallbackTitle?: string;
-  /** The last model and thinking level the file records; OmO appends both at start and on every change. */
-  model?: { providerID: string; modelID: string };
-  thinkingLevel?: string;
   created: number;
   updated: number;
 }
@@ -161,12 +164,92 @@ function titleFromHead(head: string, piSessionId: string): string {
   return `pi session ${piSessionId.slice(0, 8)}`;
 }
 
-interface SessionFileMeta {
+interface SessionFileMeta extends SessionSelection {
   title: string;
   fallbackTitle: string;
   titleSource: TitleSource;
-  model?: { providerID: string; modelID: string };
-  thinkingLevel?: string;
+}
+
+type ModelRef = { providerID: string; modelID: string };
+type SelectionStep =
+  | { kind: "thinking"; level: string | undefined }
+  | { kind: "model"; reason: unknown; model: ModelRef | undefined; original: ModelRef | undefined }
+  | { kind: "reply"; model: ModelRef };
+
+function modelRef(provider: unknown, modelID: unknown): ModelRef | undefined {
+  return typeof provider === "string" && provider !== "" && typeof modelID === "string" && modelID !== ""
+    ? { providerID: provider, modelID }
+    : undefined;
+}
+
+function selectionStep(entry: Record<string, unknown>): SelectionStep | undefined {
+  if (entry.type === "thinking_level_change")
+    return { kind: "thinking", level: typeof entry.thinkingLevel === "string" ? entry.thinkingLevel : undefined };
+  if (entry.type === "model_change")
+    return {
+      kind: "model",
+      reason: entry.reason,
+      model: modelRef(entry.provider, entry.modelId),
+      original: modelRef(entry.originalProvider, entry.originalModelId),
+    };
+  const message = entry.message as Record<string, unknown> | undefined;
+  // A failed routing attempt names the virtual model; no model answered it.
+  if (entry.type !== "message" || message?.role !== "assistant" || message.api === "pi-virtual") return undefined;
+  const model = modelRef(message.provider, message.model);
+  return model === undefined ? undefined : { kind: "reply", model };
+}
+
+/**
+ * OmO resumes at the file's last entry and resolves the model and level along its path, restoring the
+ * pre-fallback model and level across a fallback window. Mirrors senpi's getSessionContextSettings
+ * (dist/core/session-manager.js), except that legacy provider ids are not normalized.
+ */
+function resumeSelection(
+  byId: Map<string, { parentId: string | null; step?: SelectionStep }>,
+  leafId: string | undefined,
+): SessionSelection {
+  const path: SelectionStep[] = [];
+  const seen = new Set<string>();
+  for (let id = leafId; id !== undefined && !seen.has(id); ) {
+    const entry = byId.get(id);
+    if (entry === undefined) break;
+    seen.add(id);
+    if (entry.step !== undefined) path.push(entry.step);
+    id = entry.parentId ?? undefined;
+  }
+  let model: ModelRef | undefined;
+  let explicit = false;
+  let inFallback = false;
+  let level: string | undefined;
+  let preFallbackLevel: string | undefined;
+  for (const step of path.reverse()) {
+    if (step.kind === "thinking") level = step.level;
+    else if (step.kind === "model" && step.reason === "fallback") {
+      if (!inFallback) {
+        preFallbackLevel = level;
+        if (step.original !== undefined) {
+          model = step.original;
+          explicit = true;
+        }
+      }
+      inFallback = true;
+    } else if (step.kind === "model" && step.reason === "fallback-revert") {
+      if (inFallback) level = preFallbackLevel;
+      inFallback = false;
+    } else if (step.kind === "model") {
+      inFallback = false;
+      if (step.model !== undefined) {
+        model = step.model;
+        explicit = true;
+      }
+    } else if (!inFallback && !(explicit && model?.providerID === step.model.providerID)) {
+      // A reply echoes the wire id; only a reply from another provider overrides an explicit pick.
+      model = step.model;
+      explicit = false;
+    }
+  }
+  if (inFallback) level = preFallbackLevel;
+  return { ...(model !== undefined ? { model } : {}), ...(level !== undefined ? { thinkingLevel: level } : {}) };
 }
 
 const fileMetaCache = new Map<string, SessionFileMeta & { mtimeMs: number; size: number }>();
@@ -179,22 +262,22 @@ export function readSessionFileMeta(piPath: string, piSessionId: string): Sessio
   const raw = readFileSync(piPath, "utf8");
   const fallbackTitle = titleFromHead(raw, piSessionId);
   let native: string | undefined;
-  let model: SessionFileMeta["model"];
-  let thinkingLevel: string | undefined;
+  const byId = new Map<string, { parentId: string | null; step?: SelectionStep }>();
+  let leafId: string | undefined;
   for (const line of raw.split("\n")) {
     try {
       const entry = JSON.parse(line);
       if (entry?.type === "session_info" && typeof entry.name === "string") {
         const name = entry.name.trim().replace(/\s+/g, " ");
         if (name !== "") native = name;
-      } else if (
-        entry?.type === "model_change" &&
-        typeof entry.provider === "string" &&
-        typeof entry.modelId === "string"
-      ) {
-        model = { providerID: entry.provider, modelID: entry.modelId };
-      } else if (entry?.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
-        thinkingLevel = entry.thinkingLevel;
+      }
+      if (entry?.type !== "session" && typeof entry?.id === "string") {
+        const step = selectionStep(entry);
+        byId.set(entry.id, {
+          parentId: typeof entry.parentId === "string" ? entry.parentId : null,
+          ...(step !== undefined ? { step } : {}),
+        });
+        leafId = entry.id;
       }
     } catch {
       // Partial trailing writes do not erase the last valid title.
@@ -206,8 +289,7 @@ export function readSessionFileMeta(piPath: string, piSessionId: string): Sessio
     title: native ?? fallbackTitle,
     fallbackTitle,
     titleSource: native === undefined ? ("fallback" as const) : ("native" as const),
-    ...(model !== undefined ? { model } : {}),
-    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+    ...resumeSelection(byId, leafId),
   };
   fileMetaCache.set(piPath, metadata);
   return metadata;
