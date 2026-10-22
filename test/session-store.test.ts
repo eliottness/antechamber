@@ -3,7 +3,13 @@ import { appendFileSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { scanAllPiSessions, scanPiSessions, SessionPersistenceError, SessionStore } from "../src/session-store.js";
+import {
+  readSessionFileMeta,
+  scanAllPiSessions,
+  scanPiSessions,
+  SessionPersistenceError,
+  SessionStore,
+} from "../src/session-store.js";
 
 test("F2 B3 failed registry writes reject essential metadata instead of acknowledging success", () => {
   const state = "/dev/null/F2-state";
@@ -335,3 +341,87 @@ test("scanPiSessions skips a header whose cwd mismatches its folder", () => {
     rmSync(agentDir, { recursive: true, force: true });
   }
 });
+
+// Entry shapes follow OmO session JSONL; the expected values follow senpi's getSessionContextSettings.
+const modelChange = (id: string, parentId: string | null, provider: string, modelId: string, extra = {}) => ({
+  type: "model_change",
+  id,
+  parentId,
+  provider,
+  modelId,
+  ...extra,
+});
+const level = (id: string, parentId: string, thinkingLevel: unknown) => ({
+  type: "thinking_level_change",
+  id,
+  parentId,
+  thinkingLevel,
+});
+const reply = (id: string, parentId: string, provider: string, model: string, extra = {}) => ({
+  type: "message",
+  id,
+  parentId,
+  message: { role: "assistant", content: [], provider, model, ...extra },
+});
+
+for (const [name, entries, expected] of [
+  [
+    "follows the resume path, not file order",
+    [
+      modelChange("m", null, "a", "one"),
+      level("t1", "m", "high"),
+      level("abandoned", "t1", "low"),
+      reply("tail", "t1", "a", "one"),
+    ],
+    { model: { providerID: "a", modelID: "one" }, thinkingLevel: "high" },
+  ],
+  [
+    "restores the pre-fallback model and level inside an open fallback window",
+    [
+      modelChange("m", null, "a", "one"),
+      level("t1", "m", "high"),
+      modelChange("f", "t1", "b", "two", { reason: "fallback", originalProvider: "a", originalModelId: "one" }),
+      level("t2", "f", "low"),
+      reply("r", "t2", "b", "two"),
+    ],
+    { model: { providerID: "a", modelID: "one" }, thinkingLevel: "high" },
+  ],
+  [
+    "drops a level set inside a reverted fallback window",
+    [
+      modelChange("m", null, "a", "one"),
+      level("t1", "m", "high"),
+      modelChange("f", "t1", "b", "two", { reason: "fallback", originalProvider: "a", originalModelId: "one" }),
+      level("t2", "f", "low"),
+      modelChange("back", "t2", "a", "one", { reason: "fallback-revert" }),
+    ],
+    { model: { providerID: "a", modelID: "one" }, thinkingLevel: "high" },
+  ],
+  [
+    "keeps an explicit pick over a same-provider wire id, but follows another provider and skips virtual replies",
+    [
+      modelChange("m", null, "a", "one"),
+      reply("wire", "m", "a", "one-20990101"),
+      reply("routed", "wire", "virtual", "router", { api: "pi-virtual" }),
+      reply("other", "routed", "b", "two"),
+    ],
+    { model: { providerID: "b", modelID: "two" } },
+  ],
+  [
+    "clears the level on a malformed thinking entry",
+    [modelChange("m", null, "a", "one"), level("t1", "m", "high"), level("t2", "t1", null)],
+    { model: { providerID: "a", modelID: "one" } },
+  ],
+] as const) {
+  test(`session file resume selection ${name}`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "antechamber-resume-selection-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, "session.jsonl");
+    writeFileSync(file, sessionHeader("resume", dir) + entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+    const { model, thinkingLevel } = readSessionFileMeta(file, "resume");
+    assert.deepEqual(
+      { ...(model !== undefined ? { model } : {}), ...(thinkingLevel !== undefined ? { thinkingLevel } : {}) },
+      expected,
+    );
+  });
+}

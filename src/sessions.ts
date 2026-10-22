@@ -51,6 +51,7 @@ import {
   SessionStore,
   type ScannedSession,
   readSessionFileMeta,
+  type SessionSelection,
   type TitleSource,
 } from "./session-store.js";
 import type {
@@ -147,6 +148,23 @@ interface PiState {
   isStreaming: boolean;
   thinkingLevel?: string;
   pendingQuestions?: unknown;
+}
+
+/**
+ * A dormant session's record as OmO will resume it. OpenChamber 2.x restores a reopened session's effort
+ * from this record and resends it, so the model and level come together from the file; the registry only
+ * fills in when the file records no model.
+ */
+function dormantModel(
+  file: SessionSelection,
+  registry: { providerID: string; modelID: string; variant?: string } | undefined,
+): { model: OCModelRef; variant: string } | undefined {
+  if (file.model !== undefined) return { model: file.model, variant: file.thinkingLevel ?? "default" };
+  if (registry === undefined) return undefined;
+  return {
+    model: { providerID: registry.providerID, modelID: registry.modelID },
+    variant: registry.variant ?? "default",
+  };
 }
 
 export class SessionManager {
@@ -344,6 +362,12 @@ export class SessionManager {
     if (s.pi !== undefined || s.restored === undefined || !existsSync(s.restored.piPath)) return;
     const metadata = readSessionFileMeta(s.restored.piPath, s.restored.piSessionId);
     if (metadata.titleSource === "native") this.applyNativeTitle(s, metadata.title);
+    // Not revived here yet, so nothing cached overrides what OmO will resume with, which another client may change.
+    const resumed = s.thinkingLevel === undefined ? dormantModel(metadata, undefined) : undefined;
+    if (resumed !== undefined) {
+      s.model = resumed.model;
+      s.info.model = { id: resumed.model.modelID, providerID: resumed.model.providerID, variant: resumed.variant };
+    }
   }
 
   private wirePi(s: ManagedSession, pi: PiRpcClient): void {
@@ -1508,9 +1532,7 @@ export class SessionManager {
       reg?.titleSource ??
       (reg?.title && reg.title !== "New session" && reg.title !== sc.fallbackTitle ? "user" : "fallback");
     const useRegistry = titleSource === "user" || (sc.titleSource !== "native" && titleSource === "generated");
-    // A session never run through this adapter has no registry model, but its file records one. OpenChamber 2.x
-    // restores a reopened session's effort from this record, and only the file knows the level it last ran with.
-    const model = reg?.model ?? sc.model;
+    const resumed = dormantModel(sc, reg?.model);
     const info: OCSession = {
       id: ocId,
       projectID: sc.directory,
@@ -1524,13 +1546,9 @@ export class SessionManager {
       ...(reg?.metadata !== undefined ? { metadata: reg.metadata } : {}),
       ...(reg?.parentID !== undefined ? { parentID: reg.parentID } : {}),
       ...(reg?.parentMessageID !== undefined ? { parentMessageID: reg.parentMessageID } : {}),
-      ...(model !== undefined
+      ...(resumed !== undefined
         ? {
-            model: {
-              id: model.modelID,
-              providerID: model.providerID,
-              variant: sc.thinkingLevel ?? reg?.model?.variant ?? "default",
-            },
+            model: { id: resumed.model.modelID, providerID: resumed.model.providerID, variant: resumed.variant },
           }
         : {}),
       ...(reg?.tree?.revert ? { revert: { messageID: reg.tree.revert.messageID } } : {}),
@@ -1548,7 +1566,7 @@ export class SessionManager {
       pi: undefined,
       messages: undefined,
       status: { type: "idle" },
-      model: model !== undefined ? { providerID: model.providerID, modelID: model.modelID } : undefined,
+      model: resumed?.model,
       streaming: undefined,
       toolByCallId: new Map(),
       restored: { piSessionId: sc.piSessionId, piPath: sc.piPath },
