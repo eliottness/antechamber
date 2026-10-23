@@ -13,6 +13,7 @@ import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { systemClock, type LifecycleClock } from "./lifecycle.js";
 import { agentBinary, envSetting } from "./config.js";
 
@@ -79,6 +80,55 @@ const procTable: ProcessTable = {
   },
 };
 
+/** Why the agent stopped without antechamber disposing it on purpose (eviction, delete, shutdown). */
+export type PiStopReason =
+  | { readonly kind: "timeout"; readonly command: string; readonly ms: number }
+  | { readonly kind: "frame-overflow" }
+  | { readonly kind: "spawn"; readonly detail: string }
+  | { readonly kind: "transport"; readonly detail: string }
+  | { readonly kind: "exit"; readonly code: number | null; readonly signal: string | null };
+
+function duration(ms: number): string {
+  if (ms % 60_000 === 0) return `${ms / 60_000} min`;
+  if (ms % 1_000 === 0) return `${ms / 1_000} s`;
+  return `${ms} ms`;
+}
+
+/** The user-facing explanation OpenChamber shows when the agent stops. */
+export function describeStop(reason: PiStopReason): string {
+  const restart = "Anything in progress did not finish; send a message to start the agent again.";
+  switch (reason.kind) {
+    case "timeout":
+      return `antechamber stopped the agent: its "${reason.command}" command got no reply within ${duration(reason.ms)}. ${restart}`;
+    case "frame-overflow":
+      return `antechamber stopped the agent: it sent a JSONL frame over the ${MAX_JSONL_FRAME_BYTES}-byte limit. ${restart}`;
+    case "spawn":
+      return `antechamber could not run the agent (${reason.detail}). ${restart}`;
+    case "transport":
+      return `antechamber lost its connection to the agent (${reason.detail}) and stopped it. ${restart}`;
+    case "exit": {
+      const status =
+        reason.code !== null
+          ? `exit code ${reason.code}`
+          : reason.signal !== null
+            ? `signal ${reason.signal}`
+            : "no status";
+      return `The agent exited unexpectedly (${status}). ${restart}`;
+    }
+  }
+}
+
+/** Rejects every command pending when the agent stopped; the exit handler is what shows it to the user. */
+export class PiStoppedError extends Error {
+  constructor(
+    readonly reason: PiStopReason,
+    cause?: Error,
+  ) {
+    super(describeStop(reason), cause === undefined ? undefined : { cause });
+    this.name = "AgentStoppedError";
+  }
+}
+
 export type PiRpcResponse<T = unknown> = {
   readonly id: string;
   readonly type: "response";
@@ -120,6 +170,10 @@ export class PiRpcClient extends EventEmitter {
   private closed = false;
   private stderrTail = "";
   private disposing: Promise<void> | undefined;
+  private disposeRequested = false;
+  private stopped: PiStopReason | undefined;
+  private outputClosed = false;
+  private sentSignals = new Set<NodeJS.Signals>();
   private agentActive = false;
   private compacting = false;
   private sessionPath: string | undefined;
@@ -134,6 +188,11 @@ export class PiRpcClient extends EventEmitter {
 
   get sessionFile(): string | undefined {
     return this.sessionPath;
+  }
+
+  /** Set once the agent stopped for a reason other than a requested dispose; read it from exit listeners. */
+  get stopReason(): PiStopReason | undefined {
+    return this.stopped;
   }
 
   onEvent(listener: (payload: Record<string, unknown>) => void): this {
@@ -182,7 +241,7 @@ export class PiRpcClient extends EventEmitter {
     });
 
     this.proc.stdin?.on("error", (error) => {
-      this.closeForTransportFailure(error);
+      this.closeForTransportFailure({ kind: "transport", detail: error.message }, error);
     });
     this.proc.stdout!.on("data", (chunk: Buffer | string) => {
       const text = typeof chunk === "string" ? chunk : this.decoder.write(chunk);
@@ -195,18 +254,29 @@ export class PiRpcClient extends EventEmitter {
       this.buffer += text;
       this.bufferBytes += Buffer.byteLength(text);
       this.drain();
-      this.closeForTransportFailure(new Error("pi process closed stdout"));
+      this.outputClosed = true;
+      this.closeForTransportFailure({ kind: "transport", detail: "the agent closed its output" });
     });
+    // ChildProcess "error": the binary could not be spawned, or signalling it failed.
     this.proc.on("error", (err) => {
-      this.closeForTransportFailure(err);
+      this.closeForTransportFailure({ kind: "spawn", detail: err.message }, err);
     });
     this.proc.on("exit", (code, signal) => {
       this.closed = true;
+      if (this.stopped === undefined && !this.disposeRequested) this.stopped = { kind: "exit", code, signal };
+      // A crashing agent closes stdout just before it exits. Name the crash, not the closed pipe, unless the
+      // status comes from a signal antechamber sent while closing: OmO traps SIGTERM and exits 128 + 15.
+      else if (this.stopped?.kind === "transport" && this.outputClosed && !this.ownSignal(code, signal))
+        this.stopped = { kind: "exit", code, signal };
       console.error(
         `[pi-rpc] process exited code=${code} signal=${signal}` +
           (envSetting("DEBUG") && this.stderrTail ? `\n[pi-rpc] stderr tail:\n${this.stderrTail}` : ""),
       );
-      this.failAll(new Error(`pi exited (code=${code} signal=${signal})`));
+      this.failAll(
+        this.stopped !== undefined
+          ? new PiStoppedError(this.stopped)
+          : new Error(`pi exited (code=${code} signal=${signal})`),
+      );
       this.emit("exit", code, signal);
     });
   }
@@ -233,14 +303,20 @@ export class PiRpcClient extends EventEmitter {
   }
 
   private frameOverflow(): void {
-    const error = new Error(`pi JSONL frame exceeded ${MAX_JSONL_FRAME_BYTES} bytes`);
+    this.stopped ??= { kind: "frame-overflow" };
     this.closed = true;
     this.buffer = "";
     this.bufferBytes = 0;
-    this.failAll(error);
+    this.failAll(new PiStoppedError(this.stopped));
     this.proc.stdout?.destroy();
     if (this.proc.pid === undefined) this.proc.kill("SIGKILL");
     else if (!this.reaped()) process.kill(-this.proc.pid, "SIGKILL");
+  }
+
+  private ownSignal(code: number | null, signal: string | null): boolean {
+    if (signal !== null) return [...this.sentSignals].includes(signal as NodeJS.Signals);
+    if (code === null) return true;
+    return [...this.sentSignals].some((sent) => code === 128 + osConstants.signals[sent]);
   }
 
   /** Node has reaped the leader, so its PID (and group ID) may already belong to another process. */
@@ -248,10 +324,11 @@ export class PiRpcClient extends EventEmitter {
     return this.proc.exitCode !== null || this.proc.signalCode !== null;
   }
 
-  private closeForTransportFailure(error: Error): void {
+  private closeForTransportFailure(reason: PiStopReason, cause?: Error): void {
     if (this.closed) return;
     this.closed = true;
-    this.failAll(error);
+    this.stopped ??= reason;
+    this.failAll(new PiStoppedError(reason, cause));
     void this.dispose().catch((disposeError: unknown) => {
       const message = disposeError instanceof Error ? disposeError.message : String(disposeError);
       console.error(`[pi-rpc] failed to dispose after transport failure: ${message}`);
@@ -364,12 +441,26 @@ export class PiRpcClient extends EventEmitter {
     this.pending.clear();
   }
 
-  /** Send a command and wait for its correlated response. */
+  /**
+   * A read whose late answer changes nothing (status polls, listings): its timeout rejects only itself and
+   * the agent keeps running. OmO handles RPC lines concurrently, so anything that orders the conversation
+   * must use `command`, whose timeout stops the agent rather than let a late reply overlap the next operation.
+   */
+  probe<T = unknown>(
+    cmd: Omit<PiRpcCommand, "id">,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<PiRpcResponse<T>> {
+    return this.command<T>(cmd, timeoutMs, signal, undefined, false);
+  }
+
+  /** Send a command and wait for its correlated response. A timeout stops the agent unless `stopOnTimeout` is false. */
   command<T = unknown>(
     cmd: Omit<PiRpcCommand, "id">,
     timeoutMs?: number,
     signal?: AbortSignal,
     onDispatch?: () => void,
+    stopOnTimeout = true,
   ): Promise<PiRpcResponse<T>> {
     if (this.closed) return Promise.reject(new Error("pi process is not running"));
     if (signal?.aborted) return Promise.reject(signal.reason);
@@ -393,8 +484,10 @@ export class PiRpcClient extends EventEmitter {
       const onAbort = (): void => {
         rejectCommand(signal?.reason);
       };
-      const expire = (duration: number): void => {
-        this.closeForTransportFailure(new Error(`pi command "${expectedCommand}" timed out after ${duration}ms`));
+      // A probe's late response finds no pending entry and is dropped.
+      const expire = (ms: number): void => {
+        if (stopOnTimeout) this.closeForTransportFailure({ kind: "timeout", command: expectedCommand, ms });
+        else rejectCommand(new Error(`pi command "${expectedCommand}" timed out after ${ms}ms`));
       };
       const armDeadline = (): void => {
         clearTimeout(timer);
@@ -427,6 +520,7 @@ export class PiRpcClient extends EventEmitter {
 
   async dispose(): Promise<void> {
     if (this.disposing !== undefined) return this.disposing;
+    this.disposeRequested = true;
     this.closed = true;
     this.failAll(new Error("pi process disposed"));
     const pid = this.proc.pid;
@@ -436,6 +530,7 @@ export class PiRpcClient extends EventEmitter {
     const signal = (target: number, sig: NodeJS.Signals): void => {
       try {
         process.kill(target, sig);
+        this.sentSignals.add(sig);
       } catch (error) {
         const code = error instanceof Error && "code" in error ? error.code : undefined;
         if (code === "ESRCH") return;

@@ -4,7 +4,10 @@ import { once } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
 import test, { type TestContext } from "node:test";
-import { COMPACT_RPC_TIMEOUT_MS, PiRpcClient, RPC_COMMAND_TIMEOUT_MS } from "../src/pi-rpc.js";
+import type { MonitorSessions } from "../src/monitor-sessions.js";
+import { COMPACT_RPC_TIMEOUT_MS, PiRpcClient, PiStoppedError, RPC_COMMAND_TIMEOUT_MS } from "../src/pi-rpc.js";
+import type { ManagedSession } from "../src/sessions.js";
+import { WorkStatusBridge } from "../src/work-status.js";
 
 function transport(t: TestContext) {
   const stdin = new PassThrough();
@@ -24,6 +27,27 @@ function transport(t: TestContext) {
     syncBuiltinESMExports();
   });
   return { pi, proc, stdin, stdout, stderr, kill };
+}
+
+/** The PiStoppedError a timed-out ordered command stops the agent with. */
+function stoppedBy(command: string, ms: number) {
+  return (error: unknown) =>
+    error instanceof PiStoppedError &&
+    error.reason.kind === "timeout" &&
+    error.reason.command === command &&
+    error.reason.ms === ms;
+}
+
+/** Asserts the client still round-trips a get_state; every buffered get_state frame is answered. */
+async function answersNextCommand(pi: PiRpcClient, stdin: PassThrough, stdout: PassThrough) {
+  const reply = (chunk: Buffer | string) => {
+    const request = JSON.parse(String(chunk));
+    if (request.type !== "get_state") return;
+    stdout.write(`${JSON.stringify({ type: "response", id: request.id, command: request.type, success: true })}\n`);
+  };
+  stdin.on("data", reply);
+  assert.equal((await pi.command({ type: "get_state" })).success, true);
+  stdin.off("data", reply);
 }
 
 for (const fields of [
@@ -160,7 +184,7 @@ test("prompt admission resumes the ordinary deadline when active work settles", 
   t.mock.method(console, "error", () => {});
   stdout.write('{"type":"agent_start"}\n');
   const pending = pi.command({ type: "prompt", message: "continue", streamingBehavior: "steer" });
-  const rejected = assert.rejects(pending, /pi command "prompt" timed out after 60000ms/);
+  const rejected = assert.rejects(pending, stoppedBy("prompt", 60_000));
   t.mock.timers.tick(RPC_COMMAND_TIMEOUT_MS + 1);
   assert.equal(pi.isBusy, true);
   stdout.write('{"type":"agent_end"}\n');
@@ -175,7 +199,7 @@ test("active work cannot extend prompt admission indefinitely", async (t) => {
   t.mock.method(console, "error", () => {});
   const pending = pi.command({ type: "prompt", message: "continue", streamingBehavior: "steer" });
   const maximum = COMPACT_RPC_TIMEOUT_MS + RPC_COMMAND_TIMEOUT_MS;
-  const rejected = assert.rejects(pending, new RegExp(`pi command "prompt" timed out after ${maximum}ms`));
+  const rejected = assert.rejects(pending, stoppedBy("prompt", maximum));
   for (let elapsed = 0; elapsed < maximum; elapsed += RPC_COMMAND_TIMEOUT_MS) {
     stdout.write('{"type":"agent_start"}\n');
     t.mock.timers.tick(RPC_COMMAND_TIMEOUT_MS);
@@ -194,7 +218,7 @@ for (const [command, timeout] of [
     t.mock.method(console, "error", () => {});
     stdout.write('{"type":"agent_start"}\n');
     const pending = pi.command(command, timeout);
-    const rejected = assert.rejects(pending, new RegExp(`pi command "${command.type}" timed out after 60000ms`));
+    const rejected = assert.rejects(pending, stoppedBy(command.type, 60_000));
     t.mock.timers.tick(RPC_COMMAND_TIMEOUT_MS);
     await rejected;
     await assert.rejects(pi.command({ type: "get_state" }), /not running/);
@@ -205,7 +229,7 @@ test("a silent prompt still closes the transport after the ordinary deadline", a
   t.mock.timers.enable({ apis: ["setTimeout"] });
   t.mock.method(console, "error", () => {});
   const pending = pi.command({ type: "prompt", message: "continue" });
-  const rejected = assert.rejects(pending, /pi command "prompt" timed out after 60000ms/);
+  const rejected = assert.rejects(pending, stoppedBy("prompt", 60_000));
   t.mock.timers.tick(RPC_COMMAND_TIMEOUT_MS);
   await rejected;
   await assert.rejects(pi.command({ type: "get_state" }), /not running/);
@@ -217,7 +241,7 @@ test("ending compaction does not resume the deadline while the agent is still ac
   t.mock.method(console, "error", () => {});
   stdout.write('{"type":"agent_start"}\n{"type":"compaction_start"}\n');
   const pending = pi.command({ type: "prompt", message: "continue" });
-  const rejected = assert.rejects(pending, /pi command "prompt" timed out after 60000ms/);
+  const rejected = assert.rejects(pending, stoppedBy("prompt", 60_000));
   stdout.write('{"type":"compaction_end"}\n');
   t.mock.timers.tick(RPC_COMMAND_TIMEOUT_MS + 1);
   assert.equal(pi.isBusy, true);
@@ -244,4 +268,104 @@ test("aborting prompt admission clears both deadlines without closing the transp
     stdout.write(`${JSON.stringify({ type: "response", id: command.id, command: "get_state", success: true })}\n`);
   });
   assert.equal((await pi.command({ type: "get_state" })).success, true);
+});
+
+test("a timed-out probe fails alone: the prompt and the agent survive, the late reply is dropped", async (t) => {
+  const { pi, stdin, stdout } = transport(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const frames: Array<{ id: string; type: string }> = [];
+  stdin.on("data", (chunk) => frames.push(JSON.parse(String(chunk))));
+  stdout.write('{"type":"agent_start"}\n');
+  const prompt = pi.command({ type: "prompt", message: "continue" });
+  const probe = pi.probe({ type: "eval_cells.list" }, 10_000);
+  const rejected = assert.rejects(
+    probe,
+    (error: unknown) =>
+      !(error instanceof PiStoppedError) && /"eval_cells.list" timed out after 10000ms/.test(String(error)),
+  );
+  t.mock.timers.tick(10_000);
+  await rejected;
+  assert.equal(pi.stopReason, undefined);
+  const [promptFrame, probeFrame] = frames;
+  assert.equal(promptFrame?.type, "prompt");
+  assert.equal(probeFrame?.type, "eval_cells.list");
+  stdout.write(
+    `${JSON.stringify({ type: "response", id: probeFrame.id, command: "eval_cells.list", success: true, data: [] })}\n`,
+  );
+  stdout.write(`${JSON.stringify({ type: "response", id: promptFrame.id, command: "prompt", success: true })}\n`);
+  assert.equal((await prompt).success, true);
+  stdin.removeAllListeners("data");
+  await answersNextCommand(pi, stdin, stdout);
+});
+
+test("OmO Work's eval_cells poll timing out leaves the agent running", async (t) => {
+  const { pi, stdin, stdout } = transport(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const bridge = new WorkStatusBridge({ list: () => [] } as unknown as MonitorSessions);
+  const session = { info: { id: "ses_poll" }, pi } as unknown as ManagedSession;
+  const sent = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
+  const snapshot = bridge.snapshot(session);
+  const [chunk] = await sent;
+  assert.equal(JSON.parse(String(chunk)).type, "eval_cells.list");
+  t.mock.timers.tick(10_000);
+  assert.equal((await snapshot).evalCellsListed, false);
+  assert.equal(pi.stopReason, undefined);
+  await answersNextCommand(pi, stdin, stdout);
+});
+
+for (const order of ["exit arrives first", "output closes first"] as const)
+  test(`a crash reports its exit status when the ${order}`, async (t) => {
+    const { pi, proc, stdout } = transport(t);
+    t.mock.method(console, "error", () => {});
+    const pending = assert.rejects(pi.command({ type: "get_state" }, 1_000), PiStoppedError);
+    if (order === "exit arrives first") {
+      proc.emit("exit", 3, null);
+      stdout.end();
+    } else {
+      const ended = once(stdout, "end", { signal: AbortSignal.timeout(1_000) });
+      stdout.end();
+      await ended;
+      proc.emit("exit", 3, null);
+    }
+    await pending;
+    assert.deepEqual(pi.stopReason, { kind: "exit", code: 3, signal: null });
+  });
+
+test("a late get_state reply to a timed-out probe leaves the tracked session file alone", async (t) => {
+  const { pi, stdin, stdout } = transport(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const sent = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
+  const probe = pi.probe({ type: "get_state" }, 1_000);
+  const rejected = assert.rejects(probe, /timed out after 1000ms/);
+  const [chunk] = await sent;
+  t.mock.timers.tick(1_000);
+  await rejected;
+  const late = { type: "response", id: JSON.parse(String(chunk)).id, command: "get_state", success: true };
+  stdout.write(`${JSON.stringify({ ...late, data: { sessionFile: "/tmp/late-session.jsonl" } })}\n`);
+  assert.equal(pi.sessionFile, undefined);
+});
+
+test("exit listeners read why the agent stopped, and a requested dispose records none", async (t) => {
+  const timedOut = transport(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(console, "error", () => {});
+  const pending = timedOut.pi.command({ type: "get_state" }, 1_000);
+  const rejected = assert.rejects(pending, stoppedBy("get_state", 1_000));
+  t.mock.timers.tick(1_000);
+  await rejected;
+  assert.deepEqual(timedOut.pi.stopReason, { kind: "timeout", command: "get_state", ms: 1_000 });
+
+  const crashed = transport(t);
+  const exited = once(crashed.pi, "exit");
+  const inFlight = assert.rejects(crashed.pi.command({ type: "get_state" }, 1_000), (error: unknown) => {
+    return error instanceof PiStoppedError && error.reason.kind === "exit" && error.reason.code === 1;
+  });
+  crashed.proc.emit("exit", 1, null);
+  await Promise.all([exited, inFlight]);
+  assert.deepEqual(crashed.pi.stopReason, { kind: "exit", code: 1, signal: null });
+
+  const disposed = transport(t);
+  await disposed.pi.dispose();
+  disposed.proc.emit("exit", null, "SIGTERM");
+  assert.equal(disposed.pi.stopReason, undefined);
 });

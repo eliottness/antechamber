@@ -390,6 +390,7 @@ OpenCode events with no adapter source are not emitted.
 | turn start / turn end | `session.status` (busy) / `session.idle` |
 | `extension_ui_request` (confirm/select/input) | `permission.asked` / `question.asked`, bridged through the approvals module (`src/approvals.ts`) |
 | `extension_error` / RPC error response | `session.error` |
+| agent stopped on its own (command timeout, broken pipe, frame overflow, exit) | `session.error` `AgentStoppedError` naming the reason, plus a notice card (`message.updated` / `message.part.updated`, id `msg_agentstop_<time>`) replayed after restarts until the next prompt |
 | `get_entries` / `get_tree` (polled or on fork) | `session.updated` |
 
 Tool part `state` mirrors `@opencode-ai/sdk` v2 (1.18.31) `ToolState`:

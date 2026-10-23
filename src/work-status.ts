@@ -323,7 +323,8 @@ export class WorkStatusBridge {
   private async evalCommand(s: ManagedSession, command: Record<string, unknown> & { type: string }): Promise<unknown> {
     const pi = s.pi;
     if (pi === undefined) throw new WorkStatusError(409, "The agent is not running");
-    const reply = await pi.command(command, EVAL_RPC_TIMEOUT_MS);
+    // A slow cold start must not cost the session: an eval_cells timeout fails only the request.
+    const reply = await pi.probe(command, EVAL_RPC_TIMEOUT_MS);
     if (reply.success) return reply.data;
     const code = reply.errorCode;
     if (code === "eval_cell_not_found") throw new WorkStatusError(404, reply.error ?? "Unknown eval cell");

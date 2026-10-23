@@ -123,7 +123,7 @@ function liveSession(sessions: SessionManager, directory: string): { s: ManagedS
 }
 
 async function loadedServers(pi: PiRpcClient): Promise<OmoMcpServer[]> {
-  const response = await pi.command<unknown>(
+  const response = await pi.probe<unknown>(
     { type: "get_loaded_surfaces" },
     undefined,
     AbortSignal.timeout(MCP_READ_WAIT_MS),
@@ -152,11 +152,7 @@ async function directoryServers(sessions: SessionManager, directory: string): Pr
 }
 
 async function hasMcpCommand(pi: PiRpcClient): Promise<boolean> {
-  const response = await pi.command<unknown>(
-    { type: "get_commands" },
-    undefined,
-    AbortSignal.timeout(MCP_READ_WAIT_MS),
-  );
+  const response = await pi.probe<unknown>({ type: "get_commands" }, undefined, AbortSignal.timeout(MCP_READ_WAIT_MS));
   if (!response.success || !isRecord(response.data) || !Array.isArray(response.data.commands)) return false;
   return response.data.commands.some(
     (command: unknown) => isRecord(command) && command.name === "mcp" && command.source === "extension",

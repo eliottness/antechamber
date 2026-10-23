@@ -7,6 +7,17 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop OmO Work's status poll from killing the agent. Its 10-second `eval_cells.list` lost the race with a large
+  session's cold start, the timeout stopped the agent, and the user's prompt failed with
+  `pi command "eval_cells.list" timed out` while the resend could not start a reply. OmO Work's eval cell requests
+  now fail alone on timeout; conversation operations still stop the agent, which keeps their order.
+- Say why the agent stopped whenever it stops on its own: a command timeout (which command, which deadline), a
+  broken pipe, an oversized frame, or a crash (exit code or signal). The transcript gets a notice card and the
+  interrupted reply carries the same error, instead of a bare `pi process exited (code=null)` toast or
+  "OpenCode did not start a reply". The notice survives an adapter restart until the next prompt.
+
 ## [1.0.15] - 2026-10-23
 
 ### Fixed

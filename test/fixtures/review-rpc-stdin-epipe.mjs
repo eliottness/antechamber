@@ -20,7 +20,8 @@ await pending.then(
     throw new Error("stdin EPIPE unexpectedly resolved the pending RPC command");
   },
   (error) => {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "EPIPE") throw error;
+    const cause = error instanceof Error ? error.cause : undefined;
+    if (!(cause instanceof Error) || !("code" in cause) || cause.code !== "EPIPE") throw error;
     process.stdout.write("EPIPE_REJECTED\n");
   },
 );
