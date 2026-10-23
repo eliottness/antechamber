@@ -464,6 +464,74 @@ test("reaper never disposes busy, pending-interaction, running-child or watching
   for (const s of sessions) assert.ok(s?.pi);
 });
 
+// senpi-codemode publishes its detached eval cells as `wake_source_state` over RPC on every liveness
+// transition (senpi-codemode/src/index.ts `emitWakeSourceState`, extension/wake-source-state.ts).
+function setupTurnAgent(t: TestContext) {
+  const dir = mkdtempSync(join(tmpdir(), "antechamber-wake-"));
+  const saved = new Map(["ANTECHAMBER_PI_BINARY", "PI_CODING_AGENT_DIR"].map((key) => [key, process.env[key]]));
+  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/turn-omo.mjs");
+  process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
+  const clock = new Clock();
+  const manager = new SessionManager(() => undefined, new SessionStore(join(dir, "state")), dir, {
+    clock,
+    idleTimeoutMs: 100,
+  });
+  t.after(async () => {
+    await manager.disposeAll();
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return { manager, clock, dir };
+}
+
+function detachedCells(activeCount: number): Record<string, unknown> {
+  const items = Array.from({ length: activeCount }, (_, i) => ({
+    id: `cell-${i}`,
+    description: "scan",
+    startedAtMs: 0,
+  }));
+  return { type: "extension_event", name: "wake_source_state", data: { source: "senpi-codemode", activeCount, items } };
+}
+
+test("reaper keeps a session alive while detached eval cells run and reaps it after they settle", async (t) => {
+  const { manager, clock, dir } = setupTurnAgent(t);
+  const info = await manager.create(dir);
+  const s = manager.get(info.id);
+  const pi = s?.pi;
+  assert.ok(s && pi);
+  await pi.command({ type: "emit", frame: detachedCells(1) });
+  clock.time = 10_000;
+  await manager.lifecycle.reap();
+  assert.ok(s.pi === pi, "a running detached cell must keep its agent process");
+  await pi.command({ type: "emit", frame: detachedCells(0) });
+  clock.time = 10_099;
+  await manager.lifecycle.reap();
+  assert.ok(s.pi === pi, "the idle window restarts when the last cell settles");
+  clock.time = 10_100;
+  await manager.lifecycle.reap();
+  assert.equal(s.pi, undefined);
+});
+
+test("an agent exit drops its detached cells so they cannot pin the revived session", async (t) => {
+  const { manager, clock, dir } = setupTurnAgent(t);
+  const info = await manager.create(dir);
+  const s = manager.get(info.id);
+  const pi = s?.pi;
+  assert.ok(s && pi);
+  await pi.command({ type: "emit", frame: detachedCells(1) });
+  const exited = once(pi, "exit", { signal: deadline() });
+  await pi.command({ type: "exit" }).catch(() => undefined);
+  await exited;
+  await manager.prompt(info.id, "REVIVED");
+  assert.ok(s.pi);
+  clock.time = 10_000;
+  await manager.lifecycle.reap();
+  assert.equal(s.pi, undefined);
+});
+
 test("cap disposes the least recently used idle session before concurrent admissions", async (t) => {
   const { manager, clock, dir } = setup(t, 2);
   const first = await manager.create(dir);

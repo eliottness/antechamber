@@ -286,6 +286,28 @@ revert keep working while a watch waits. A live watch does keep the parent's
 agent process out of idle eviction (`ANTECHAMBER_IDLE_TIMEOUT_MS`), because
 evicting it would stop the watch.
 
+Detached eval cells get the same protection: evicting the agent process kills
+every cell still running in its kernels. senpi-codemode publishes them as a
+`wake_source_state` extension event with `source: "senpi-codemode"` and
+`activeCount`, and the connector keeps the session out of idle eviction while
+any wake source it has seen over RPC reports a non-zero count. The snapshot
+that drops the count to zero is itself an agent event, so the idle window
+restarts when the last cell settles. The agent process exiting clears every
+wake source, so a dead agent cannot pin a revived session.
+
+Evidence, from the installed `@code-yeongyu/senpi-codemode` 2026.10.19-2
+package inspected on October 23, 2026:
+
+- `src/index.ts` (`emitWakeSourceState`) sends
+  `pi.rpc.emit("wake_source_state", state)` alongside the in-process bus.
+- `src/extension/wake-source-state.ts` documents the contract: a full
+  per-source snapshot on every liveness transition and once on
+  `session_start`, so a revived session reports its cells again.
+- Other wake sources (background tasks, omo-dag runs, team members, and the
+  terminal extension's own `terminal-monitors` source) publish on the
+  in-process bus only and never reach the connector; terminal monitors are
+  covered by `terminal_monitor_state` above.
+
 Evidence, from the installed `@code-yeongyu/senpi` bundle inspected on
 October 15, 2026:
 

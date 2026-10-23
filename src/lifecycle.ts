@@ -82,6 +82,7 @@ export class SessionLifecycle {
       !s.hasPendingInteraction() &&
       !s.hasRunningChildren() &&
       !s.hasBackgroundWork?.() &&
+      !s.hasWakeSources?.() &&
       s.piSessionId !== undefined &&
       s.piPath !== undefined
     );
