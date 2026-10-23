@@ -31,8 +31,37 @@ SDK embed stays an option behind the same internal interface.
 RPC transport errors and stdout EOF close the client, reject pending requests,
 and dispose the owned child process. A response correlated to the wrong command
 is an upstream protocol error. A command timeout also closes the transport, so
-the process cannot accept another operation whose native completion is unknown.
+the process cannot accept another operation whose native completion is unknown:
+OmO handles RPC lines concurrently (`dist/modes/rpc/rpc-mode.js`,
+`void handleInputLine(line)`), so the adapter's conversation-operation queue is
+the only ordering, and a timed-out prompt, fork, navigation or bash that kept
+running could land after the next queued operation. Closing is also what
+recovers a hung agent mid-turn, which idle eviction cannot (it requires idle).
+
+Requests outside the conversation whose late answer changes nothing go through
+`PiRpcClient.probe()`, whose timeout rejects only that request; the late response
+finds no pending entry and is dropped. These are OmO Work's
+`eval_cells.list/peek/stop` and the MCP listing reads (whose own 5-second abort
+usually fires first). Before this split, OmO Work's 10-second `eval_cells.list` lost the race
+with a cold start of a large session and killed it, rejecting the user's prompt.
+
 These boundaries are implemented in `src/pi-rpc.ts`.
+
+An agent that stops without antechamber disposing it records a `PiStopReason`
+(timeout with command and deadline, frame overflow, spawn failure, broken pipe,
+or exit code and signal). A closed stdout followed by an exit status is reported
+as the exit, unless that status comes from antechamber's own close signal: OmO
+traps SIGTERM and exits 143, so 128 + a sent signal counts as ours. Pending
+commands reject with `PiStoppedError`. The session's exit handler shows it: a
+notice card in the transcript (`msg_agentstop_<time>`), the same error on the
+reply it interrupted, and a `session.error`. A revival unwires its client before
+that exit arrives, so a stop that ends a revival is reported from the revival's
+failure path instead, once per client. Prompt admission never adds a second
+card for that error.
+The stop is saved as `lastStop` in the registry and replayed at its original
+position after a history re-parse or an adapter restart, until the next prompt.
+Idle eviction, delete and shutdown unwire the session before disposing, so they
+show nothing.
 
 Default `prompt` timeouts are suspended during active turns, retries, or compaction,
 then reset to 60 seconds when work settles, with a 32-minute overall cap.

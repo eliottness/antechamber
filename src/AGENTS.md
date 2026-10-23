@@ -45,6 +45,7 @@ cli.ts (parseArgs, lazy import per command; no command framework)
 - To cancel a user shell, send `abort_bash` first. Plain `abort` does not stop a running `bash` RPC.
 - Adapter-authored cards (shell output, notices, error cards) live only in memory.
   They are never matched to JSONL entries, never sent to the model, and do not survive a restart.
+  One exception: the agent-stop notice (`msg_agentstop_<time>`) is rebuilt from the registry's `lastStop` until the next prompt.
 - Teardown claims task hosts only for `connectorOwned` sessions. Never kill by command line.
   Never signal `openchamber.service` members or the shared OmO LSP daemon.
 - Read settings through `envSetting` so the `ANTECHAMBER_` prefix wins and `OCPI_` stays a fallback.

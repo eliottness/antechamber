@@ -138,7 +138,7 @@ test("a bare busy RPC prompt reproduces the short command timeout", async (t) =>
   assert.ok(pi);
   await pi.command({ type: "prompt", message: "hold", streamingBehavior: "steer" });
   await assert.rejects(pi.command({ type: "prompt", message: "bare" }, 25), {
-    message: 'pi command "prompt" timed out after 25ms',
+    reason: { kind: "timeout", command: "prompt", ms: 25 },
   });
 });
 

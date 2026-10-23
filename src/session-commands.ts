@@ -294,16 +294,16 @@ export function shellUserMessage(message: ShellMessage): ShellUserMessage {
   };
 }
 
-export function announceSessionNotice(
-  context: ShareNoticeContext,
+/** An adapter-authored notice card; `created` places a replayed notice at its original time. */
+export function noticeMessage(
+  session: ManagedSession,
   messageText: string,
   error?: OCAssistantMessage["error"],
-): void {
-  const { session, sessions, emit } = context;
-  if (!sessions.messages(session.info.id)) return;
+  created?: number,
+): ShareNoticeMessage {
   const info = assistantMessage(session);
-  const created = info.time.created;
-  info.time.completed = created;
+  if (created !== undefined) info.time.created = created;
+  info.time.completed = info.time.created;
   if (error) info.error = error;
   const part: OCTextPart = {
     id: id("prt"),
@@ -311,9 +311,21 @@ export function announceSessionNotice(
     messageID: info.id,
     type: "text",
     text: messageText,
-    time: { start: created, end: created },
+    time: { start: info.time.created, end: info.time.created },
   };
-  const message: ShareNoticeMessage = { info, parts: [part] };
+  return { info, parts: [part] };
+}
+
+export function announceSessionNotice(
+  context: ShareNoticeContext,
+  messageText: string,
+  error?: OCAssistantMessage["error"],
+): void {
+  const { session, sessions, emit } = context;
+  if (!sessions.messages(session.info.id)) return;
+  const message = noticeMessage(session, messageText, error);
+  const [part] = message.parts;
+  const { info } = message;
   sessions.appendMessage(session.info.id, message);
   emit(session.info.directory, { type: "message.updated", properties: { info } });
   emit(session.info.directory, { type: "message.part.updated", properties: { part } });

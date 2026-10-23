@@ -93,6 +93,8 @@ export interface SessionRegistryEntry {
    * revived — and the UI picker would fall back to its own default.
    */
   model?: { providerID: string; modelID: string; variant?: string };
+  /** Why the agent last stopped on its own, shown again after a restart until the session runs again. */
+  lastStop?: { message: string; at: number };
   created: number;
   updated: number;
 }
@@ -549,6 +551,14 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
   if (
     value.model !== undefined &&
     (!record(value.model) || typeof value.model.providerID !== "string" || typeof value.model.modelID !== "string")
+  )
+    return false;
+  if (
+    value.lastStop !== undefined &&
+    (!record(value.lastStop) ||
+      typeof value.lastStop.message !== "string" ||
+      typeof value.lastStop.at !== "number" ||
+      !Number.isFinite(value.lastStop.at))
   )
     return false;
   return true;

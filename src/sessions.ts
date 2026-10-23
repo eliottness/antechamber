@@ -10,7 +10,9 @@ import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   COMPACT_RPC_TIMEOUT_MS,
+  describeStop,
   PiRpcClient,
+  PiStoppedError,
   RPC_COMMAND_TIMEOUT_MS,
   type PiRpcCommand,
   type PiRpcResponse,
@@ -41,7 +43,7 @@ import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
 import { WorkStatusBridge } from "./work-status.js";
 import { sessionDiff } from "./session-diff.js";
-import { announceSessionNotice, skillCommandText, slashTitlePrompt } from "./session-commands.js";
+import { announceSessionNotice, noticeMessage, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
   ocIdFor,
   piSessionDir,
@@ -131,6 +133,8 @@ export interface ManagedSession extends ThinkingState {
   hasBackgroundWork?: () => boolean;
   /** Live wake sources OmO publishes over RPC (detached eval cells), which also block idle eviction. */
   hasWakeSources?: () => boolean;
+  /** Why the agent last stopped on its own; persisted and replayed as a notice until the next prompt. */
+  lastStop?: { message: string; at: number };
 }
 
 type EventSink = (directory: string, event: OCEvent | TodoUpdated) => void;
@@ -175,6 +179,8 @@ export class SessionManager {
   private operations = new Map<string, Promise<unknown>>();
   /** Connector-created session trees, including persisted ownership after restart. */
   private createdSessions = new Map<string, string>();
+  /** Clients whose stop onExit already showed, so a failing revival does not show it again. */
+  private stopShown = new WeakSet<PiRpcClient>();
   private hostShutdown: Promise<void> | undefined;
   private sessions = new Map<string, ManagedSession>();
   private dirtyDiffs = new Set<string>();
@@ -391,12 +397,17 @@ export class SessionManager {
       const extensionRequest = extensionUiRequestFrom(request);
       if (extensionRequest !== undefined) s.approvals?.handle(extensionRequest);
     };
-    const onExit = (code: number | null): void => {
+    const onExit = (code: number | null, signal: string | null): void => {
       if (s.pi !== pi) return;
-      this.events.finishInterruptedRun(s, {
-        name: "UnknownError",
-        data: { message: `pi process exited (code=${code})` },
-      });
+      // An agent that stopped on its own (timeout, broken pipe, crash) must say why: a notice card in the
+      // transcript, the same error on the reply it interrupted, and a replay after an adapter restart.
+      // Pending commands reject with the same PiStoppedError; prompt admission leaves it to this handler.
+      // Without a stop reason antechamber disposed the process itself and keeps the plain notice.
+      const reason = pi.stopReason;
+      const message = reason === undefined ? `pi process exited (code=${code} signal=${signal})` : describeStop(reason);
+      const error = { name: reason === undefined ? "UnknownError" : "AgentStoppedError", data: { message } };
+      this.events.finishInterruptedRun(s, error);
+      if (reason !== undefined) s.lastStop = { message, at: Date.now() };
       try {
         recordTurn(s);
         this.persistMeta(s);
@@ -412,13 +423,11 @@ export class SessionManager {
       void this.lifecycle
         .dormant(s)
         .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
-      this.emit(s.info.directory, {
-        type: "session.error",
-        properties: {
-          sessionID: s.info.id,
-          error: { name: "UnknownError", data: { message: `pi process exited (code=${code})` } },
-        },
-      });
+      if (s.lastStop !== undefined && reason !== undefined) {
+        this.stopShown.add(pi);
+        this.showStop(s, s.lastStop);
+      }
+      this.emit(s.info.directory, { type: "session.error", properties: { sessionID: s.info.id, error } });
       this.events.setStatus(s, { type: "idle" });
     };
     pi.onEvent(onEvent);
@@ -1144,6 +1153,8 @@ export class SessionManager {
       ...(metadata !== undefined ? { metadata } : {}),
     };
     if (metadata !== undefined) (s.tree.promptMetadata ??= {})[userMsg.id] = metadata;
+    // The user moved on: the stop notice stays in this adapter's memory but is not replayed after a restart.
+    if (!context) delete s.lastStop;
     const parts: OCPart[] = (inputParts ?? [{ type: "text", text }]).map((part) => ({
       ...part,
       id: part.id ?? id("prt"),
@@ -1426,8 +1437,27 @@ export class SessionManager {
       s.pi = undefined;
       delete s.approvals;
       await pi.dispose();
+      // Unwired above, so onExit cannot report a stop that ended the revival (crash, cold-start timeout).
+      // Read the reason after dispose: a closed stdout is corrected to the exit status once the exit arrives.
+      if (error instanceof PiStoppedError && !this.stopShown.has(pi))
+        this.reportStop(s, describeStop(pi.stopReason ?? error.reason));
       throw error;
     }
+  }
+
+  /** Record, persist and show a stop that no exit handler will report. */
+  private reportStop(s: ManagedSession, message: string): void {
+    s.lastStop = { message, at: Date.now() };
+    try {
+      this.persistMeta(s);
+    } catch (error) {
+      this.reportPersistenceError(s, error);
+    }
+    this.showStop(s, s.lastStop);
+    this.emit(s.info.directory, {
+      type: "session.error",
+      properties: { sessionID: s.info.id, error: { name: "AgentStoppedError", data: { message } } },
+    });
   }
 
   private ensureMessages(s: ManagedSession): OCMessageWithParts[] {
@@ -1444,12 +1474,56 @@ export class SessionManager {
       if (s.pi === undefined && s.restored !== undefined) followExternalAppends(s, s.restored.piPath);
       const admissions = s.tree.localShellTurns?.length;
       s.messages = parsePiSessionFile(s, getAgentName());
+      if (s.lastStop !== undefined) this.replayStop(s, s.messages, s.lastStop);
       if (fileSize !== undefined) s.historyFileSize = fileSize;
       this.subagents.discover(s, s.messages);
       if (admissions) this.persistMeta(s);
       if (syncSessionCost(s)) this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     }
     return s.messages;
+  }
+
+  /**
+   * The stop notice card. Its id derives from the stop time, so the live card and every replay after a
+   * history re-parse are one message, never duplicates.
+   */
+  private stopNotice(s: ManagedSession, stop: { message: string; at: number }): ReturnType<typeof noticeMessage> {
+    const notice = noticeMessage(
+      s,
+      stop.message,
+      { name: "AgentStoppedError", data: { message: stop.message } },
+      stop.at,
+    );
+    notice.info.id = `msg_agentstop_${stop.at}`;
+    for (const part of notice.parts) {
+      part.id = `prt_agentstop_${stop.at}`;
+      part.messageID = notice.info.id;
+    }
+    return notice;
+  }
+
+  private showStop(s: ManagedSession, stop: { message: string; at: number }): void {
+    const messages = this.ensureMessages(s);
+    let notice = messages.find((message) => message.info.id === `msg_agentstop_${stop.at}`);
+    if (notice === undefined) {
+      notice = this.stopNotice(s, stop);
+      this.appendMessage(s.info.id, notice);
+    }
+    this.emit(s.info.directory, { type: "message.updated", properties: { info: notice.info } });
+    for (const part of notice.parts) this.events.emitPart(s, part);
+  }
+
+  /** Show the last unexplained stop again after a history re-parse or adapter restart, where it happened. */
+  private replayStop(s: ManagedSession, messages: OCMessageWithParts[], stop: { message: string; at: number }): void {
+    if (messages.some((message) => message.info.id === `msg_agentstop_${stop.at}`)) return;
+    // Like appendMessage: never inside the hidden redo branch while reverted.
+    const boundary = messages.findIndex((message) => message.info.id === s.tree.revert?.messageID);
+    const later = messages.findIndex((message) => message.info.time.created > stop.at);
+    const at = Math.min(later < 0 ? messages.length : later, boundary < 0 ? messages.length : boundary);
+    const notice = this.stopNotice(s, stop);
+    notice.info.parentID = messages.slice(0, at).findLast((message) => message.info.role === "user")?.info.id ?? "";
+    (s.localMessageIds ??= new Set()).add(notice.info.id);
+    messages.splice(at, 0, notice);
   }
 
   private refreshMessageCache(s: ManagedSession, replaceNative = false): OCMessageWithParts[] {
@@ -1575,6 +1649,7 @@ export class SessionManager {
       restored: { piSessionId: sc.piSessionId, piPath: sc.piPath },
       hasPendingInteraction: () => false,
       hasRunningChildren: () => false,
+      ...(reg?.lastStop !== undefined ? { lastStop: reg.lastStop } : {}),
     };
     this.sessions.set(ocId, managed);
     if (reg?.connectorOwned === true) this.createdSessions.set(sc.piSessionId, sc.directory);
@@ -1640,6 +1715,7 @@ export class SessionManager {
       ...(s.info.parentID !== undefined ? { parentID: s.info.parentID } : {}),
       ...(s.info.parentMessageID !== undefined ? { parentMessageID: s.info.parentMessageID } : {}),
       ...(s.model !== undefined ? { model: { providerID: s.model.providerID, modelID: s.model.modelID } } : {}),
+      ...(s.lastStop !== undefined ? { lastStop: s.lastStop } : {}),
       created: s.info.time.created,
       updated: s.info.time.updated,
     });

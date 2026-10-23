@@ -18,6 +18,7 @@ import {
   runSlashCommand,
 } from "./session-commands.js";
 import { envSetting } from "./config.js";
+import { PiStoppedError } from "./pi-rpc.js";
 import type { SelfUpdateResult } from "./self-update.js";
 
 export interface RouteServices {
@@ -94,6 +95,8 @@ export function promptAsync(
   void services.sessions
     .prompt(session.info.id, text, model, noReply, messageID, delivery, parts, metadata)
     .catch((error: unknown) => {
+      // The agent stopped: the session's exit handler already shows why, once.
+      if (error instanceof PiStoppedError) return;
       announceSessionError(
         { sessions: services.sessions, session, emit: services.broadcast },
         error instanceof Error ? error.name : "UnknownError",
