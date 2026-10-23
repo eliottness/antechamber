@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-10-23
+
 ### Fixed
 
 - Stop OmO Work's status poll from killing the agent. Its 10-second `eval_cells.list` lost the race with a large
