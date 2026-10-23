@@ -129,6 +129,8 @@ export interface ManagedSession extends ThinkingState {
   hasRunningChildren: () => boolean;
   /** Live OmO background work (monitors) that keeps the agent process from idle eviction. */
   hasBackgroundWork?: () => boolean;
+  /** Live wake sources OmO publishes over RPC (detached eval cells), which also block idle eviction. */
+  hasWakeSources?: () => boolean;
 }
 
 type EventSink = (directory: string, event: OCEvent | TodoUpdated) => void;
@@ -289,6 +291,7 @@ export class SessionManager {
       published = true;
       this.subagents.wire(managed);
       this.monitors.wire(managed);
+      this.workStatus.wire(managed);
       this.lifecycle.touch(managed);
       this.wirePi(managed, pi);
 
@@ -1577,6 +1580,7 @@ export class SessionManager {
     if (reg?.connectorOwned === true) this.createdSessions.set(sc.piSessionId, sc.directory);
     this.subagents.wire(managed);
     this.monitors.wire(managed);
+    this.workStatus.wire(managed);
     return managed;
   }
 

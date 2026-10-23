@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop reaping a session while detached eval cells are still running: idle eviction killed the agent process and
+  every cell in its kernels once the session had been quiet for `ANTECHAMBER_IDLE_TIMEOUT_MS`. A session now stays
+  live while senpi-codemode reports detached cells, and its idle window restarts when the last one settles.
+
 ## [1.0.14] - 2026-10-22
 
 ### Fixed

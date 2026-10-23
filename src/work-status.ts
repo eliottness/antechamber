@@ -206,6 +206,11 @@ export class WorkStatusBridge {
     return work;
   }
 
+  /** Evicting the agent process would kill its detached eval cells, so a live wake source keeps it. */
+  wire(s: ManagedSession): void {
+    s.hasWakeSources = () => (this.work.get(s.info.id)?.wakeSources.size ?? 0) > 0;
+  }
+
   observe(s: ManagedSession, ev: Record<string, unknown>): void {
     if (ev.name === WAKE_SOURCE_STATE_EVENT) {
       const source = parseWakeSource(ev.data);
