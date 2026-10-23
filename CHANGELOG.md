@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.15] - 2026-10-23
+
 ### Fixed
 
 - Stop reaping a session while detached eval cells are still running: idle eviction killed the agent process and
