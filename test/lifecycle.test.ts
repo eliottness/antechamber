@@ -548,19 +548,30 @@ test("reaper keeps a session alive while a background terminal session runs", as
   const s = manager.get(info.id);
   const pi = s?.pi;
   assert.ok(s && pi && s.piPath && s.piSessionId);
-  const shell = { id: "bash_1", command: "node scripts/ci-poll.mjs", startedAtMs: 0 };
-  // An entry without a recorded process cannot be confirmed alive, so it must not pin the session.
+  const runtime = { argv: ["bash"], pid: process.pid, processGroupId: process.pid };
+  const shell = { id: "bash_1", command: "node scripts/ci-poll.mjs", startedAtMs: Date.now(), runtime };
   writeTerminalManifest(s.piPath, s.piSessionId, [shell]);
-  clock.time = 99;
-  await manager.lifecycle.reap();
-  assert.ok(s.pi === pi);
-  writeTerminalManifest(s.piPath, s.piSessionId, [
-    { ...shell, runtime: { argv: ["bash"], pid: process.pid, processGroupId: process.pid } },
-  ]);
   clock.time = 10_000;
   await manager.lifecycle.reap();
   assert.ok(s.pi === pi, "a running background shell must keep its agent process");
   writeTerminalManifest(s.piPath, s.piSessionId, []);
+  await manager.lifecycle.reap();
+  assert.equal(s.pi, undefined);
+});
+
+test("leftover manifest entries a session cannot confirm do not pin it", async (t) => {
+  const { manager, clock, dir } = setupTurnAgent(t);
+  const info = await manager.create(dir);
+  const s = manager.get(info.id);
+  assert.ok(s?.pi && s.piPath && s.piSessionId);
+  const runtime = { argv: ["bash"], pid: process.pid, processGroupId: process.pid };
+  writeTerminalManifest(s.piPath, s.piSessionId, [
+    // No recorded process: OmO cannot confirm it alive either.
+    { id: "bash_1", command: "sleep 600", startedAtMs: Date.now() },
+    // Left by an earlier agent process; its pid is alive but may belong to anything by now.
+    { id: "bash_2", command: "sleep 600", startedAtMs: s.pi.startedAtMs - 1, runtime },
+  ]);
+  clock.time = 10_000;
   await manager.lifecycle.reap();
   assert.equal(s.pi, undefined);
 });

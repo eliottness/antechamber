@@ -208,17 +208,22 @@ export class WorkStatusBridge {
 
   /**
    * Evicting the agent process kills its detached eval cells and background terminal sessions (a
-   * `bash` run_in_background shell dies with the agent's process group, so its exit never wakes the
-   * session). A live wake source or a manifest entry whose recorded process is alive keeps it. OmO
-   * itself counts an entry without `runtime` as not alive (terminal restore, `defaultBackgroundAlive`).
+   * `bash` run_in_background shell is owned by the agent, whose PTY closes when it exits, so its exit
+   * never wakes the session). A live wake source keeps it, and so does a manifest entry whose recorded
+   * process is alive and that this agent process started: a crashed or evicted agent never records
+   * its shells' exits, and such a leftover pid may since belong to an unrelated process. OmO itself
+   * counts an entry without `runtime` as not alive (terminal restore, `defaultBackgroundAlive`).
    */
   wire(s: ManagedSession): void {
     s.hasWakeSources = () => {
       if ((this.work.get(s.info.id)?.wakeSources.size ?? 0) > 0) return true;
       const sessionFile = s.piPath;
       const piSessionId = s.piSessionId;
-      if (sessionFile === undefined || piSessionId === undefined) return false;
-      return readBackgroundSessions(sessionFile, piSessionId).some((shell) => shell.pid !== undefined);
+      const spawnedAt = s.pi?.startedAtMs;
+      if (sessionFile === undefined || piSessionId === undefined || spawnedAt === undefined) return false;
+      return readBackgroundSessions(sessionFile, piSessionId).some(
+        (shell) => shell.pid !== undefined && shell.startedAtMs >= spawnedAt,
+      );
     };
   }
 

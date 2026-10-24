@@ -177,6 +177,8 @@ export class PiRpcClient extends EventEmitter {
   private agentActive = false;
   private compacting = false;
   private sessionPath: string | undefined;
+  /** Wall-clock spawn time; work OmO records before it belongs to an earlier agent process. */
+  readonly startedAtMs = Date.now();
 
   get pid(): number | undefined {
     return this.proc.pid;
