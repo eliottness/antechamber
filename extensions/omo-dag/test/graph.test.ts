@@ -92,6 +92,71 @@ describe("buildGraph", () => {
     );
   });
 
+  test("recovers run members the registry remembers after OmO pruned their task records", () => {
+    const ms = (s: number) => Date.UTC(2026, 9, 13, 12, 0, s);
+    const entry = (
+      id: string,
+      session: string,
+      start: number,
+      end: number,
+      opts: { prompt?: string; parentPi?: string } = {},
+    ) => ({
+      piSessionId: session,
+      parentID: rootOc,
+      title: `recovered ${id}`,
+      created: ms(0),
+      task: {
+        id,
+        parentPiId: opts.parentPi ?? ROOT,
+        terminalAt: ms(end),
+        input: {
+          description: `work ${id}`,
+          subagent_type: "deep-low",
+          ...(opts.prompt !== undefined ? { prompt: opts.prompt } : {}),
+        },
+        details: {
+          status: "completed",
+          task_summary: `recovered ${id}`,
+          category: "deep-low",
+          model: "openai/gpt-x",
+          duration_ms: (end - start) * 1000,
+          final_response: `result of ${id}`,
+          run_stats: { total_tokens: 1200, cost_usd: 0.5, tool_calls: 7 },
+        },
+      },
+    });
+    const entries = normalizeRegistry({
+      ...registry,
+      ses_first: entry("st_prun0001", "prun-1-session", 0, 5),
+      ses_second: entry("st_prun0002", "prun-2-session", 10, 20, { prompt: "Summarise agent://st_prun0001" }),
+      ses_nested: entry("st_prun0003", "prun-3-session", 6, 8, { parentPi: "prun-1-session" }),
+      ses_live: entry("st_scan0001", "scan-session", 10, 20),
+      ses_alien: entry("st_alien001", "alien-session", 0, 1, { parentPi: "another-root" }),
+    });
+    assert.ok(entries);
+
+    const graph = buildGraph(rootOc, [task("st_scan0001", 10, 20)], entries);
+    const recovered = graph.nodes.find((n) => n.id === "st_prun0001");
+
+    assert.deepEqual(
+      graph.nodes.map((n) => n.id).sort(),
+      [rootOc, "st_prun0001", "st_prun0002", "st_prun0003", "st_scan0001"].sort(),
+    );
+    assert.equal(graph.nodes.filter((n) => n.id === "st_scan0001").length, 1);
+    assert.equal(recovered?.sessionId, "ses_first");
+    assert.equal(recovered?.state, "completed");
+    assert.equal(recovered?.title, "recovered st_prun0001");
+    assert.equal(recovered?.agent, "deep-low");
+    assert.equal(recovered?.model, "openai/gpt-x");
+    assert.equal(recovered?.summary, "result of st_prun0001");
+    assert.equal(recovered?.tokens, 1200);
+    assert.equal(recovered?.createdAt, ms(0));
+    assert.equal(recovered?.endedAt, ms(5));
+    assert.equal(graph.nodes.find((n) => n.id === "st_prun0003")?.parentId, "st_prun0001");
+    assert.ok(graph.edges.some((e) => e.kind === "uses" && e.from === "st_prun0001" && e.to === "st_prun0002"));
+    assert.equal(graph.nodes.find((n) => n.id === "st_prun0002")?.column, 2);
+  });
+
   const g = buildGraph(rootOc, tasks, registry);
   const node = (id: string) => g.nodes.find((n) => n.id === id);
 

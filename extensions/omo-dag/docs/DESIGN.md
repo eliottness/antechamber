@@ -26,12 +26,21 @@ does that in ~2 ms with an mtime cache and returns one JSON document.
    `created_at` / `started_at` / `terminal_at` timestamps,
    `final_response`, `error_message`, `run_stats`, `spawn_spec.prompt`.
 2. **Connector registry**: `<stateDir>/sessions.json`, mapping OpenChamber
-   session ids to OmO session ids and titles.
+   session ids to OmO session ids and titles. For a sub-agent it also keeps
+   `task.details` (status, summary, category, model, `run_stats`,
+   `final_response`), `task.input` and `task.terminalAt`.
+
+OmO disposes a task's own `st_*.json` once its run is over, so for an older run
+the registry is the only surviving record of most sub-agents. Run members the
+task files no longer describe are rebuilt from their registry entry, which
+carries its own timestamps: the end is when the connector saw the task finish,
+and the start is that end minus the recorded duration. A live task record always
+wins over the registry copy.
 
 Task discovery reads regular `.json` files and skips directories and symlinks.
 The service resolves configured root spellings before using them as cache
 keys; its recency-updated task-store cache holds at most 32 root sets. Graph
-responses are capped at 240,000 serialized characters. If the full graph
+responses are capped at 1,000,000 serialized characters. If the full graph
 exceeds that bound, the service keeps the root and a valid task prefix, removes
 edges to omitted tasks, and returns `truncated.omittedNodes`; the panel
 validates that field and displays the count.
@@ -47,7 +56,9 @@ when they predate task metadata in the registry.
 
 ## Graph model (`src/graph.ts`)
 
-- **Run**: every task whose `root_session_id` equals the resolved root. The
+- **Run**: every task whose `root_session_id` equals the resolved root, plus
+  every registry sub-agent whose `parentPiId` is the root or a session owned by
+  a member already found. The
   root is resolved from the open session: it is either a root itself, a
   sub-agent (resolved through its parent-qualified identity or registry), or a
   registry entry.

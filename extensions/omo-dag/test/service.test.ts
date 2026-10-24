@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "../src/service.ts";
+import { createServer, MAX_GRAPH_BODY_CHARS } from "../src/service.ts";
 import type { TaskGraph } from "../src/graph.ts";
 import { TaskStore } from "../src/store.ts";
 
@@ -106,7 +106,7 @@ describe("service", () => {
   });
 
   test("bounds oversized graph responses and reports omitted nodes", async (t) => {
-    const tasks = Array.from({ length: 1000 }, (_, index) => ({
+    const tasks = Array.from({ length: 3000 }, (_, index) => ({
       task_id: `st_large${String(index).padStart(6, "0")}`,
       status: "completed",
       parent_session_id: "root-pi",
@@ -143,7 +143,7 @@ describe("service", () => {
     const graph = JSON.parse(body) as TaskGraph;
 
     assert.equal(response.status, 200);
-    assert.ok(body.length <= 240_000);
+    assert.ok(body.length <= MAX_GRAPH_BODY_CHARS);
     assert.ok(graph.truncated);
     assert.equal(graph.truncated.omittedNodes, tasks.length - (graph.nodes.length - 1));
   });

@@ -38,12 +38,36 @@ export interface TaskRecord {
   run_stats?: { total_tokens?: number; cost_usd?: number; tool_calls?: number; turns?: number };
 }
 
+/** What the connector remembers about a sub-agent task, independent of OmO's own task files. */
+export interface RegistryTaskDetails {
+  status?: string;
+  task_summary?: string;
+  name?: string;
+  category?: string;
+  agent_type?: string;
+  execution_mode?: string;
+  model?: string;
+  final_response?: string;
+  error_message?: string;
+  duration_ms?: number;
+  run_stats?: TaskRecord["run_stats"];
+}
+
+export interface RegistryTask {
+  id?: string;
+  parentPiId?: string;
+  terminalAt?: number;
+  details?: RegistryTaskDetails;
+  input?: { prompt?: string; description?: string; subagent_type?: string };
+}
+
 export interface RegistryEntry {
   deleted?: boolean;
   piSessionId?: string;
   parentID?: string;
   title?: string;
-  task?: { id?: string; parentPiId?: string };
+  created?: number;
+  task?: RegistryTask;
 }
 export type Registry = Record<string, RegistryEntry>;
 
@@ -122,6 +146,16 @@ const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typ
 const text = (v: unknown) => (typeof v === "string" ? v : undefined);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
+function normalizeRunStats(raw: unknown): TaskRecord["run_stats"] | undefined {
+  if (!isObject(raw)) return undefined;
+  return {
+    total_tokens: num(raw.total_tokens),
+    cost_usd: num(raw.cost_usd),
+    tool_calls: num(raw.tool_calls),
+    turns: num(raw.turns),
+  };
+}
+
 export function normalizeTask(raw: unknown): TaskRecord | undefined {
   if (!isObject(raw) || typeof raw.task_id !== "string" || raw.task_id === "") return undefined;
   const task: TaskRecord = { task_id: raw.task_id };
@@ -134,14 +168,47 @@ export function normalizeTask(raw: unknown): TaskRecord | undefined {
   if (host !== undefined) task.host_session = { session_path: host };
   if (isObject(raw.spawn_spec))
     task.spawn_spec = { prompt: text(raw.spawn_spec.prompt), instructions: text(raw.spawn_spec.instructions) };
-  if (isObject(raw.run_stats)) {
-    const s = raw.run_stats;
-    task.run_stats = {
-      total_tokens: num(s.total_tokens),
-      cost_usd: num(s.cost_usd),
-      tool_calls: num(s.tool_calls),
-      turns: num(s.turns),
-    };
+  const stats = normalizeRunStats(raw.run_stats);
+  if (stats !== undefined) task.run_stats = stats;
+  return task;
+}
+
+const DETAIL_FIELDS = [
+  "status",
+  "task_summary",
+  "name",
+  "category",
+  "agent_type",
+  "execution_mode",
+  "model",
+  "final_response",
+  "error_message",
+] as const;
+
+function normalizeDetails(raw: unknown): RegistryTaskDetails | undefined {
+  if (!isObject(raw)) return undefined;
+  const details: RegistryTaskDetails = {};
+  for (const key of DETAIL_FIELDS) {
+    const value = text(raw[key]);
+    if (value !== undefined) details[key] = value;
+  }
+  if (num(raw.duration_ms) !== undefined) details.duration_ms = num(raw.duration_ms);
+  const stats = normalizeRunStats(raw.run_stats);
+  if (stats !== undefined) details.run_stats = stats;
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
+function normalizeTaskEntry(raw: Record<string, unknown>): RegistryTask {
+  const task: RegistryTask = { id: text(raw.id), parentPiId: text(raw.parentPiId) };
+  if (num(raw.terminalAt) !== undefined) task.terminalAt = num(raw.terminalAt);
+  const details = normalizeDetails(raw.details);
+  if (details !== undefined) task.details = details;
+  if (isObject(raw.input)) {
+    const input: RegistryTask["input"] = {};
+    if (text(raw.input.prompt) !== undefined) input.prompt = text(raw.input.prompt);
+    if (text(raw.input.description) !== undefined) input.description = text(raw.input.description);
+    if (text(raw.input.subagent_type) !== undefined) input.subagent_type = text(raw.input.subagent_type);
+    if (Object.keys(input).length > 0) task.input = input;
   }
   return task;
 }
@@ -156,7 +223,8 @@ export function normalizeRegistry(raw: unknown): Registry | undefined {
     if (text(value.piSessionId) !== undefined) entry.piSessionId = text(value.piSessionId);
     if (text(value.parentID) !== undefined) entry.parentID = text(value.parentID);
     if (text(value.title) !== undefined) entry.title = text(value.title);
-    if (isObject(value.task)) entry.task = { id: text(value.task.id), parentPiId: text(value.task.parentPiId) };
+    if (num(value.created) !== undefined) entry.created = num(value.created);
+    if (isObject(value.task)) entry.task = normalizeTaskEntry(value.task);
     out[id] = entry;
   }
   return out;
@@ -228,6 +296,76 @@ function ownSessionIds(task: TaskRecord): string[] {
   return ids;
 }
 
+const iso = (value: number | undefined) => (value === undefined ? undefined : new Date(value).toISOString());
+
+/**
+ * A task as its registry entry remembers it. OmO disposes a task's own
+ * `st_*.json` once the run is over, so for an older run the entry is the only
+ * surviving record. Its timestamps are the connector's: the end is when the
+ * connector saw the task finish, and the start is that end minus the recorded
+ * duration, which is enough to group waves.
+ */
+function recoveredTask(entry: RegistryEntry, rootPi: string): TaskRecord | undefined {
+  const id = entry.task?.id;
+  if (entry.task === undefined || id === undefined) return undefined;
+  const details = entry.task.details ?? {};
+  const input = entry.task.input ?? {};
+  const endedAt = entry.task.terminalAt;
+  const createdAt =
+    endedAt !== undefined && details.duration_ms !== undefined ? endedAt - details.duration_ms : entry.created;
+  const task: TaskRecord = { task_id: id, root_session_id: rootPi };
+  const optional = {
+    status: details.status,
+    parent_session_id: entry.task.parentPiId,
+    child_session_id: entry.piSessionId,
+    execution_mode: details.execution_mode,
+    name: details.name,
+    task_summary: details.task_summary ?? entry.title,
+    description: input.description,
+    agent_type: details.agent_type ?? input.subagent_type,
+    category: details.category,
+    model: details.model,
+    created_at: iso(createdAt),
+    started_at: iso(createdAt),
+    terminal_at: iso(endedAt),
+    final_response: details.final_response,
+    error_message: details.error_message,
+  };
+  for (const [key, value] of Object.entries(optional)) {
+    if (value !== undefined) task[key as keyof typeof optional] = value;
+  }
+  if (input.prompt !== undefined) task.spawn_spec = { prompt: input.prompt };
+  if (details.run_stats !== undefined) task.run_stats = details.run_stats;
+  return task;
+}
+
+/**
+ * Run members the registry still knows and OmO's task files no longer do. A
+ * sub-agent belongs to the run when its `parentPiId` is the root session or a
+ * session owned by a member already found, which is the rule spawn edges use.
+ */
+function recoveredTasks(rootPi: string, registry: Registry, known: Set<string>): TaskRecord[] {
+  const candidates = Object.entries(registry).filter(([, entry]) => entry.task?.id !== undefined && !entry.deleted);
+  const runSessions = new Set([rootPi]);
+  const claimed = new Set<string>();
+  const recovered: TaskRecord[] = [];
+  for (let growing = true; growing; ) {
+    growing = false;
+    for (const [sessionId, entry] of candidates) {
+      const parentPi = entry.task?.parentPiId;
+      if (claimed.has(sessionId) || parentPi === undefined || !runSessions.has(parentPi)) continue;
+      claimed.add(sessionId);
+      growing = true;
+      runSessions.add(entry.task!.id!);
+      if (entry.piSessionId !== undefined) runSessions.add(entry.piSessionId);
+      if (known.has(entry.task!.id!)) continue;
+      const task = recoveredTask(entry, rootPi);
+      if (task) recovered.push(task);
+    }
+  }
+  return recovered;
+}
+
 const TASK_REF = /(?:agent:\/\/)?\b(st_[0-9A-Za-z_-]{6,})\b/g;
 
 function referencedTasks(task: TaskRecord): Set<string> {
@@ -278,9 +416,10 @@ export function buildGraph(sessionId: string, tasks: TaskRecord[], registry: Reg
     };
   }
   const { rootPi, rootOc, focusOc } = resolved;
-  const members = tasks
-    .filter((t) => (t.root_session_id ?? t.parent_session_id) === rootPi)
-    .sort((a, b) => (time(a.created_at) ?? 0) - (time(b.created_at) ?? 0) || a.task_id.localeCompare(b.task_id));
+  const live = tasks.filter((t) => (t.root_session_id ?? t.parent_session_id) === rootPi);
+  const members = [...live, ...recoveredTasks(rootPi, registry, new Set(live.map((t) => t.task_id)))].sort(
+    (a, b) => (time(a.created_at) ?? 0) - (time(b.created_at) ?? 0) || a.task_id.localeCompare(b.task_id),
+  );
 
   const owner = new Map<string, string>();
   for (const t of members) for (const id of ownSessionIds(t)) owner.set(id, t.task_id);

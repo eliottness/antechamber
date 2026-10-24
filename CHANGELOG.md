@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OmO Graph now draws every sub-agent of a run, not only the few whose task files OmO still keeps. Task records
+  are disposed once a run is over, and the graph read nothing else, so an older session rendered a handful of cards
+  instead of hundreds. Pruned members are rebuilt from the connector registry, which keeps each sub-agent's status,
+  summary, category, model, token and cost stats, result and prompt. The response cap also rose from 240,000 to
+  1,000,000 characters so a complete run of a few hundred agents is no longer reported as omitted nodes.
+
 ## [1.0.17] - 2026-10-24
 
 ### Fixed

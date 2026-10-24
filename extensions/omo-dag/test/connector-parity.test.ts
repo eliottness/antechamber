@@ -25,16 +25,45 @@ test("the connector's registry entries keep the fields the graph reads", () => {
     directory: "/repo",
     title: "Child",
     parentID: connectorOcIdFor("root-pi"),
-    task: { id: "st_aaaa0001", parentPiId: "root-pi", input: {}, details: {} },
+    task: {
+      id: "st_aaaa0001",
+      parentPiId: "root-pi",
+      terminalAt: 3,
+      input: { description: "work", prompt: "use agent://st_bbbb0002", subagent_type: "deep-low" },
+      details: {
+        status: "completed",
+        task_summary: "work",
+        category: "deep-low",
+        model: "openai/gpt-x",
+        duration_ms: 2,
+        final_response: "done",
+        run_stats: { total_tokens: 5, cost_usd: 1, tool_calls: 2, turns: 1 },
+      },
+    },
   };
   const registry = normalizeRegistry(JSON.parse(JSON.stringify({ ses_root: root, ses_child: child })));
   assert.deepEqual(registry, {
-    ses_root: { piSessionId: "root-pi", title: "Run" },
+    ses_root: { piSessionId: "root-pi", title: "Run", created: 1 },
     ses_child: {
       piSessionId: "st_aaaa0001",
       parentID: connectorOcIdFor("root-pi"),
       title: "Child",
-      task: { id: "st_aaaa0001", parentPiId: "root-pi" },
+      created: 1,
+      task: {
+        id: "st_aaaa0001",
+        parentPiId: "root-pi",
+        terminalAt: 3,
+        input: { description: "work", prompt: "use agent://st_bbbb0002", subagent_type: "deep-low" },
+        details: {
+          status: "completed",
+          task_summary: "work",
+          category: "deep-low",
+          model: "openai/gpt-x",
+          duration_ms: 2,
+          final_response: "done",
+          run_stats: { total_tokens: 5, cost_usd: 1, tool_calls: 2, turns: 1 },
+        },
+      },
     },
   });
 });

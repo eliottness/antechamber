@@ -4,7 +4,7 @@ import { buildGraph } from "./graph.ts";
 import { defaultRoots, expandHome, TaskStore, type StoreRoots } from "./store.ts";
 
 export const MAX_TASK_STORES = 32;
-export const MAX_GRAPH_BODY_CHARS = 240_000;
+export const MAX_GRAPH_BODY_CHARS = 1_000_000;
 
 function canonicalRoots(roots: StoreRoots): StoreRoots {
   return {
