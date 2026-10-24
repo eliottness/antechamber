@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep a session's agent out of idle eviction while a background terminal session (`bash` run in the background)
+  is still running. The reaper killed it with the agent 15 minutes after the turn ended, so a CI poller or long
+  build died silently and the session never woke up with its result.
+
 ## [1.0.16] - 2026-10-23
 
 ### Fixed

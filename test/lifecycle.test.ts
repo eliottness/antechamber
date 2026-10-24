@@ -5,7 +5,7 @@ import { once } from "node:events";
 import fs, { mkdtempSync, rmSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { PiRpcClient } from "../src/pi-rpc.js";
 import type { LifecycleClock } from "../src/lifecycle.js";
@@ -527,6 +527,50 @@ test("an agent exit drops its detached cells so they cannot pin the revived sess
   await exited;
   await manager.prompt(info.id, "REVIVED");
   assert.ok(s.pi);
+  clock.time = 10_000;
+  await manager.lifecycle.reap();
+  assert.equal(s.pi, undefined);
+});
+
+// OmO's terminal extension rewrites this manifest on every background shell start and exit
+// (terminal/terminal-manifest.js `recordBackgroundStart`/`recordBackgroundExit`); the shell's wake
+// source is in-process only, so the manifest is all the connector can see.
+function writeTerminalManifest(piPath: string, piSessionId: string, shells: Record<string, unknown>[]): void {
+  const dir = join(dirname(piPath), "extensions", "terminal");
+  fs.mkdirSync(dir, { recursive: true });
+  const manifest = { version: 2, sessionId: piSessionId, monitors: [], backgroundSessions: shells, updatedAt: 0 };
+  fs.writeFileSync(join(dir, `${encodeURIComponent(piSessionId)}.json`), JSON.stringify(manifest));
+}
+
+test("reaper keeps a session alive while a background terminal session runs", async (t) => {
+  const { manager, clock, dir } = setupTurnAgent(t);
+  const info = await manager.create(dir);
+  const s = manager.get(info.id);
+  const pi = s?.pi;
+  assert.ok(s && pi && s.piPath && s.piSessionId);
+  const runtime = { argv: ["bash"], pid: process.pid, processGroupId: process.pid };
+  const shell = { id: "bash_1", command: "node scripts/ci-poll.mjs", startedAtMs: Date.now(), runtime };
+  writeTerminalManifest(s.piPath, s.piSessionId, [shell]);
+  clock.time = 10_000;
+  await manager.lifecycle.reap();
+  assert.ok(s.pi === pi, "a running background shell must keep its agent process");
+  writeTerminalManifest(s.piPath, s.piSessionId, []);
+  await manager.lifecycle.reap();
+  assert.equal(s.pi, undefined);
+});
+
+test("leftover manifest entries a session cannot confirm do not pin it", async (t) => {
+  const { manager, clock, dir } = setupTurnAgent(t);
+  const info = await manager.create(dir);
+  const s = manager.get(info.id);
+  assert.ok(s?.pi && s.piPath && s.piSessionId);
+  const runtime = { argv: ["bash"], pid: process.pid, processGroupId: process.pid };
+  writeTerminalManifest(s.piPath, s.piSessionId, [
+    // No recorded process: OmO cannot confirm it alive either.
+    { id: "bash_1", command: "sleep 600", startedAtMs: Date.now() },
+    // Left by an earlier agent process; its pid is alive but may belong to anything by now.
+    { id: "bash_2", command: "sleep 600", startedAtMs: s.pi.startedAtMs - 1, runtime },
+  ]);
   clock.time = 10_000;
   await manager.lifecycle.reap();
   assert.equal(s.pi, undefined);
