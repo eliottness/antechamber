@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-10-24
+
 ### Fixed
 
 - Keep a session's agent out of idle eviction while a background terminal session (`bash` run in the background)
