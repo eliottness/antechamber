@@ -324,6 +324,23 @@ that drops the count to zero is itself an agent event, so the idle window
 restarts when the last cell settles. The agent process exiting clears every
 wake source, so a dead agent cannot pin a revived session.
 
+Background terminal sessions (`bash` with `run_in_background`, or a command
+that auto-detached) are protected too. They live in the agent's process group,
+so eviction kills them, and their exit notification, which would have woken
+the session, never arrives. Their wake source is bus-only, so the connector
+reads the terminal manifest (see the OmO Work section below) instead, and it
+keeps the session out of idle eviction while any entry's recorded
+`runtime.pid` is alive. An entry without `runtime` does not count, matching
+OmO's own restore check. Observed on October 24, 2026: a CI poller started as
+`bash_1` was reaped 15 minutes after the turn ended, and the next prompt found
+`No terminal session found with id: bash_1`.
+
+Evidence, from the installed `@code-yeongyu/senpi` runtime bundle
+(`dist/bundle/chunks/chunk-NNQ7DPUD.js`) inspected on October 24, 2026:
+`recordBackgroundStart(id, command, startedAtMs, runtime)` and
+`recordBackgroundExit(id)` rewrite the manifest, and `defaultBackgroundAlive`
+treats `runtime === undefined` as not alive.
+
 Evidence, from the installed `@code-yeongyu/senpi-codemode` 2026.10.19-2
 package inspected on October 23, 2026:
 

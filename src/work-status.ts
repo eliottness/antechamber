@@ -206,9 +206,20 @@ export class WorkStatusBridge {
     return work;
   }
 
-  /** Evicting the agent process would kill its detached eval cells, so a live wake source keeps it. */
+  /**
+   * Evicting the agent process kills its detached eval cells and background terminal sessions (a
+   * `bash` run_in_background shell dies with the agent's process group, so its exit never wakes the
+   * session). A live wake source or a manifest entry whose recorded process is alive keeps it. OmO
+   * itself counts an entry without `runtime` as not alive (terminal restore, `defaultBackgroundAlive`).
+   */
   wire(s: ManagedSession): void {
-    s.hasWakeSources = () => (this.work.get(s.info.id)?.wakeSources.size ?? 0) > 0;
+    s.hasWakeSources = () => {
+      if ((this.work.get(s.info.id)?.wakeSources.size ?? 0) > 0) return true;
+      const sessionFile = s.piPath;
+      const piSessionId = s.piSessionId;
+      if (sessionFile === undefined || piSessionId === undefined) return false;
+      return readBackgroundSessions(sessionFile, piSessionId).some((shell) => shell.pid !== undefined);
+    };
   }
 
   observe(s: ManagedSession, ev: Record<string, unknown>): void {

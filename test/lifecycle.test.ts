@@ -5,7 +5,7 @@ import { once } from "node:events";
 import fs, { mkdtempSync, rmSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { PiRpcClient } from "../src/pi-rpc.js";
 import type { LifecycleClock } from "../src/lifecycle.js";
@@ -528,6 +528,39 @@ test("an agent exit drops its detached cells so they cannot pin the revived sess
   await manager.prompt(info.id, "REVIVED");
   assert.ok(s.pi);
   clock.time = 10_000;
+  await manager.lifecycle.reap();
+  assert.equal(s.pi, undefined);
+});
+
+// OmO's terminal extension rewrites this manifest on every background shell start and exit
+// (terminal/terminal-manifest.js `recordBackgroundStart`/`recordBackgroundExit`); the shell's wake
+// source is in-process only, so the manifest is all the connector can see.
+function writeTerminalManifest(piPath: string, piSessionId: string, shells: Record<string, unknown>[]): void {
+  const dir = join(dirname(piPath), "extensions", "terminal");
+  fs.mkdirSync(dir, { recursive: true });
+  const manifest = { version: 2, sessionId: piSessionId, monitors: [], backgroundSessions: shells, updatedAt: 0 };
+  fs.writeFileSync(join(dir, `${encodeURIComponent(piSessionId)}.json`), JSON.stringify(manifest));
+}
+
+test("reaper keeps a session alive while a background terminal session runs", async (t) => {
+  const { manager, clock, dir } = setupTurnAgent(t);
+  const info = await manager.create(dir);
+  const s = manager.get(info.id);
+  const pi = s?.pi;
+  assert.ok(s && pi && s.piPath && s.piSessionId);
+  const shell = { id: "bash_1", command: "node scripts/ci-poll.mjs", startedAtMs: 0 };
+  // An entry without a recorded process cannot be confirmed alive, so it must not pin the session.
+  writeTerminalManifest(s.piPath, s.piSessionId, [shell]);
+  clock.time = 99;
+  await manager.lifecycle.reap();
+  assert.ok(s.pi === pi);
+  writeTerminalManifest(s.piPath, s.piSessionId, [
+    { ...shell, runtime: { argv: ["bash"], pid: process.pid, processGroupId: process.pid } },
+  ]);
+  clock.time = 10_000;
+  await manager.lifecycle.reap();
+  assert.ok(s.pi === pi, "a running background shell must keep its agent process");
+  writeTerminalManifest(s.piPath, s.piSessionId, []);
   await manager.lifecycle.reap();
   assert.equal(s.pi, undefined);
 });
