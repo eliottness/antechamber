@@ -90,6 +90,23 @@ export async function getEntries(pi: PiRpcClient, signal?: AbortSignal): Promise
   }
 }
 
+/**
+ * Whether the native leaf is the navigated leaf. OmO session_start hooks (pi-rules.scan,
+ * session bindings) can append extension `custom` entries on top of it after a switch;
+ * those carry no conversation, so they do not undo the navigation.
+ */
+export function restoredLeaf(tree: Entries, leaf: string | null): boolean {
+  let id = tree.leafId;
+  // Bounded so a corrupt parent loop cannot hang the operation.
+  for (let steps = 0; id !== leaf; steps++) {
+    if (steps >= tree.entries.length) return false;
+    const entry = tree.entries.find((candidate) => candidate.id === id);
+    if (entry?.type !== "custom") return false;
+    id = entry.parentId;
+  }
+  return true;
+}
+
 export function readSessionTree(piPath: string): Entries {
   const lines = readFileSync(piPath, "utf8").trimEnd().split("\n");
   const entries: TreeEntry[] = [];

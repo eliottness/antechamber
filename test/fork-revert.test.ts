@@ -1180,6 +1180,34 @@ for (const outcome of ["cancel", "fail"] as const) {
   });
 }
 
+test("fork accepts extension entries OmO appends on the restored leaf after a native refresh", {
+  timeout: 30_000,
+}, async (t) => {
+  const { id, live, reader, recovered } = await lateNativeReader(t);
+  const pi = recovered.pi;
+  assert.ok(pi);
+  const original = pi.command.bind(pi);
+  let switched = false;
+  let appended = 0;
+  t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
+    const response = await original(...args);
+    if (args[0].type === "switch_session") switched = true;
+    // Late session_start hooks land after the navigation reply (seen in a real 47 MB session JSONL).
+    if (args[0].type === "navigate_tree" && switched) {
+      for (const customType of ["pi-rules.scan", "senpi-memory.session-binding"]) {
+        await original({ type: "append_custom", customType });
+        appended++;
+      }
+    }
+    return response;
+  });
+  const child = await reader.fork(id, live.id);
+  assert.ok(switched);
+  assert.equal(appended, 2);
+  assert.notEqual(child.id, id);
+  assert.ok(reader.get(child.id)?.pi);
+});
+
 test("unrevert refreshes entries appended after its saved navigation pin", { timeout: 30_000 }, async (t) => {
   const { manager, dir, state } = setup(t);
   const { id } = await turns(manager, dir);
