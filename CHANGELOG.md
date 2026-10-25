@@ -14,6 +14,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - Keep a session's agent out of idle eviction while a background terminal session (`bash` run in the background)
   is still running. The reaper killed it with the agent 15 minutes after the turn ended, so a CI poller or long
   build died silently and the session never woke up with its result.
+- Fork (and `/btw`) on large sessions no longer fails with "Native tree refresh did not restore the saved
+  navigation". OmO's session-start hooks append extension entries (rules scan, session bindings) on top of the
+  restored branch right after the adapter reloads the session, and the check treated those as a lost navigation.
 
 ## [1.0.16] - 2026-10-23
 

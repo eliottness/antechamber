@@ -34,6 +34,7 @@ import {
   navigate,
   recordTurn,
   readSessionTree,
+  restoredLeaf,
   revertConversation,
   SessionTreeError,
   unrevertConversation,
@@ -659,7 +660,7 @@ export class SessionManager {
         try {
           const leaf = saved === undefined ? undefined : await navigate(pi, saved);
           tree = await getEntries(pi);
-          if (leaf !== undefined && tree.leafId !== leaf)
+          if (leaf !== undefined && !restoredLeaf(tree, leaf))
             throw new SessionTreeError("Native tree refresh did not restore the saved navigation");
           if (leaf !== undefined) s.tree.leafId = leaf;
         } catch (error) {
@@ -1419,7 +1420,7 @@ export class SessionManager {
       ) {
         const leaf = await navigate(pi, saved);
         tree = await getEntries(pi);
-        if (tree.leafId !== leaf) throw new SessionTreeError("Revival did not restore the saved navigation");
+        if (!restoredLeaf(tree, leaf)) throw new SessionTreeError("Revival did not restore the saved navigation");
         s.tree.leafId = leaf;
       }
       bindMessageEntries(s, tree);

@@ -203,6 +203,22 @@ input.on("line", (line) => {
     data = model;
   }
   if (command.type === "compact") record("assistant", "Compacted summary");
+  // Real OmO session_start hooks append extension entries (pi-rules.scan, session bindings)
+  // on the active leaf, sometimes after the switch_session reply and a following navigate_tree
+  // (OmO core/session-manager.js appendCustomEntry, called from core/extensions/builtin/rules/index.js).
+  if (command.type === "append_custom") {
+    const entry = {
+      type: "custom",
+      id: randomUUID(),
+      parentId: leaf,
+      timestamp: new Date().toISOString(),
+      customType: command.customType,
+      data: {},
+    };
+    leaf = entry.id;
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+    records.push(entry);
+  }
   if (command.type === "bash") {
     const proc = spawn("/bin/bash", ["-c", command.command], {
       cwd: process.cwd(),
