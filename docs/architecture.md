@@ -83,7 +83,14 @@ Fork/revert/unrevert use `get_entries` (`entries`, `leafId`) and OmO's
 session-tree RPCs. Explicit-message `fork {entryId}` copies the history before
 the selected user message. OpenChamber restores that prompt into its composer,
 matching OmO's default `"before"` position; including an unanswered user tail
-would make the UI report a failed reply. With no messageID, `position: "at"`
+would make the UI report a failed reply. An assistant boundary is kept instead
+(`position: "at"` on the reply, or on the last result of its own tool calls):
+OpenChamber 2.x names an assistant message only from `/btw`, which passes the
+last completed reply (`finish: "stop"`, installed 2.5.0 bundle) so the side
+thread starts from a settled conversation; OpenChamber 1.24's `/btw` can name any
+completed step, whose tool results stay with it. OpenCode's strictly exclusive
+`before` would drop that reply (dated 2026-10-25, reported fork
+`ses_a7f8...`). With no messageID, `position: "at"`
 includes the complete active leaf. Fork returns `{cancelled}` (and sometimes `text`), not
 the new identity: the connector reads `get_state.sessionId/sessionFile`.
 The RPC process switches to that new file. It is transferred to the forked

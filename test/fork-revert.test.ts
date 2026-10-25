@@ -1495,7 +1495,7 @@ test("fork stops before the selected live user and transfers the process away fr
   assert.equal(branchEntries(await getEntries(fork.pi)).filter((entry) => entry.message?.role === "user").length, 1);
 });
 
-test("fork before an assistant message keeps its prompt and drops the reply, as /btw requests", async (t) => {
+test("fork at an assistant message keeps that reply, as /btw requests", async (t) => {
   const { manager, dir } = setup(t);
   const { id } = await turns(manager, dir);
   const replies = manager.messages(id)?.filter((m) => m.info.role === "assistant") ?? [];
@@ -1507,8 +1507,12 @@ test("fork before an assistant message keeps its prompt and drops the reply, as 
     copied.filter((m) => m.info.role === "user").map((m) => (m.parts[0]?.type === "text" ? m.parts[0].text : "")),
     ["turn-1", "turn-2"],
   );
-  assert.equal(copied.filter((m) => m.info.role === "assistant").length, 1);
-  assert.equal(copied.at(-1)?.info.role, "user");
+  assert.equal(copied.filter((m) => m.info.role === "assistant").length, 2);
+  const last = copied.at(-1);
+  assert.equal(last?.info.role, "assistant");
+  const text = (message: typeof second | undefined) =>
+    message?.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  assert.equal(text(last), text(second));
 });
 
 test("fork without messageID copies the complete leaf including the final reply", async (t) => {

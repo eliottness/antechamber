@@ -34,7 +34,8 @@ export interface TreeEntry {
   message?: {
     role: string;
     clientMessageId?: string;
-    content?: string | Array<{ type: string; text?: string }>;
+    toolCallId?: string;
+    content?: string | Array<{ type: string; text?: string; id?: string }>;
     command?: string;
     output?: string;
     exitCode?: number | null;
@@ -392,18 +393,49 @@ function entryForMessage(s: ManagedSession, tree: Entries, messageID: string): T
   return entry;
 }
 
+/**
+ * The last entry of an assistant reply: the reply, or the latest result of its own tool calls.
+ * OpenChamber 2.x /btw names a final reply (no tool calls); 1.24's /btw can name any completed
+ * step, whose tool results belong to the same OpenChamber message.
+ */
+function replyEnd(tree: Entries, reply: TreeEntry, leafId: string | null): string {
+  const content = reply.message?.content;
+  const calls = new Set(
+    Array.isArray(content) ? content.flatMap((part) => (part.type === "toolCall" && part.id ? [part.id] : [])) : [],
+  );
+  const branch = branchEntries(tree, leafId);
+  const start = branch.indexOf(reply);
+  if (calls.size === 0 || start < 0) return reply.id;
+  let end = reply.id;
+  for (const entry of branch.slice(start + 1)) {
+    const role = entry.message?.role;
+    if (role === "toolResult" && entry.message?.toolCallId !== undefined && calls.has(entry.message.toolCallId))
+      end = entry.id;
+    else if (role === "assistant" || role === "user") break;
+  }
+  return end;
+}
+
 export async function forkConversation(s: ManagedSession, pi: PiRpcClient, tree: Entries, messageID?: string) {
   const entry = messageID === undefined ? branchEntries(tree).at(-1) : entryForMessage(s, tree, messageID);
   if (!entry) throw new SessionTreeError("Cannot fork an empty conversation");
   const shellUser =
     entry.message?.role === "bashExecution" &&
     s.messages?.find((message) => message.info.id === messageID)?.info.role === "user";
-  // OpenCode forks strictly before any selected message. OmO's default "before"
-  // position only accepts user entries, so other boundaries (an assistant reply,
-  // as /btw sends) fork "at" the entry preceding them.
+  // OpenCode forks strictly before any selected message, but OpenChamber only names an
+  // assistant reply as the boundary from /btw, which forks at the last completed reply
+  // so the side thread starts from a settled conversation: keep that reply. OmO's
+  // default "before" position only accepts user entries, so other non-user boundaries
+  // fork "at" the entry preceding them.
+  const reply = messageID !== undefined && entry.message?.role === "assistant";
   const beforeOther =
-    messageID !== undefined && entry.message?.role !== "user" && entry.message?.role !== "bashExecution";
-  const forkEntryId = shellUser || beforeOther ? entry.parentId : entry.id;
+    messageID !== undefined && !reply && entry.message?.role !== "user" && entry.message?.role !== "bashExecution";
+  const forkEntryId = reply
+    ? // A staged revert hides the reply's results from the live leaf.
+      replyEnd(tree, entry, s.tree.revert?.previousLeafId ?? tree.leafId)
+    : shellUser || beforeOther
+      ? entry.parentId
+      : entry.id;
   if (forkEntryId === null) {
     throw new SessionTreeError(
       shellUser ? "Cannot fork before a root shell entry" : "Cannot fork before the first entry",
@@ -412,7 +444,9 @@ export async function forkConversation(s: ManagedSession, pi: PiRpcClient, tree:
   const response = await pi.command<{ cancelled?: boolean }>({
     type: "fork",
     entryId: forkEntryId,
-    ...(messageID === undefined || beforeOther || entry.message?.role === "bashExecution" ? { position: "at" } : {}),
+    ...(messageID === undefined || reply || beforeOther || entry.message?.role === "bashExecution"
+      ? { position: "at" }
+      : {}),
   });
   if (!response.success) throw new SessionTreeError(response.error ?? "OmO fork failed");
   if (response.data?.cancelled) throw new SessionTreeError("Conversation fork was cancelled");

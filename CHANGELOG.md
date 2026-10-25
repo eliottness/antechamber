@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the parent's last reply in a `/btw` side thread. OpenChamber forks `/btw` at the last completed assistant
+  reply, and the adapter cut strictly before it, so the fork ended mid-turn on the reply's tool calls and the side
+  agent never saw the answer the main thread had just given. An assistant boundary now keeps that reply and the
+  results of its own tool calls.
+
 ## [1.0.18] - 2026-10-25
 
 - fix(session): accept late OmO extension entries after a fork refresh (#68)
