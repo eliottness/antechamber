@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-10-25
+
 ### Fixed
 
 - Keep the parent's last reply in a `/btw` side thread. OpenChamber forks `/btw` at the last completed assistant
