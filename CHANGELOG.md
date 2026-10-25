@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-10-25
+
+- fix(session): accept late OmO extension entries after a fork refresh (#68)
+
 ## [1.0.17] - 2026-10-24
 
 ### Fixed
