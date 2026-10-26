@@ -694,6 +694,88 @@ function texts(manager: SessionManager, id: string): string[] {
   );
 }
 
+for (const cached of [false, true])
+  test(`empty dormant history follows terminal turns with cached history ${cached}`, async (t) => {
+    const { manager, dir, state } = setup(t);
+    const session = await manager.create(dir);
+    await manager.reloadMessages(session.id);
+    const empty = manager.get(session.id);
+    assert.ok(empty?.piPath);
+    assert.equal(empty.tree.leafId, null);
+    await manager.disposeAll();
+
+    const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+    t.after(() => cold.disposeAll());
+    if (cached) assert.deepEqual(cold.messages(session.id), []);
+    const entries = [
+      {
+        type: "message",
+        id: "external-user",
+        parentId: null,
+        timestamp: "2026-10-26T00:00:00.000Z",
+        message: { role: "user", content: [{ type: "text", text: "from-terminal" }] },
+      },
+      {
+        type: "message",
+        id: "external-assistant",
+        parentId: "external-user",
+        timestamp: "2026-10-26T00:00:01.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "from-terminal reply" }] },
+      },
+    ];
+    writeFileSync(
+      empty.piPath,
+      `${readFileSync(empty.piPath, "utf8")}${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+
+    assert.deepEqual(texts(cold, session.id), ["from-terminal", "from-terminal reply"]);
+    assert.equal(cold.get(session.id)?.pi, undefined);
+  });
+
+for (const legacy of [false, true])
+  test(`empty dormant forks keep abandoned history hidden with legacy size marker ${legacy}`, async (t) => {
+    const { manager, dir, state } = setup(t);
+    const { id } = await turns(manager, dir);
+    const child = await manager.fork(id, "msg_live_1");
+    await manager.disposeAll();
+    if (legacy) {
+      const store = new SessionStore(state);
+      const entry = store.get(child.id);
+      assert.ok(entry?.tree);
+      delete entry.tree.fileSize;
+      store.set(child.id, entry);
+    }
+
+    const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+    t.after(() => cold.disposeAll());
+
+    assert.deepEqual(cold.messages(child.id), []);
+    assert.equal(cold.get(child.id)?.tree.leafId, null);
+  });
+
+test("empty saved selections ignore metadata-only terminal appends", async (t) => {
+  const { manager, dir, state } = setup(t);
+  const { id, s } = await turns(manager, dir);
+  assert.ok(s.piPath);
+  await manager.disposeAll();
+  const store = new SessionStore(state);
+  const entry = store.get(id);
+  assert.ok(entry?.tree?.fileSize);
+  store.set(id, { ...entry, tree: { messageEntries: {}, leafId: null, fileSize: entry.tree.fileSize } });
+  const raw = readFileSync(s.piPath, "utf8");
+  const lastLine = raw.trimEnd().split("\n").at(-1);
+  assert.ok(lastLine);
+  const last = JSON.parse(lastLine);
+  writeFileSync(
+    s.piPath,
+    `${raw}${JSON.stringify({ type: "custom", id: "external-metadata", parentId: last.id, customType: "startup" })}\n`,
+  );
+  const cold = new SessionManager(() => {}, new SessionStore(state), dir);
+  t.after(() => cold.disposeAll());
+
+  assert.deepEqual(cold.messages(id), []);
+});
+
 test("dormant history and revival follow turns another client appended to the session file", {
   timeout: 30_000,
 }, async (t) => {
