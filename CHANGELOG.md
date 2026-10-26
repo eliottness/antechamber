@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show live eval cells as `JS Eval` / `Python Eval` cards with their code and streaming output in OpenChamber 2.x.
+  The v2 stream announced the card as `eval` and never renamed it to the `bash` card it becomes, and it dropped
+  running metadata, so the OmO Compatibility header rule never matched and live output never arrived. The card is
+  now announced again under its mapped name, and running metadata is sent as `session.tool.progress`.
+
 ## [1.0.20] - 2026-10-26
 
 ### Fixed

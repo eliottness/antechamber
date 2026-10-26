@@ -11,7 +11,7 @@ import { ocIdFor } from "../src/session-store.js";
 import { stripTaskSuffix } from "../src/subagents.js";
 import { bindMessageEntries } from "../src/session-tree.js";
 import type { OCEvent, OCToolPart } from "../src/types.js";
-import { toV2Message } from "../src/v2.js";
+import { toV2Message, V2EventTranslator } from "../src/v2.js";
 
 const fixtures = join(process.cwd(), "test/fixtures/omo-tools");
 const keys: Record<string, string[]> = {
@@ -716,4 +716,42 @@ test("a failed eval cell, flagged only in details.isError, is an error card live
   const reloaded = manager["ensureMessages"](restored)[0]?.parts[0];
   assert.ok(reloaded?.type === "tool" && reloaded.state.status === "error");
   assert.equal(reloaded.state.error, "BEFORE\nCELL_FAILED_ON_PURPOSE");
+});
+
+test("a streamed eval cell reaches the v2 stream as a bash card with its header and live output", () => {
+  const s = session("/nonexistent");
+  const translator = new V2EventTranslator();
+  const frames: { type: string; data: Record<string, unknown> }[] = [];
+  const manager = new SessionManager((directory, event) => {
+    if (event.type !== "todo.updated") frames.push(...translator.translate(directory, event));
+  });
+  const args = { language: "py", code: "print('hello')", summary: "Print hello" };
+  manager["onPiEvent"](s, { type: "message_start", message: { role: "assistant" } });
+  for (const assistantMessageEvent of [
+    { type: "toolcall_start", contentIndex: 0, id: "eval-call", toolName: "eval" },
+    { type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(args) },
+    { type: "toolcall_end", contentIndex: 0, toolCall: { id: "eval-call", name: "eval", arguments: args } },
+  ])
+    manager["onPiEvent"](s, { type: "message_update", assistantMessageEvent });
+  manager["onPiEvent"](s, { type: "tool_execution_start", toolCallId: "eval-call", toolName: "eval", args });
+  manager["onPiEvent"](s, {
+    type: "tool_execution_update",
+    toolCallId: "eval-call",
+    toolName: "eval",
+    partialResult: { content: [{ type: "text", text: "hello\n" }] },
+  });
+  const tool = frames.filter((frame) => frame.type.startsWith("session.tool.") && frame.data.id === "eval-call");
+  // OpenChamber 2.x names the card from the last input.started and reads running metadata only from progress.
+  const called = tool.findIndex((frame) => frame.type === "session.tool.called");
+  assert.ok(called > 0);
+  assert.equal(
+    tool.slice(0, called).findLast((frame) => frame.type === "session.tool.input.started")?.data.name,
+    "bash",
+  );
+  assert.deepEqual(tool[called]?.data.input, { command: args.code, description: "Python Eval: Print hello" });
+  const progress = tool.filter((frame) => frame.type === "session.tool.progress").map((frame) => frame.data.metadata);
+  assert.deepEqual(progress, [
+    { evalTitle: "Python Eval", evalSubtitle: "Print hello" },
+    { evalTitle: "Python Eval", evalSubtitle: "Print hello", output: "hello\n" },
+  ]);
 });

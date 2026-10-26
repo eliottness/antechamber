@@ -374,6 +374,8 @@ interface ToolState {
   called: boolean;
   ended: boolean;
   raw: string;
+  /** Metadata last sent on `session.tool.progress`, as JSON. */
+  metadata: string;
 }
 
 interface SessionState {
@@ -732,11 +734,11 @@ export class V2EventTranslator {
         called: false,
         ended: false,
         raw: "",
+        metadata: "",
       };
       st.tools.set(part.id, ts);
     }
     ts.callID = part.callID;
-    ts.name = part.tool;
     const frames: V2Envelope[] = [];
     const base = { sessionID: part.sessionID, assistantMessageID: part.messageID, id: part.callID };
     const state = part.state;
@@ -755,10 +757,13 @@ export class V2EventTranslator {
       return frames;
     }
 
-    if (!ts.started) {
+    // mapTool renames a call when it leaves pending (eval -> bash). OpenChamber 2.x takes the tool name only from
+    // input.started, so announce the card again under its new name before its input ends.
+    if (!ts.started || (ts.name !== part.tool && !ts.inputEnded)) {
       ts.started = true;
       frames.push(this.frame(directory, "session.tool.input.started", { ...base, name: part.tool }));
     }
+    ts.name = part.tool;
     if (!ts.inputEnded) {
       ts.inputEnded = true;
       frames.push(
@@ -771,6 +776,14 @@ export class V2EventTranslator {
     if (!ts.called) {
       ts.called = true;
       frames.push(this.frame(directory, "session.tool.called", { ...base, input: state.input, executed: false }));
+    }
+    // `called` carries no metadata (eval card headers, live output); 2.x reads it while running only from progress.
+    if (state.status === "running" && state.metadata !== undefined) {
+      const metadata = safeJson(state.metadata);
+      if (metadata !== ts.metadata) {
+        ts.metadata = metadata;
+        frames.push(this.frame(directory, "session.tool.progress", { ...base, metadata: state.metadata }));
+      }
     }
 
     if (!ts.ended && state.status === "completed") {
