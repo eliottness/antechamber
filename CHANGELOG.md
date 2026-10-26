@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show terminal turns appended to a session that the adapter last saved while empty, instead of keeping its
+  transcript blank. Empty forks and active reverts keep their hidden history.
+
 ## [1.0.21] - 2026-10-26
 
 ### Fixed

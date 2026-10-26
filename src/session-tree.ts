@@ -108,8 +108,8 @@ export function restoredLeaf(tree: Entries, leaf: string | null): boolean {
   return true;
 }
 
-export function readSessionTree(piPath: string): Entries {
-  const lines = readFileSync(piPath, "utf8").trimEnd().split("\n");
+export function readSessionTree(piPath: string, offset = 0): Entries {
+  const lines = readFileSync(piPath).subarray(offset).toString("utf8").trimEnd().split("\n");
   const entries: TreeEntry[] = [];
   for (const [index, line] of lines.entries()) {
     if (line.trim().length === 0) continue;
@@ -159,18 +159,24 @@ export function recordTurn(s: ManagedSession): void {
  */
 export function followExternalAppends(s: ManagedSession, piPath: string): void {
   const saved = s.tree.leafId;
-  if (s.tree.revert || saved === undefined || saved === null) return;
+  if (s.tree.revert || saved === undefined) return;
+  // A null selection can hide an abandoned branch; require a known append boundary.
+  if (saved === null && s.tree.fileSize === undefined) return;
   const size = statSync(piPath, { throwIfNoEntry: false })?.size;
   if (size === undefined || (s.tree.fileSize !== undefined && size <= s.tree.fileSize)) return;
   let tree: Entries;
   try {
     tree = readSessionTree(piPath);
+    if (saved === null) {
+      const appended = new Set(readSessionTree(piPath, s.tree.fileSize).entries.map((entry) => entry.id));
+      if (!branchEntries(tree).some((entry) => entry.type === "message" && appended.has(entry.id))) return;
+    }
   } catch (error) {
     // History parsing skips malformed lines; keep the saved selection rather than guess a tail.
     if (error instanceof SessionTreeError) return;
     throw error;
   }
-  if (tree.leafId === saved || !branchEntries(tree).some((entry) => entry.id === saved)) return;
+  if (tree.leafId === saved || (saved !== null && !branchEntries(tree).some((entry) => entry.id === saved))) return;
   s.tree.leafId = tree.leafId;
 }
 
