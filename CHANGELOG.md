@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-10-26
+
 ### Fixed
 
 - Work with OpenChamber 2.5.2, which refuses OpenCode older than 2.1.0 and showed an "Update OpenCode" screen
