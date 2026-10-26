@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-10-26
+
 ### Fixed
 
 - Show live eval cells as `JS Eval` / `Python Eval` cards with their code and streaming output in OpenChamber 2.x.
