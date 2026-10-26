@@ -57,7 +57,7 @@ another executable (see [docs/configuration.md](docs/configuration.md)).
 
 | OpenChamber | API | Status |
 |---|---|---|
-| >= 2.0.4 | v2 (`@opencode-ai/sdk/v2`) | primary target; antechamber advertises `opencode v2.0.20` on `--version` |
+| >= 2.0.4 | v2 (`@opencode-ai/sdk/v2`) | primary target; antechamber advertises `opencode v2.1.0` on `--version` (OpenChamber 2.5.2 requires 2.1.0) |
 | 1.24.x | v1 | supported |
 | other versions | - | not tested |
 
@@ -148,7 +148,7 @@ antechamber serve --hostname 127.0.0.1 --port 4096
 | `antechamber setup` | Configure OpenChamber; `--settings <file>`, `--profile <dir>`, `--binary <path>`, `--dry-run`, `--systemd [unit]`, `--pi-binary <path>`, `--restart`, `--auto-update`. |
 | `antechamber doctor` | Read-only Node, backend, agent/state directories, teardown, OpenChamber and auth checks, plus the installed, latest released and running adapter versions (a running server older than the install needs an OpenChamber restart); `--json`, `--settings <file>`, `--profile <dir>`. Exits 1 on any FAIL; warnings do not fail. |
 | `antechamber upgrade` | Install the latest release over a global npm or bun install, with the package manager that owns it. Refused for source checkouts and `npx`. |
-| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.0.20` for OpenChamber. |
+| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.1.0` for OpenChamber. |
 | `antechamber help` | Usage and options; also `--help`/`-h`. |
 
 ## Upgrade, uninstall and rollback
@@ -165,8 +165,8 @@ Restart OpenChamber, or `systemctl --user restart openchamber.service` for a
 managed service. Run `antechamber doctor` again. If the executable moved,
 rerun `antechamber setup`.
 
-OpenChamber 2.3.2 shows an "OpenCode update" notice because antechamber
-reports OpenCode API 2.0.20, the minimum OpenChamber accepts. The notice names
+OpenChamber 2.3.2 and later can show an "OpenCode update" notice because antechamber
+reports OpenCode API 2.1.0, the minimum OpenChamber 2.5.2 accepts. The notice names
 an OpenCode version, but its **Update** button runs `<opencodeBinary> upgrade`,
 which upgrades antechamber itself (a no-op when it is already current). Click
 **Reload OpenCode** afterwards to restart onto the new version. OpenChamber
