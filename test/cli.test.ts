@@ -24,7 +24,7 @@ for (const flag of ["--version", "-v"]) {
       timeout: 5000,
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, "opencode v2.0.20\n");
+    assert.equal(result.stdout, "opencode v2.1.0\n");
   });
 }
 
@@ -35,7 +35,7 @@ test("version prints the package version without starting a server", (t) => {
     timeout: 2000,
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, `antechamber ${manifest.version} (OpenCode API v2.0.20)\n`);
+  assert.equal(result.stdout, `antechamber ${manifest.version} (OpenCode API v2.1.0)\n`);
   assert.equal(ADAPTER_VERSION, manifest.version);
 });
 

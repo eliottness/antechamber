@@ -151,7 +151,7 @@ invented resource IDs.
 | DELETE | `/api/integration/{integrationID}/connect/command/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | DELETE | `/api/permission/saved/{permissionID}` | 204 | No saved-permission state is retained. |
 | GET | `/api/session/{sessionID}` | 200 | `{data: Session}`; 404 if unknown. |
-| PATCH | `/api/session/{sessionID}` | 204 | Updates title, archive time, or metadata. |
+| PATCH | `/api/session/{sessionID}` | 204 | Updates title, archive state, or metadata. Archive accepts OpenCode 2.1's `archived: boolean` (repeating the current state keeps the original time) and the older `time.archived` timestamp (0 unarchives). |
 | DELETE | `/api/session/{sessionID}` | 204 | Removes the session. |
 | GET | `/api/session/{sessionID}/message` | 200 | `{data: Message[], cursor}`; supports order, cursor, and limit. |
 | GET | `/api/session/{sessionID}/message/{messageID}` | 200 | `{data: Message}`; 404 if unknown. |

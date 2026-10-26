@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Work with OpenChamber 2.5.2, which refuses OpenCode older than 2.1.0 and showed an "Update OpenCode" screen
+  that never cleared. antechamber now reports OpenCode API 2.1.0, and `PATCH /api/session/{id}` accepts 2.1's
+  `archived: true|false`, so archiving and unarchiving from OpenChamber 2.5.2 take effect instead of answering 204
+  and changing nothing.
+
 ## [1.0.19] - 2026-10-25
 
 ### Fixed

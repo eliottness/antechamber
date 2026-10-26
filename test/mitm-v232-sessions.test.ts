@@ -170,3 +170,35 @@ test("MITM232-08: session metadata patches round-trip and publish updates", {
   const event = await metadataUpdated;
   assertGoldenShape(golden.event, event, "metadata event");
 });
+
+test("OpenCode 2.1 archived boolean archives, keeps the time on repeat, and restores", {
+  timeout: 15_000,
+}, async (t: TestContext) => {
+  const { root, url } = await startServer(t);
+  const sessionID = await createSession(url, root);
+  const headers = { "content-type": "application/json", "x-opencode-directory": encodeURIComponent(root) };
+  const patch = async (body: unknown) => {
+    const response = await fetch(`${url}/api/session/${sessionID}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 204);
+  };
+  const archivedAt = async () => {
+    const response = await fetch(`${url}/api/session/${sessionID}`, { headers });
+    assert.equal(response.status, 200);
+    const data = record(record(await response.json(), "session").data, "session.data");
+    return record(data.time, "session.data.time").archived;
+  };
+
+  await patch({ archived: true });
+  const first = await archivedAt();
+  assert.equal(typeof first, "number");
+
+  await patch({ archived: true });
+  assert.equal(await archivedAt(), first, "repeating archived: true keeps the original archive time");
+
+  await patch({ archived: false });
+  assert.equal(await archivedAt(), undefined);
+});

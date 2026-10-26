@@ -587,10 +587,23 @@ export async function handleV2(
         return;
       }
       case "PATCH ": {
-        const body = (await services.body(req)) as { title?: string; time?: { archived?: number }; metadata?: unknown };
+        const body = (await services.body(req)) as {
+          title?: string;
+          archived?: unknown;
+          time?: { archived?: number };
+          metadata?: unknown;
+        };
+        // OpenCode 2.1 takes `archived: boolean` (repeating the current state is a no-op);
+        // older clients send `time.archived` as a timestamp, 0 to unarchive.
+        const archived =
+          typeof body.archived === "boolean"
+            ? body.archived
+              ? (managed.info.time.archived ?? Date.now())
+              : 0
+            : body.time?.archived;
         await services.sessions.update(sessionId, {
           title: body.title,
-          archived: body.time?.archived,
+          archived,
           metadata: sessionMetadata(body.metadata),
         });
         res.writeHead(204).end();

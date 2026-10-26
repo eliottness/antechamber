@@ -14,4 +14,5 @@ export const ADAPTER_VERSION = manifest.version;
 
 // OpenChamber parses --version as an OpenCode version and requires major 2.
 // This API contract version must not follow the npm package version.
-export const OPENCODE_API_VERSION = "2.0.20";
+// OpenChamber 2.5.2 requires 2.1.0, which added top-level `archived` to PATCH /api/session/{id}.
+export const OPENCODE_API_VERSION = "2.1.0";
