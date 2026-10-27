@@ -352,7 +352,7 @@ function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, un
       content: st.output !== "" ? [{ type: "text", text: st.output }] : [],
       output: st.output,
       title: st.title,
-      metadata: st.metadata ?? {},
+      metadata: backgroundShell(part)?.metadata ?? st.metadata ?? {},
     };
   } else {
     base.state = {

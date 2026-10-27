@@ -158,8 +158,8 @@ invented resource IDs.
 | GET | `/api/session/{sessionID}/todo` | 200 | `{data: Todo[]}`. |
 | POST | `/api/session/{sessionID}/compact`, `/api/session/{sessionID}/summarize` | 200 | `{data: true}` after compaction. |
 | POST | `/api/session/{sessionID}/shell` | 204 | Runs a shell command; 400 for invalid input and 409 if busy. |
-| GET | `/api/shell/{shellID}` | 200 | `Shell.Info` of a running shell or one of the 25 most recently ended; 404 if unknown. |
-| GET | `/api/shell/{shellID}/output` | 200 | `{output, cursor, size, truncated}` from byte `cursor`, at most `limit` bytes: a monitor's command, filter and matched lines; an eval cell's output (`eval_cells.peek`); a notice for a background terminal session, whose output OmO does not expose. 404 if unknown. |
+| GET | `/api/shell/{shellID}` | 200 | `{location, data: Shell.Info}` for a running shell or one of the 25 most recently ended; 404 if unknown. |
+| GET | `/api/shell/{shellID}/output` | 200 | `{location, data: {output, cursor, size, truncated}}` from byte `cursor`, at most `limit` bytes, ending on a character boundary: a monitor's command, filter and matched lines; an eval cell's output (`eval_cells.peek`); a notice for a background terminal session, whose output OmO does not expose. 404 if unknown. |
 | DELETE | `/api/shell/{shellID}` | 204 | Stops an eval cell (`eval_cells.stop`). 400 `UnsupportedError` for a monitor or a background terminal session, which OmO cannot stop over RPC; 404 if unknown. |
 | POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command; 400 if missing. |
 | POST or DELETE | `/api/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |

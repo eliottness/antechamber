@@ -18,6 +18,7 @@
  */
 import type { MonitorSessions, MonitorView } from "./monitor-sessions.js";
 import type { ManagedSession } from "./sessions.js";
+import type { BackgroundResult } from "./background-results.js";
 import type { OCEvent, OCShellInfo, OCShellStatus } from "./types.js";
 import { readBackgroundSessions, type WorkStatusBridge, WorkStatusError } from "./work-status.js";
 
@@ -68,7 +69,15 @@ export class OutputLog {
 
   update(window: string): void {
     const next = Buffer.from(window, "utf8");
-    const added = next.subarray(this.overlap(next));
+    this.add(next.subarray(this.overlap(next)));
+  }
+
+  /** Text known to follow what is already logged (a source that reports increments, not tails). */
+  append(text: string): void {
+    this.add(Buffer.from(text, "utf8"));
+  }
+
+  private add(added: Buffer): void {
     if (added.length === 0) return;
     this.bytes = Buffer.concat([this.bytes, added]);
     const excess = this.bytes.length - MAX_OUTPUT_BYTES;
@@ -95,10 +104,19 @@ export class OutputLog {
     return 0;
   }
 
+  /** Pages end on a character boundary, so a client that decodes each page alone never splits one. */
   read(cursor: number, limit: number): ShellOutputPage {
     const size = this.size;
-    const from = Math.min(Math.max(cursor, this.start), size);
-    const to = Math.min(size, from + limit);
+    const continuation = (at: number) => at < size && ((this.bytes[at - this.start] ?? 0) & 0xc0) === 0x80;
+    let from = Math.min(Math.max(cursor, this.start), size);
+    while (continuation(from)) from++;
+    let to = Math.min(size, from + limit);
+    while (to > from && continuation(to)) to--;
+    // A limit smaller than the next character still returns that whole character.
+    if (to === from && from < size) {
+      to = from + 1;
+      while (continuation(to)) to++;
+    }
     return {
       output: this.bytes.subarray(from - this.start, to - this.start).toString("utf8"),
       cursor: to,
@@ -115,6 +133,10 @@ interface Tracked {
   /** `bash_N` for terminal work, the cell id for eval. */
   source: string;
   output: OutputLog;
+  /** Matched lines of a watch already in `output`. */
+  seenLines: number;
+  /** How the work ended, when OmO said so before it disappeared (a stop, a finished notification). */
+  ending?: ShellEnd;
 }
 
 interface Desired {
@@ -125,18 +147,29 @@ interface Desired {
   monitor?: MonitorView;
 }
 
-function monitorWindow(view: MonitorView): string {
-  const { monitor, lines } = view;
-  const header = [
-    `$ ${monitor.command ?? monitor.description}`,
-    monitor.filter !== null ? `filter: ${monitor.filter}` : "",
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
-  return lines.length === 0 ? `${header}\n` : `${header}\n\n${lines.join("\n")}\n`;
+type ShellEnd = { status: OCShellStatus; exit?: number };
+
+function monitorHeader(view: MonitorView): string {
+  const { monitor } = view;
+  const filter = monitor.filter !== null ? `filter: ${monitor.filter}\n` : "";
+  return `$ ${monitor.command ?? monitor.description}\n${filter}\n`;
 }
 
-function endStatus(view: MonitorView | undefined): { status: OCShellStatus; exit?: number } {
+/**
+ * How OmO says a background session or a detached cell finished (background-results.ts `backgroundResult`):
+ * "bash_2 finished: killed (exit code 1)". A failed cell has no exit code; it reads as exit 1.
+ */
+function resultEnd(result: BackgroundResult): ShellEnd {
+  if (result.kind === "eval") return result.failed ? { status: "exited", exit: 1 } : { status: "exited", exit: 0 };
+  const status = result.title.slice(result.title.indexOf("finished:") + "finished:".length);
+  const exit = /exit code (-?\d+)/.exec(status)?.[1];
+  const code = exit !== undefined ? { exit: Number(exit) } : {};
+  if (/\bkill|signal/i.test(status)) return { status: "killed", ...code };
+  if (/time(d)? ?out/i.test(status)) return { status: "timeout", ...code };
+  return { status: "exited", ...code };
+}
+
+function endStatus(view: MonitorView | undefined): ShellEnd {
   switch (view?.ending?.reason) {
     case "exit":
       return view.ending.exitCode === null ? { status: "exited" } : { status: "exited", exit: view.ending.exitCode };
@@ -170,13 +203,26 @@ export class OmoShells {
         tracked.kind === "monitor"
           ? this.monitors.list(s.info.id, Number.MAX_SAFE_INTEGER, 0).find((item) => item.monitor.id === tracked.source)
           : undefined;
-      this.end(id, tracked, endStatus(view), now);
+      this.end(id, tracked, tracked.ending ?? endStatus(view), now);
     }
     for (const [id, want] of desired) {
       const tracked = this.live.get(id);
       if (tracked === undefined) this.start(s, id, want);
-      else if (want.monitor !== undefined) tracked.output.update(monitorWindow(want.monitor));
+      else if (tracked.kind === "monitor") this.appendLines(s.info.id, tracked);
     }
+  }
+
+  /** OmO's finished notification for a background session or a cell: keep its status for the shell's end. */
+  noteEnding(s: ManagedSession, result: BackgroundResult): void {
+    const epoch = s.pi?.startedAtMs;
+    const id =
+      result.kind === "eval"
+        ? evalShellId(result.callID)
+        : epoch !== undefined
+          ? terminalShellId(epoch, result.callID)
+          : undefined;
+    const tracked = id !== undefined ? this.live.get(id) : undefined;
+    if (tracked !== undefined) tracked.ending ??= resultEnd(result);
   }
 
   /** The agent process exited, or the session was removed: everything it ran is gone. */
@@ -223,6 +269,7 @@ export class OmoShells {
     if (tracked.kind !== "eval")
       throw new WorkStatusError(400, "OmO cannot stop a monitor or a background terminal session over RPC");
     await this.work.stopEvalCell(s, tracked.source);
+    tracked.ending = { status: "killed" };
     this.sync(s);
   }
 
@@ -281,15 +328,18 @@ export class OmoShells {
       kind: want.kind,
       source: want.source,
       output: new OutputLog(),
+      seenLines: 0,
     };
-    if (want.monitor !== undefined) tracked.output.update(monitorWindow(want.monitor));
-    else if (want.kind === "background") tracked.output.update(BACKGROUND_NOTICE);
+    if (want.monitor !== undefined) {
+      tracked.output.append(monitorHeader(want.monitor));
+      this.appendLines(s.info.id, tracked);
+    } else if (want.kind === "background") tracked.output.append(BACKGROUND_NOTICE);
     this.live.set(id, tracked);
     this.ended.delete(id);
     this.emit(tracked.directory, { type: "shell.created", properties: { info } });
   }
 
-  private end(id: string, tracked: Tracked, end: { status: OCShellStatus; exit?: number }, at: number): void {
+  private end(id: string, tracked: Tracked, end: ShellEnd, at: number): void {
     this.live.delete(id);
     tracked.info = {
       ...tracked.info,
@@ -308,14 +358,19 @@ export class OmoShells {
     });
   }
 
+  /** Lines matched since the last read, counted, so a sliding window of matched lines never repeats. */
+  private appendLines(parentID: string, tracked: Tracked): void {
+    const next = this.monitors.linesSince(parentID, tracked.source, tracked.seenLines);
+    if (next === undefined) return;
+    if (next.lines.length > 0) tracked.output.append(`${next.lines.join("\n")}\n`);
+    tracked.seenLines = next.total;
+  }
+
   private async refreshOutput(tracked: Tracked): Promise<void> {
     const s = this.sessions.get(tracked.info.metadata.sessionID);
     if (s === undefined) return;
     if (tracked.kind === "monitor") {
-      const view = this.monitors
-        .list(s.info.id, 0, MAX_MONITOR_LINES)
-        .find((item) => item.monitor.id === tracked.source);
-      if (view !== undefined) tracked.output.update(monitorWindow(view));
+      this.appendLines(s.info.id, tracked);
       return;
     }
     if (tracked.kind !== "eval") return;

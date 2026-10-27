@@ -47,6 +47,8 @@ interface Watch {
   monitor: MonitorSnapshot;
   ending?: MonitorEnding;
   lines: string[];
+  /** Matched lines received in all; `lines` keeps only the latest. */
+  lineCount: number;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -132,6 +134,14 @@ export class MonitorSessions {
     return this.watches.has(id);
   }
 
+  /** Matched lines of a parent's watch received after the first `seen`, as far as they are still kept. */
+  linesSince(parentID: string, terminalId: string, seen: number): { lines: string[]; total: number } | undefined {
+    const watch = this.watches.get(ocIdFor(`${parentID}/monitor/${terminalId}`));
+    if (watch === undefined) return undefined;
+    const fresh = Math.max(0, watch.lineCount - seen);
+    return { lines: fresh === 0 ? [] : watch.lines.slice(-fresh), total: watch.lineCount };
+  }
+
   /** OmO's terminal id (`bash_N`) of a child's watch while it runs. */
   terminalId(id: string): string | undefined {
     const watch = this.watches.get(id);
@@ -180,6 +190,7 @@ export class MonitorSessions {
       const watch = this.watches.get(this.childID(parent, entry.id));
       if (!watch) continue;
       watch.lines = [...watch.lines, ...lines].slice(-MAX_EVENT_LINES);
+      watch.lineCount += lines.length;
       this.publish(watch);
     }
   }
@@ -296,7 +307,7 @@ export class MonitorSessions {
       hasPendingInteraction: () => false,
       hasRunningChildren: () => false,
     };
-    const watch: Watch = { session, monitor, lines: [] };
+    const watch: Watch = { session, monitor, lines: [], lineCount: 0 };
     this.watches.set(id, watch);
     this.sessions.set(id, session);
     this.emit(session.info.directory, { type: "session.created", properties: { info: session.info } });

@@ -135,6 +135,8 @@ export class SessionLifecycle {
     }
     s.unwirePi?.();
     s.pi = undefined; // Old exit listeners must not mutate a revived session.
+    // Unwired, the exit handler will not run: end what died with the process here.
+    s.onDormant?.();
     const disposing = pi.dispose();
     this.disposing.add(disposing);
     try {

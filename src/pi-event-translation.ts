@@ -224,7 +224,7 @@ interface PiEventServices {
   readonly subagents: SubagentBridge;
   readonly monitors: MonitorSessions;
   readonly workStatus: Pick<WorkStatusBridge, "observe">;
-  readonly shells: Pick<OmoShells, "sync">;
+  readonly shells: Pick<OmoShells, "sync" | "noteEnding">;
   readonly store: Pick<SessionStore, "update">;
   readonly dirtyDiffs: Set<string>;
   readonly ensureMessages: (s: ManagedSession) => OCMessageWithParts[];
@@ -428,6 +428,7 @@ export class PiEventTranslator {
     const unbound = messages.findLast(
       (message) => message.info.id.startsWith(prefix) && s.tree.messageEntries[message.info.id] === undefined,
     );
+    if (source === "message") this.services.shells.noteEnding(s, result);
     // A finished shell also ends the wait of the card that launched it (once, from the live message).
     if (result.kind === "terminal" && source === "message")
       for (const waiting of releaseBackground(messages, result.callID, created)) this.emitPart(s, waiting);

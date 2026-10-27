@@ -6,7 +6,7 @@ import test, { type TestContext } from "node:test";
 import { bugHarness, openEvents } from "./bug-harness.js";
 import { finishToolPart } from "../src/background-results.js";
 import { MONITOR_ENDED_EVENT, MONITOR_STATE_EVENT } from "../src/monitor-sessions.js";
-import { evalShellId, OutputLog, terminalShellId } from "../src/omo-shells.js";
+import { evalShellId, OutputLog, type ShellOutputPage, terminalShellId } from "../src/omo-shells.js";
 import { AdapterServer } from "../src/server.js";
 import type { ManagedSession, SessionManager } from "../src/sessions.js";
 import type { OCShellInfo, OCToolPart } from "../src/types.js";
@@ -125,7 +125,12 @@ test("OmO background work is listed and announced as OpenCode shells, readable, 
   );
   assert.equal(list.location.directory, directory);
   assert.equal(list.data[2]?.command, "npm run dev");
-  assert.equal((await fetch(`${url}/api/shell/${backgroundShell}`)).status, 200);
+  const one = (await (await fetch(`${url}/api/shell/${backgroundShell}`)).json()) as {
+    location: unknown;
+    data: OCShellInfo;
+  };
+  assert.deepEqual(one.location, { directory });
+  assert.equal(one.data.id, backgroundShell);
   assert.equal((await fetch(`${url}/api/shell/sh_unknown`)).status, 404);
 
   // Output: a watch's matched lines, an eval cell's tail read on from a cursor, a notice for a session.
@@ -137,19 +142,15 @@ test("OmO background work is listed and announced as OpenCode shells, readable, 
     details: { monitors: [{ id: "bash_7", description: monitor.description, eventCount: 1, kinds: ["line"] }] },
   };
   await emit(s, { type: "message_start", message: notification });
-  const watched = (await (await fetch(`${url}/api/shell/${monitorShell}/output`)).json()) as { output: string };
+  const watched = await output(url, monitorShell);
   assert.equal(watched.output, "$ tail -F build.log\nfilter: ^DONE$\n\nDONE\n");
   const cell = { cellId: "cell_1", language: "js", state: "running", startedAtMs: 1, outputTail: "step 1\nstep 2\n" };
   await s.pi.command({ type: "set_eval_cells", cells: [cell] });
-  const first = (await (await fetch(`${url}/api/shell/${cellShell}/output`)).json()) as Record<string, unknown>;
+  const first = await output(url, cellShell);
   assert.deepEqual(first, { output: "step 1\nstep 2\n", cursor: 14, size: 14, truncated: false });
   await s.pi.command({ type: "set_eval_cells", cells: [{ ...cell, outputTail: "step 1\nstep 2\nstep 3\n" }] });
-  const next = (await (await fetch(`${url}/api/shell/${cellShell}/output?cursor=14`)).json()) as { output: string };
-  assert.equal(next.output, "step 3\n");
-  const background = (await (await fetch(`${url}/api/shell/${backgroundShell}/output`)).json()) as {
-    output: string;
-  };
-  assert.match(background.output, /bash_output/);
+  assert.equal((await output(url, cellShell, "?cursor=14")).output, "step 3\n");
+  assert.match((await output(url, backgroundShell)).output, /bash_output/);
 
   // Stop: OpenChamber's note goes first; it is refused for work OmO cannot stop, so nothing is claimed.
   const note = (shellIDs: string[]) =>
@@ -165,17 +166,102 @@ test("OmO background work is listed and announced as OpenCode shells, readable, 
   const peeked = await s.pi.command<{ state: string }>({ type: "eval_cells.peek", cellId: "cell_1" });
   assert.equal(peeked.data?.state, "cancelled");
 
-  // Ends: the watch exits with its code; removing the session ends what is left.
+  // Ends, each with how OmO says it ended: the stopped cell, the watch's exit code, the session's notice.
+  const cellKilled = v2.wait(shellFrame("shell.exited", cellShell));
+  await emit(s, extensionEvent("wake_source_state", { source: "senpi-codemode", activeCount: 0, items: [] }));
+  assert.deepEqual((await cellKilled).data, { id: cellShell, status: "killed" });
   const monitorExited = v2.wait(shellFrame("shell.exited", monitorShell));
   await emit(s, extensionEvent(MONITOR_ENDED_EVENT, { id: "bash_7", reason: "exit", exitCode: 0 }));
   await emit(s, extensionEvent(MONITOR_STATE_EVENT, { activeCount: 0, monitors: [] }));
   assert.deepEqual((await monitorExited).data, { id: monitorShell, status: "exited", exit: 0 });
-  const backgroundKilled = v2.wait(shellFrame("shell.exited", backgroundShell));
-  assert.equal((await fetch(`${url}/session/${id}`, { method: "DELETE" })).status, 200);
-  assert.deepEqual((await backgroundKilled).data, { id: backgroundShell, status: "killed" });
+  writeFileSync(
+    manifest,
+    JSON.stringify({ version: 1, sessionId: s.piSessionId, monitors: [], backgroundSessions: [] }),
+  );
+  const backgroundEnded = v2.wait(shellFrame("shell.exited", backgroundShell));
+  // Raw RPC capture shape (background-results.test.ts): OmO's notice when a background session finishes.
+  await s.pi.command({
+    type: "background_notification",
+    entryID: "bash-3-done",
+    customType: "senpi-terminal:notification",
+    content:
+      "<system-reminder>Background terminal session bash_3 finished: killed (exit code 137).\nFinal output:\nbye</system-reminder>",
+  });
+  assert.deepEqual((await backgroundEnded).data, { id: backgroundShell, status: "killed", exit: 137 });
   const after = (await (await fetch(`${url}/api/shell`)).json()) as { data: OCShellInfo[] };
   assert.deepEqual(after.data, []);
-  assert.equal(((await (await fetch(`${url}/api/shell/${monitorShell}`)).json()) as OCShellInfo).status, "exited");
+  const ended = (await (await fetch(`${url}/api/shell/${monitorShell}`)).json()) as { data: OCShellInfo };
+  assert.equal(ended.data.status, "exited");
+});
+
+async function output(url: string, shellID: string, query = ""): Promise<ShellOutputPage> {
+  const response = await fetch(`${url}/api/shell/${shellID}/output${query}`);
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { location?: unknown; data: ShellOutputPage };
+  assert.ok(body.location, "OpenChamber reads the page from the {location, data} envelope");
+  return body.data;
+}
+
+test("a session whose agent antechamber stops, or that is removed, ends every shell it ran", async (t) => {
+  const { manager, url } = await startServer(t);
+  const v2 = await openEvents(`${url}/api/event`);
+  t.after(() => v2.close());
+  const started = async () => {
+    const { id } = (await (await fetch(`${url}/session`, { method: "POST", body: "{}" })).json()) as { id: string };
+    const s = manager.get(id);
+    assert.ok(s?.pi);
+    const shellID = terminalShellId(s.pi.startedAtMs, "bash_7");
+    const created = v2.wait(
+      (event) => event.type === "shell.created" && (event.data as { info: OCShellInfo }).info.id === shellID,
+    );
+    await emit(s, extensionEvent(MONITOR_STATE_EVENT, { activeCount: 1, monitors: [monitor] }));
+    await created;
+    return { id, s, shellID };
+  };
+  const exited = (shellID: string) =>
+    v2.wait((event) => event.type === "shell.exited" && (event.data as { id: string }).id === shellID);
+
+  // Idle eviction and a failed tree refresh dispose the agent through lifecycle.dormant, which unwires its exit handler.
+  const dormant = await started();
+  const dormantEnded = exited(dormant.shellID);
+  await manager.lifecycle.dormant(dormant.s);
+  assert.deepEqual((await dormantEnded).data, { id: dormant.shellID, status: "killed" });
+
+  const removed = await started();
+  const removedEnded = exited(removed.shellID);
+  assert.equal((await fetch(`${url}/session/${removed.id}`, { method: "DELETE" })).status, 200);
+  assert.deepEqual((await removedEnded).data, { id: removed.shellID, status: "killed" });
+  const after = (await (await fetch(`${url}/api/shell`)).json()) as { data: OCShellInfo[] };
+  assert.deepEqual(after.data, []);
+});
+
+test("a watch's output keeps its header once and every matched line in order past the kept 200", async (t) => {
+  const { manager, url } = await startServer(t);
+  const { id } = (await (await fetch(`${url}/session`, { method: "POST", body: "{}" })).json()) as { id: string };
+  const s = manager.get(id);
+  assert.ok(s?.pi);
+  const shellID = terminalShellId(s.pi.startedAtMs, "bash_7");
+  await emit(s, extensionEvent(MONITOR_STATE_EVENT, { activeCount: 1, monitors: [monitor] }));
+  const notify = (from: number, count: number) => {
+    const lines = Array.from({ length: count }, (_, index) => `line ${from + index}`);
+    const message = {
+      role: "custom",
+      customType: "senpi-monitor:notification",
+      content: `<system-reminder>Monitor event(wait for the build): ${lines.join("\n")}</system-reminder>`,
+      display: false,
+      details: { monitors: [{ id: "bash_7", description: monitor.description, eventCount: count, kinds: ["line"] }] },
+    };
+    return emit(s, { type: "message_start", message });
+  };
+  await notify(0, 150);
+  const first = await output(url, shellID);
+  await notify(150, 100);
+  const second = await output(url, shellID, `?cursor=${first.cursor}`);
+  const all = `${first.output}${second.output}`;
+  assert.equal(all.split("$ tail -F build.log").length - 1, 1);
+  const expected = Array.from({ length: 250 }, (_, index) => `line ${index}`).join("\n");
+  assert.equal(all, `$ tail -F build.log\nfilter: ^DONE$\n\n${expected}\n`);
+  assert.equal(second.output, `${Array.from({ length: 100 }, (_, index) => `line ${150 + index}`).join("\n")}\n`);
 });
 
 function card(s: ManagedSession, callID: string): OCToolPart {
@@ -280,6 +366,32 @@ test("a monitor call names its watch's shell; other completed calls do not", () 
   assert.ok(plain);
   assert.equal(plain.shellID, undefined);
   assert.equal(plain.status, undefined);
+  // A history read agrees with the stream for a finished monitor card.
+  const listed = toV2Message({
+    info: {
+      id: "msg_1",
+      sessionID: "ses_1",
+      role: "assistant",
+      time: { created: 1, completed: 10 },
+      parentID: "msg_0",
+      modelID: "m",
+      providerID: "p",
+      mode: "build",
+      path: { cwd: "/repo", root: "/repo" },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    },
+    parts: [watch, read],
+  });
+  const content = ("content" in listed && Array.isArray(listed.content) ? listed.content : []) as Array<{
+    id: string;
+    state: { metadata: Record<string, unknown> };
+  }>;
+  assert.equal(
+    content.find((part) => part.id === "call_watch")?.state.metadata.shellID,
+    terminalShellId(1000, "bash_4"),
+  );
+  assert.equal(content.find((part) => part.id === "call_read")?.state.metadata.shellID, undefined);
 });
 
 test("output windows that slide past their start keep an append-only cursor", () => {
@@ -294,4 +406,13 @@ test("output windows that slide past their start keep an append-only cursor", ()
   // A window that shares nothing with what is known is appended whole.
   log.update("zz\n");
   assert.deepEqual(log.read(15, 2), { output: "zz", cursor: 17, size: 18, truncated: false });
+});
+
+test("output pages never split a character", () => {
+  const log = new OutputLog();
+  log.append("aé€b"); // bytes: a(1) é(2) €(3) b(1)
+  assert.deepEqual(log.read(0, 2), { output: "a", cursor: 1, size: 7, truncated: false });
+  assert.deepEqual(log.read(1, 1), { output: "é", cursor: 3, size: 7, truncated: false });
+  // A cursor inside a character (a client's own tail start) moves to the next one.
+  assert.deepEqual(log.read(4, 10), { output: "b", cursor: 7, size: 7, truncated: false });
 });

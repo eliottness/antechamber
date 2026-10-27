@@ -424,6 +424,9 @@ replayed against its own sync code with antechamber-shaped envelopes:
   output from `GET /api/shell/{id}/output`, a Stop button, then its result.
 - Stop posts a synthetic note carrying `openchamberShellCancellation` and only
   then calls `DELETE /api/shell/{id}`; nothing is removed when the note fails.
+- `@opencode/client` 2.1.4 returns each response body as is, and
+  `readShellOutput` reads `.data`: single-shell and output answers are
+  `{location, data}` like the list.
 - `@opencode/schema` 2.1.4 `shell.js`: ids start with `sh_`; `Info` is
   `{id, status, command, cwd, shell, file, pid?, exit?, signal?, metadata,
   time: {started, completed?}}`; `Output` is `{output, cursor, size,
@@ -442,8 +445,15 @@ Identity and sources:
   results, turn and run ends, and custom messages (OmO's background-finished
   notifications), and before answering `GET /api/shell`. The manifest has no
   RPC event, so a background session started by a detached cell after its own
-  result appears at the next of those. When the agent process exits, or the
-  session is removed, every shell it ran ends as `killed`.
+  result appears at the next of those. When the agent process exits, when
+  antechamber disposes it (`lifecycle.dormant`: idle eviction, a failed tree
+  refresh, which unwires the exit handler first), or when the session is
+  removed, every shell it ran ends as `killed`.
+- End status: a watch's ended reason and exit code; a stopped eval cell is
+  `killed`; OmO's finished notification gives a background session's status
+  and exit code ("bash_3 finished: killed (exit code 137)") and a cell's
+  outcome (a failed cell reads as exit 1) when it arrives before the work
+  disappears, else the shell ends `exited`.
 
 Cards: a card that leaves work running (`background-results.ts`) records the
 shell it stands for, `backgroundShellID`: the detached cell itself, else the
@@ -457,11 +467,15 @@ until the work reports finishing. When it does, v2 re-announces the card as a
 plain completed one. Work with no card (a watch a revived agent restored, or a
 second background session from the same cell) still keeps the turn open, but
 reaches the list above the composer only once OpenChamber is reloaded and reads
-it from `GET /api/shell` first.
+it from `GET /api/shell` first. A history rebuilt from the session file
+(revert, fork, compaction, revival) settles every waiting card, so its cards
+lose the link the same way.
 
-Output: OmO exposes only tails (`eval_cells.peek` returns at most 64 KiB, a
-watch keeps its last 200 matched lines), so each shell keeps an append-only log
-that continues where a new tail's start matches the known end. Background
+Output: each shell keeps an append-only log. A watch's log is its command and
+filter, then each matched line once: lines are counted as OmO sends them, so
+the 200 the watch keeps never repeat. An eval cell's log follows
+`eval_cells.peek`, which returns at most a 64 KiB tail, continuing where the
+new tail's start matches the known end. Pages end on a character boundary. Background
 terminal sessions have no output OmO exposes over RPC; their output is a
 one-line notice.
 

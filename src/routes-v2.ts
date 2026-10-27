@@ -231,6 +231,7 @@ async function handleShell(
   output: boolean,
   method: string,
   url: URL,
+  withLocation: (data: unknown) => unknown,
 ): Promise<void> {
   const shells = services.sessions.shells;
   const info = shells.get(id);
@@ -245,8 +246,9 @@ async function handleShell(
     } else if (output) {
       const cursor = numberParam(url.searchParams.get("cursor"));
       const limit = numberParam(url.searchParams.get("limit"));
-      json(res, 200, await shells.output(id, cursor, limit));
-    } else json(res, 200, info);
+      // @opencode/client returns the body and OpenChamber reads `.data` (lib/opencode/client.ts readShellOutput).
+      json(res, 200, withLocation(await shells.output(id, cursor, limit)));
+    } else json(res, 200, withLocation(info));
   } catch (error) {
     if (!(error instanceof WorkStatusError)) throw error;
     json(res, error.status, errorBody(error.status === 404 ? "NotFoundError" : "UnsupportedError", error.message));
@@ -340,7 +342,15 @@ export async function handleV2(
   }
   const shellMatch = path.match(/^\/api\/shell\/([^/]+)(\/output)?$/);
   if (shellMatch && (method === "GET" || (method === "DELETE" && shellMatch[2] === undefined))) {
-    await handleShell(services, res, decodeURIComponent(shellMatch[1]!), shellMatch[2] !== undefined, method, url);
+    await handleShell(
+      services,
+      res,
+      decodeURIComponent(shellMatch[1]!),
+      shellMatch[2] !== undefined,
+      method,
+      url,
+      withLocation,
+    );
     return;
   }
   // OmO has no web-search providers: an honest empty list.

@@ -135,6 +135,8 @@ export interface ManagedSession extends ThinkingState {
   hasBackgroundWork?: () => boolean;
   /** Live wake sources OmO publishes over RPC (detached eval cells), which also block idle eviction. */
   hasWakeSources?: () => boolean;
+  /** antechamber stopped the agent process itself (lifecycle `dormant`): its in-process work died with it. */
+  onDormant?: () => void;
   /** Why the agent last stopped on its own; persisted and replayed as a notice until the next prompt. */
   lastStop?: { message: string; at: number };
 }
@@ -303,6 +305,7 @@ export class SessionManager {
       this.subagents.wire(managed);
       this.monitors.wire(managed);
       this.workStatus.wire(managed);
+      this.wireDormant(managed);
       this.lifecycle.touch(managed);
       this.wirePi(managed, pi);
 
@@ -1663,7 +1666,17 @@ export class SessionManager {
     this.subagents.wire(managed);
     this.monitors.wire(managed);
     this.workStatus.wire(managed);
+    this.wireDormant(managed);
     return managed;
+  }
+
+  /** The same cleanup as an agent exit, for a process antechamber disposed after unwiring its exit handler. */
+  private wireDormant(s: ManagedSession): void {
+    s.onDormant = () => {
+      this.monitors.stopParent(s.info.id);
+      this.workStatus.stopParent(s.info.id);
+      this.shells.stopParent(s.info.id);
+    };
   }
 
   /** Resolve a bare session id (e.g. deep link after restart) via known directories. */
