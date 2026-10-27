@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-10-27
+
 ### Added
 
 - Show OmO's background work as background commands in OpenChamber 2.x. While a terminal monitor, a detached eval
