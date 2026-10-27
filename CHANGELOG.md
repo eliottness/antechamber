@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-10-27
+
 ### Fixed
 
 - Draw shell and eval cards in OpenChamber 2.x as shell cards: the command as code, then its live output. OpenCode
