@@ -26,7 +26,7 @@ function fixture(t: TestContext, backend = "omo") {
     home,
     cwd: home,
     platform: "linux",
-    nodeVersion: "22.0.0",
+    bunVersion: "1.4.0",
     env: { PATH: home, ANTECHAMBER_PI_BINARY: backend, OMO_CODING_AGENT_DIR: agent },
     exec: (binary, args) => {
       calls.push([binary, ...args]);
@@ -121,20 +121,31 @@ test("doctor warns that plain pi is best effort", (t) => {
   assert.equal(report.checks.find((check) => check.name === "backend-kind")?.status, "WARN");
 });
 
-test("doctor fails on an old Node version and a failed backend version probe", (t) => {
+test("doctor fails outside Bun and on an old Bun version", (t) => {
+  const { settings, ctx } = fixture(t);
+  for (const bunVersion of [undefined, "1.3.9", "0.9.0"]) {
+    const report = doctor({ settings }, { ...ctx, bunVersion });
+    assert.equal(report.exitCode, 1, bunVersion);
+    assert.equal(report.checks.find((check) => check.name === "bun")?.status, "FAIL", bunVersion);
+  }
+  for (const bunVersion of ["1.4.0", "1.10.2", "2.0.0"]) {
+    const check = doctor({ settings }, { ...ctx, bunVersion }).checks.find((entry) => entry.name === "bun");
+    assert.equal(check?.status, "PASS", bunVersion);
+  }
+});
+
+test("doctor fails on a failed backend version probe", (t) => {
   const { settings, ctx } = fixture(t);
   const report = doctor(
     { settings },
     {
       ...ctx,
-      nodeVersion: "20.19.0",
       exec: () => {
         throw new Error("version probe timed out");
       },
     },
   );
   assert.equal(report.exitCode, 1);
-  assert.equal(report.checks.find((check) => check.name === "node")?.status, "FAIL");
   assert.equal(report.checks.find((check) => check.name === "backend")?.status, "FAIL");
   assert.equal(report.checks.find((check) => check.name === "private-host-teardown")?.status, "WARN");
 });
