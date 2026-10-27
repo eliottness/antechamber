@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep each reply in its own turn in OpenChamber 2.x after history is reloaded. A reply's request can start a few
+  milliseconds before OmO writes its prompt, so a restored reply sorted ahead of its prompt: the first turn's replies
+  vanished and each later turn's first reply was drawn in the turn before.
+
 ## [1.0.23] - 2026-10-27
 
 ### Fixed

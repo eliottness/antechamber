@@ -5,6 +5,8 @@ import { toV2Message, V2EventTranslator } from "../src/v2.js";
 import type { V2Message } from "../src/v2.js";
 import type { OCMessageWithParts } from "../src/types.js";
 import { AdapterServer } from "../src/server.js";
+import { parsePiSessionText } from "../src/session-history.js";
+import type { ManagedSession } from "../src/sessions.js";
 import { bugHarness, openEvents } from "./bug-harness.js";
 
 for (const entrypoint of ["get", "list", "listAll"] as const) {
@@ -254,3 +256,87 @@ for (const input of ["normal", "steps", "no-usage", "error", "aborted", "length"
     });
   });
 }
+
+test("restored replies sort after their prompt when the request started before pi wrote the prompt", () => {
+  // Timing from a real OmO session file (2026-10-27): the prompt entry is written about 80 ms after the prompt's own
+  // message.timestamp, and the reply's request (its message.timestamp) starts 15-18 ms before that entry.
+  const at = (ms: number) => new Date(1_793_098_000_000 + ms).toISOString();
+  let parent: string | undefined;
+  const lines = [JSON.stringify({ type: "session", id: "pi", cwd: "/tmp/order", timestamp: at(0) })];
+  const entry = (id: string, ms: number, message: Record<string, unknown>) => {
+    lines.push(JSON.stringify({ type: "message", id, parentId: parent, timestamp: at(ms), message }));
+    parent = id;
+  };
+  const user = (id: string, ms: number, sent: number, clientMessageId?: string) =>
+    entry(id, ms, {
+      role: "user",
+      content: [{ type: "text", text: id }],
+      timestamp: 1_793_098_000_000 + sent,
+      ...(clientMessageId ? { clientMessageId } : {}),
+    });
+  const reply = (id: string, ms: number, started: number, content: unknown[], stopReason: string) =>
+    entry(id, ms, {
+      role: "assistant",
+      content,
+      provider: "fake",
+      model: "served",
+      timestamp: 1_793_098_000_000 + started,
+      stopReason,
+    });
+  const cell = (id: string) => ({ type: "toolCall", id, name: "eval", arguments: { language: "js", code: "1" } });
+  user("u1", 1470, 1387);
+  reply("a1", 5746, 1455, [{ type: "text", text: "first" }, cell("cell1")], "toolUse");
+  entry("r1", 5804, { role: "toolResult", toolCallId: "cell1", content: [{ type: "text", text: "ok" }] });
+  reply("a2", 8598, 7436, [{ type: "text", text: "done" }], "stop");
+  user("u2", 456_090, 456_020);
+  reply("a3", 459_307, 456_072, [cell("cell2")], "toolUse");
+  entry("r2", 459_362, { role: "toolResult", toolCallId: "cell2", content: [{ type: "text", text: "ok" }] });
+  reply("a4", 460_733, 459_369, [{ type: "text", text: "done" }], "stop");
+  // Same millisecond as its prompt entry, with an id that sorts before the prompt's: only time can order them.
+  user("u3", 500_000, 499_900, "msg_zz_prompt");
+  reply("a5", 500_000, 500_000, [{ type: "text", text: "instant" }], "stop");
+  const s: ManagedSession = {
+    info: {
+      id: "ses_order",
+      projectID: "/tmp/order",
+      directory: "/tmp/order",
+      title: "Order",
+      version: "test",
+      time: { created: 1000, updated: 1000 },
+    },
+    pi: undefined,
+    model: undefined,
+    streaming: undefined,
+    status: { type: "idle" },
+    messages: [],
+    toolByCallId: new Map(),
+    tree: { messageEntries: {} },
+    hasPendingInteraction: () => false,
+    hasRunningChildren: () => false,
+  };
+  const history = parsePiSessionText(s, "OmO", `${lines.join("\n")}\n`);
+  const replies = history.filter((message) => message.info.role === "assistant");
+  assert.equal(replies.length, 5);
+  assert.equal(history.filter((message) => message.info.role === "user").length, 3);
+
+  // OpenChamber 2.x orders by time.created, then synthetic records first, then id
+  // (compareMessagesChronologically, packages/ui/src/sync/message-ordering.ts, v2.5.2), and opens a turn at each prompt.
+  const v2 = history.map(toV2Message);
+  const order = (a: V2Message, b: V2Message) =>
+    a.time.created - b.time.created ||
+    Number(b.type === "synthetic") - Number(a.type === "synthetic") ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  let prompt: string | undefined;
+  const turnOf = new Map<string, string | undefined>();
+  for (const message of v2.toSorted(order)) {
+    if (message.type === "user") prompt = message.id;
+    else turnOf.set(message.id, prompt);
+  }
+  for (const message of replies) {
+    if (message.info.role !== "assistant") continue;
+    assert.equal(turnOf.get(message.info.id), message.info.parentID, `${message.info.id} drawn in the wrong turn`);
+    assert.ok(message.info.time.completed !== undefined && message.info.time.completed >= message.info.time.created);
+  }
+  // Request start stays the reply's creation time whenever it already follows the prompt.
+  assert.equal(replies[1]?.info.time.created, 1_793_098_007_436);
+});
