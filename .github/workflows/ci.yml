@@ -5,6 +5,47 @@ on:
   pull_request:
 
 jobs:
+  # The published CLI runs on Bun; development tooling (tsc, tsx tests, esbuild) stays on Node.
+  bun-runtime:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: [1.4.x, latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun }}
+      - run: npm ci
+      - run: npm run build
+      - name: Doctor reports the Bun runtime
+        run: |
+          bun dist/cli.js doctor --json > "$RUNNER_TEMP/doctor.json" || true
+          bun -e 'const r = JSON.parse(await Bun.file(process.argv[1]).text()); const c = r.checks.find((x) => x.name === "bun"); if (c?.status !== "PASS") throw new Error(JSON.stringify(c)); console.log(c.message)' "$RUNNER_TEMP/doctor.json"
+      - name: Serve a turn through the launcher shim under Bun
+        run: |
+          set -eu
+          bun dist/cli.js version | grep -qF "antechamber $(bun -p 'require("./package.json").version') "
+          state="$(mktemp -d)"
+          mkdir "$state/agent"
+          ANTECHAMBER_STATE_DIR="$state" ANTECHAMBER_PI_BINARY="$PWD/test/fixtures/turn-omo.mjs" PI_CODING_AGENT_DIR="$state/agent" \
+            bin/opencode-antechamber serve --hostname 127.0.0.1 --port 4096 > "$state/out.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true; cat "$state/out.log"' EXIT
+          for _ in $(seq 1 100); do grep -q '^opencode server listening on http://127.0.0.1:4096$' "$state/out.log" && break; sleep 0.1; done
+          ps -o command= -p "$server" | grep -q 'bun .*dist/cli.js serve'
+          curl -fsS http://127.0.0.1:4096/global/health | grep -q '"healthy":true'
+          session="$(curl -fsS -X POST -H 'content-type: application/json' -d '{}' http://127.0.0.1:4096/session | bun -e 'console.log(JSON.parse(await Bun.stdin.text()).id)')"
+          curl -fsS -X POST -H 'content-type: application/json' -d '{"parts":[{"type":"text","text":"hello"}]}' "http://127.0.0.1:4096/session/$session/message" \
+            | bun -e 'const m = JSON.parse(await Bun.stdin.text()); if (m.info?.role !== "assistant") throw new Error(JSON.stringify(m).slice(0, 500))'
+          kill -TERM "$server"
+          wait "$server"
+
   check:
     runs-on: ubuntu-latest
     strategy:
