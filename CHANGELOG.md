@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-27
+
 ### Changed
 
 - **Breaking:** antechamber now runs on Bun 1.4+ instead of Node.js. OmO already requires Bun, and under Bun the
