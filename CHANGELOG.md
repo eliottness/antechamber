@@ -7,6 +7,16 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** antechamber now runs on Bun 1.4+ instead of Node.js. OmO already requires Bun, and under Bun the
+  server starts about 3 times faster and idles at about half the memory. `dist/cli.js` has a `bun` shebang,
+  `bin/opencode-antechamber` finds Bun on PATH, in `$BUN_INSTALL/bin` or in `~/.bun/bin`, and `antechamber doctor`
+  replaces its `node` check with a `bun` check. Launchers written by `antechamber setup --auto-update` now put
+  Bun's directory on PATH. A launcher written by an older version needs `bun` on OpenChamber's PATH; if it is not
+  there, rerun `antechamber setup --auto-update`. npm still installs and updates the package; building from source
+  still needs Node.js 22+.
+
 ## [1.0.24] - 2026-10-27
 
 ### Fixed

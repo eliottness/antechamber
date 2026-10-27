@@ -151,7 +151,7 @@ Description=antechamber (OmO backend)
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/node /path/to/antechamber/dist/cli.js serve --hostname 127.0.0.1 --port 4096
+ExecStart=/path/to/bun /path/to/antechamber/dist/cli.js serve --hostname 127.0.0.1 --port 4096
 Environment=ANTECHAMBER_PI_BINARY=/path/to/omo
 Environment=ANTECHAMBER_STATE_DIR=%h/.config/antechamber
 Environment=ANTECHAMBER_AGENT=OmO

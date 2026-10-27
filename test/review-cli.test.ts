@@ -107,18 +107,41 @@ test("R-026: symlinked launcher names find their installed package CLI", async (
     fs.symlinkSync(target, join(launchers, name));
   }
   fs.writeFileSync(join(dist, "cli.js"), 'console.log("fixture CLI version");\n');
+  // A stand-in `bun` that runs the fixture CLI with this test's runtime, so no real Bun is needed.
+  const fakeBun = (dir: string): void => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(join(dir, "bun"), `#!/bin/sh\nexec '${process.execPath}' "$@"\n`, { mode: 0o755 });
+  };
+  const run = (env: NodeJS.ProcessEnv) =>
+    ["opencode-antechamber", "opencode-pi"].map((name) =>
+      childProcess.spawnSync(join(launchers, name), ["--version"], { encoding: "utf8", timeout: 5000, env }),
+    );
+  const systemPath = "/usr/bin:/bin";
+  const pathBun = join(root, "path-bin");
+  fakeBun(pathBun);
+  const installedHome = join(root, "home with bun");
+  fakeBun(join(installedHome, ".bun", "bin"));
 
-  const results = ["opencode-antechamber", "opencode-pi"].map((name) =>
-    childProcess.spawnSync(join(launchers, name), ["--version"], { encoding: "utf8", timeout: 5000 }),
-  );
+  for (const env of [
+    { PATH: `${pathBun}:${systemPath}`, HOME: join(root, "empty home") },
+    { PATH: systemPath, HOME: installedHome },
+  ]) {
+    const results = run(env);
+    assert.deepEqual(
+      results.map((result) => result.status),
+      [0, 0],
+      results.map((result) => result.stderr).join("\n"),
+    );
+    assert.deepEqual(
+      results.map((result) => result.stdout),
+      ["fixture CLI version\n", "fixture CLI version\n"],
+    );
+  }
 
+  const missing = run({ PATH: systemPath, HOME: join(root, "empty home") });
   assert.deepEqual(
-    results.map((result) => result.status),
-    [0, 0],
-    results.map((result) => result.stderr).join("\n"),
+    missing.map((result) => result.status),
+    [1, 1],
   );
-  assert.deepEqual(
-    results.map((result) => result.stdout),
-    ["fixture CLI version\n", "fixture CLI version\n"],
-  );
+  for (const result of missing) assert.match(result.stderr, /bun not found on PATH or in ~\/\.bun\/bin/);
 });

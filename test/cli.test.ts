@@ -98,9 +98,10 @@ test("serve preserves the OpenChamber listening line and clean shutdown", { time
   assert.equal(code, 0);
 });
 
-test("npm package configuration retains the CLI and supported Node runtime", () => {
+test("npm package configuration retains the CLI and the supported Bun runtime", () => {
   assert.equal(manifest.bin.antechamber, "dist/cli.js");
   assert.ok(manifest.files.includes("dist"));
-  assert.equal(manifest.engines.node, ">=22");
+  assert.deepEqual(manifest.engines, { bun: ">=1.4.0" });
+  assert.ok(readFileSync(cli, "utf8").startsWith("#!/usr/bin/env bun\n"));
   assert.deepEqual(manifest.publishConfig, { access: "public", provenance: true });
 });

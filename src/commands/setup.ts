@@ -79,8 +79,8 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
         ? onPath
         : ctx.cliPath;
   if (binary === undefined) throw new Error(`Cannot resolve executable --binary ${options.binary}`);
-  if (binary === ctx.cliPath && !ctx.fs.readFileSync(binary, "utf8").startsWith("#!/usr/bin/env node\n")) {
-    throw new Error(`Package CLI ${binary} is missing its node shebang; run npm run build`);
+  if (binary === ctx.cliPath && !ctx.fs.readFileSync(binary, "utf8").startsWith("#!/usr/bin/env bun\n")) {
+    throw new Error(`Package CLI ${binary} is missing its bun shebang; run npm run build`);
   }
   let launcher: string | undefined;
   let launcherText: string | undefined;
@@ -96,7 +96,7 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
       () => ctx.exec(npmBinaryFor(), ["root", "-g"]),
     );
     launcher = autoUpdateLauncherPath(ctx);
-    launcherText = autoUpdateLauncherText(binary);
+    launcherText = autoUpdateLauncherText(binary, ctx.bunBinary);
     if (ctx.fs.existsSync(launcher)) oldLauncher = ctx.fs.readFileSync(launcher, "utf8");
   }
   const configured = launcher ?? binary;

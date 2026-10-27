@@ -15,7 +15,7 @@ function fixture(t: TestContext) {
   fs.writeFileSync(binary, "#!/usr/bin/env node\n", { mode: 0o755 });
   const cliPath = join(home, "dist", "cli.js");
   fs.mkdirSync(join(home, "dist"));
-  fs.writeFileSync(cliPath, "#!/usr/bin/env node\n", { mode: 0o755 });
+  fs.writeFileSync(cliPath, "#!/usr/bin/env bun\n", { mode: 0o755 });
   const ctx = createContext({
     home,
     cwd: home,
@@ -195,13 +195,14 @@ function globalInstall(t: TestContext) {
   const npmRoot = join(base.home, "npm", "lib", "node_modules");
   const cliPath = join(npmRoot, "antechamber", "dist", "cli.js");
   fs.mkdirSync(join(npmRoot, "antechamber", "dist"), { recursive: true });
-  fs.writeFileSync(cliPath, "#!/usr/bin/env node\n", { mode: 0o755 });
+  fs.writeFileSync(cliPath, "#!/usr/bin/env bun\n", { mode: 0o755 });
   const binary = join(base.home, "npm", "bin", "antechamber");
   fs.mkdirSync(join(base.home, "npm", "bin"));
   fs.symlinkSync(cliPath, binary);
   const ctx = {
     ...base.ctx,
     cliPath,
+    bunBinary: undefined,
     env: { PATH: join(base.home, "npm", "bin") },
     exec: (command: string, args: readonly string[]) => {
       assert.deepEqual([basename(command), ...args], ["npm", "root", "-g"]);
@@ -220,6 +221,7 @@ test("auto-update setup points OpenChamber at an executable launcher for the glo
   assert.ok(text.startsWith("#!/bin/sh\n"));
   assert.ok(text.includes("ANTECHAMBER_AUTO_UPDATE=1\nexport ANTECHAMBER_AUTO_UPDATE\n"));
   assert.ok(text.includes(`exec '${binary}' "$@"`));
+  assert.equal(text.includes("PATH="), false, "no Bun directory to add when setup itself is not running on Bun");
   assert.equal(fs.statSync(launcher).mode & 0o777, 0o755);
 
   const written = fs.readFileSync(settings, "utf8");
@@ -228,6 +230,18 @@ test("auto-update setup points OpenChamber at an executable launcher for the glo
   assert.equal(fs.readFileSync(launcher, "utf8"), text);
   assert.equal(fs.readdirSync(home).filter((name) => name.includes(".bak-")).length, 0);
 
+  const check = doctor({ settings }, ctx).checks.find((entry) => entry.name === "openchamber-settings");
+  assert.equal(check?.status, "PASS");
+  assert.ok(check?.message.includes(binary));
+});
+
+test("auto-update launcher puts the Bun that ran setup on PATH for the CLI's bun shebang", (t) => {
+  const { home, ctx, binary, launcher } = globalInstall(t);
+  const settings = join(home, "settings.json");
+  const bunDir = join(home, "it's bun", "bin");
+  setup({ settings, autoUpdate: true }, { ...ctx, bunBinary: join(bunDir, "bun") });
+  const text = fs.readFileSync(launcher, "utf8");
+  assert.ok(text.includes(`PATH='${bunDir.replaceAll("'", "'\\''")}':"$PATH"\nexport PATH\nexec '${binary}' "$@"\n`));
   const check = doctor({ settings }, ctx).checks.find((entry) => entry.name === "openchamber-settings");
   assert.equal(check?.status, "PASS");
   assert.ok(check?.message.includes(binary));
