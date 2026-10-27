@@ -584,7 +584,7 @@ test("a shell-only persisted session restores a synthetic user and linked assist
   assert.equal(card.info.parentID, history[0]?.info.id);
   const v2 = toV2Message(card);
   assert.equal(v2.type, "assistant");
-  assert.equal(v2.content?.[0]?.name, "bash");
+  assert.equal(v2.content?.[0]?.name, "shell");
 });
 
 for (const executionEvents of [true, false]) {
@@ -718,7 +718,7 @@ test("a failed eval cell, flagged only in details.isError, is an error card live
   assert.equal(reloaded.state.error, "BEFORE\nCELL_FAILED_ON_PURPOSE");
 });
 
-test("a streamed eval cell reaches the v2 stream as a bash card with its header and live output", () => {
+test("a streamed eval cell reaches the v2 stream as a shell card with its header and live output", () => {
   const s = session("/nonexistent");
   const translator = new V2EventTranslator();
   const frames: { type: string; data: Record<string, unknown> }[] = [];
@@ -746,7 +746,7 @@ test("a streamed eval cell reaches the v2 stream as a bash card with its header 
   assert.ok(called > 0);
   assert.equal(
     tool.slice(0, called).findLast((frame) => frame.type === "session.tool.input.started")?.data.name,
-    "bash",
+    "shell",
   );
   assert.deepEqual(tool[called]?.data.input, { command: args.code, description: "Python Eval: Print hello" });
   const progress = tool.filter((frame) => frame.type === "session.tool.progress").map((frame) => frame.data.metadata);
