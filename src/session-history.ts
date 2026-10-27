@@ -212,6 +212,8 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
   let currentModel: OCModelRef = { providerID: "unknown", modelID: "unknown" };
   let currentThinkingLevel: string | undefined;
   let lastUserId = "";
+  // When the newest user-role record (prompt, context, compaction, user shell) was created. A reply must sort after it.
+  let userAt = Number.NEGATIVE_INFINITY;
   // Like live agent_end, a new user turn closes the previous run: its own
   // unresolved provider cards end with that run's stop reason.
   let runAssistant: PiFileEntry | undefined;
@@ -247,6 +249,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       );
       out.push(...compaction);
       lastUserId = compaction[0].info.id;
+      userAt = compaction[0].info.time.created;
       continue;
     }
     if (e.type === "custom_message") {
@@ -272,6 +275,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
           ? [{ type: "text", text: e.content }]
           : [];
       const time = entryTime(e);
+      userAt = time;
       if (e.id) s.tree.messageEntries[contextID] = e.id;
       out.push({
         info: {
@@ -312,6 +316,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         `msg_${sessionID}_r${idx}`;
       if (e.id) s.tree.messageEntries[msgId] = e.id;
       lastUserId = msgId;
+      userAt = created;
       const info: OCUserMessage = {
         id: msgId,
         sessionID,
@@ -340,6 +345,7 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       const stem = userId?.slice(0, -1) ?? mappedIds[0] ?? `msg_${sessionID}_r${idx}`;
       const msgId = `${stem}z`;
       lastUserId = `${stem}u`;
+      userAt = created;
       if (e.id) {
         s.tree.messageEntries[msgId] = e.id;
         s.tree.messageEntries[lastUserId] = e.id;
@@ -399,17 +405,20 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
         Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ??
         `msg_${sessionID}_r${idx}`;
       if (e.id) s.tree.messageEntries[msgId] = e.id;
+      // The reply starts when its request starts (`m.timestamp`), which can be a few ms before pi writes the prompt
+      // entry that `userAt` comes from. OpenChamber 2.x groups turns by creation time, so a reply created before its
+      // prompt would move into the previous turn, or vanish before the first one.
+      const started = Math.max(
+        typeof m.timestamp === "number" && Number.isFinite(m.timestamp) && m.timestamp <= created
+          ? m.timestamp
+          : created,
+        userAt + 1,
+      );
       const info: OCAssistantMessage = {
         id: msgId,
         sessionID,
         role: "assistant",
-        time: {
-          created:
-            typeof m.timestamp === "number" && Number.isFinite(m.timestamp) && m.timestamp <= created
-              ? m.timestamp
-              : created,
-          completed: created,
-        },
+        time: { created: started, completed: Math.max(created, started) },
         parentID: lastUserId,
         modelID: currentModel.modelID,
         providerID: currentModel.providerID,
