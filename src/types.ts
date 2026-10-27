@@ -178,6 +178,21 @@ export type OCSessionStatus =
   | { type: "busy" }
   | { type: "retry"; attempt: number; message: string; next: number };
 
+export type OCShellStatus = "running" | "exited" | "timeout" | "killed";
+
+/** OpenCode 2.x `Shell.Info` (@opencode/schema 2.1.4 shell.js); `metadata.sessionID` ties it to a session. */
+export interface OCShellInfo {
+  id: string;
+  status: OCShellStatus;
+  command: string;
+  cwd: string;
+  shell: string;
+  file: string;
+  exit?: number;
+  metadata: { sessionID: string } & Record<string, unknown>;
+  time: { started: number; completed?: number };
+}
+
 export type OCEvent =
   | {
       type: "session.inbox.enqueued";
@@ -245,6 +260,8 @@ export type OCEvent =
         output?: { output: string; cursor: number; size: number; truncated: boolean };
       };
     }
+  | { type: "shell.created"; properties: { info: OCShellInfo } }
+  | { type: "shell.exited"; properties: { id: string; status: OCShellStatus; exit?: number } }
   | { type: "session.deleted"; properties: { info: OCSession } }
   | { type: "session.status"; properties: { sessionID: string; status: OCSessionStatus } }
   | { type: "session.idle"; properties: { sessionID: string } }

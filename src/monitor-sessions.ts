@@ -132,6 +132,12 @@ export class MonitorSessions {
     return this.watches.has(id);
   }
 
+  /** OmO's terminal id (`bash_N`) of a child's watch while it runs. */
+  terminalId(id: string): string | undefined {
+    const watch = this.watches.get(id);
+    return watch !== undefined && watch.ending === undefined ? watch.monitor.id : undefined;
+  }
+
   /** A parent's watches, live first then the newest ended ones, with their latest matched lines. */
   list(parentID: string, maxEnded: number, maxLines: number): MonitorView[] {
     const watches = [...this.watches.values()].filter((watch) => watch.session.info.parentID === parentID);

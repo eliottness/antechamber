@@ -43,6 +43,7 @@ import {
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
 import { WorkStatusBridge } from "./work-status.js";
+import { OmoShells } from "./omo-shells.js";
 import { sessionDiff } from "./session-diff.js";
 import { announceSessionNotice, noticeMessage, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
@@ -191,6 +192,7 @@ export class SessionManager {
   readonly subagents: SubagentBridge;
   readonly monitors: MonitorSessions;
   readonly workStatus: WorkStatusBridge;
+  readonly shells: OmoShells;
   /** directory → last scan freshness (pi dir mtime + wall clock). */
   private scanCache = new Map<string, { mtimeMs: number; at: number }>();
   /** freshness of the all-directories scan (see listAll). */
@@ -209,11 +211,13 @@ export class SessionManager {
     );
     this.monitors = new MonitorSessions(this.sessions, this.emit);
     this.workStatus = new WorkStatusBridge(this.monitors);
+    this.shells = new OmoShells(this.sessions, this.monitors, this.workStatus, this.emit);
     this.events = new PiEventTranslator({
       emit: this.emit,
       subagents: this.subagents,
       monitors: this.monitors,
       workStatus: this.workStatus,
+      shells: this.shells,
       store: this.store,
       dirtyDiffs: this.dirtyDiffs,
       ensureMessages: (s) => this.ensureMessages(s),
@@ -421,6 +425,7 @@ export class SessionManager {
       this.subagents.finishCalls(s.info.id, true);
       this.monitors.stopParent(s.info.id);
       this.workStatus.stopParent(s.info.id);
+      this.shells.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
         .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
@@ -533,6 +538,7 @@ export class SessionManager {
     const child = this.subagents.remove(sessionId);
     this.monitors.remove(sessionId);
     this.workStatus.stopParent(sessionId);
+    this.shells.stopParent(sessionId);
     if (piPath !== undefined) {
       try {
         unlinkSync(piPath);

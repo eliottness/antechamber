@@ -1,13 +1,6 @@
 import type { WorkStatus } from "../../../src/work-status.ts";
 
-export type {
-  BackgroundSessionView,
-  EvalCellView,
-  GoalTimerView,
-  WakeSource,
-  WorkStatus,
-} from "../../../src/work-status.ts";
-export type { MonitorView } from "../../../src/monitor-sessions.ts";
+export type { GoalTimerView, WakeSource, WorkStatus } from "../../../src/work-status.ts";
 export type { TodoPhase } from "../../../src/todo-bridge.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -27,13 +20,11 @@ export function parseWorkStatus(body: string): WorkStatus {
   return value as unknown as WorkStatus;
 }
 
-/** Whether anything in the snapshot can still change on its own, so polling should stay fast. */
+/** Whether anything the section shows can still change on its own, so polling should stay fast. */
 export function isActive(status: WorkStatus): boolean {
   return (
-    status.monitors.some((view) => view.ending === undefined) ||
-    status.evalCells.some((cell) => cell.state === "running" || cell.state === "queued") ||
-    status.background.length > 0 ||
     status.goal?.armed === true ||
+    status.wakeSources.length > 0 ||
     status.todo.some((phase) => phase.tasks.some((task) => task.status === "in_progress"))
   );
 }

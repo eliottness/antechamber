@@ -289,6 +289,24 @@ function v2ToolName(tool: string): string {
   return tool === "bash" ? "shell" : tool;
 }
 
+/**
+ * A card whose call left OmO work running (background-results.ts `backgroundShellID`), as OpenCode 2.x settles a
+ * call it moved to the background: completed at once with `{status: "running", shellID}` in its metadata, so
+ * OpenChamber 2.x draws the row from the shell (background-shell.ts `readBackgroundShellID`) and lists the shell
+ * as a background command. A card still waiting on that work is running here, with its result already known.
+ */
+function backgroundShell(
+  part: Extract<OCPart, { type: "tool" }>,
+): { output: string; metadata: Record<string, unknown> } | undefined {
+  const st = part.state;
+  if (st.status !== "running" && st.status !== "completed") return undefined;
+  const { backgroundShellID: shellID, backgroundWaits, backgroundFailed, output, ...metadata } = st.metadata ?? {};
+  if (typeof shellID !== "string") return undefined;
+  if (st.status === "completed") return { output: st.output, metadata: { ...metadata, status: "running", shellID } };
+  if (backgroundFailed !== false || !Array.isArray(backgroundWaits)) return undefined;
+  return { output: typeof output === "string" ? output : "", metadata: { ...metadata, status: "running", shellID } };
+}
+
 function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, unknown> {
   const st = part.state;
   const name = v2ToolName(part.tool);
@@ -307,8 +325,19 @@ function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, un
       ...(end !== undefined ? { completed: end } : {}),
     },
   };
+  const background = st.status === "running" ? backgroundShell(part) : undefined;
   if (st.status === "pending") {
     base.state = { status: "streaming", input: st.raw ?? "", metadata: {} };
+  } else if (background !== undefined) {
+    base.time = { created: st.time.start, ran: st.time.start, completed: st.time.start };
+    base.state = {
+      status: "completed",
+      input: st.input,
+      content: background.output !== "" ? [{ type: "text", text: background.output }] : [],
+      output: background.output,
+      title: st.status === "running" ? (st.title ?? part.tool) : part.tool,
+      metadata: background.metadata,
+    };
   } else if (st.status === "running") {
     base.state = {
       status: "running",
@@ -414,6 +443,8 @@ export class V2EventTranslator {
       case "session.compaction.failed":
       case "session.shell.started":
       case "session.shell.ended":
+      case "shell.created":
+      case "shell.exited":
         return [this.frame(directory, ev.type, ev.properties)];
       case "message.removed":
         return [
@@ -783,6 +814,21 @@ export class V2EventTranslator {
     if (!ts.called) {
       ts.called = true;
       frames.push(this.frame(directory, "session.tool.called", { ...base, input: state.input, executed: false }));
+    }
+    const background = backgroundShell(part);
+    if (background !== undefined) {
+      if (!ts.ended) {
+        ts.ended = true;
+        frames.push(
+          this.frame(directory, "session.tool.success", {
+            ...base,
+            content: background.output !== "" ? [{ type: "text", text: background.output }] : [],
+            metadata: background.metadata,
+            executed: false,
+          }),
+        );
+      }
+      return frames;
     }
     // `called` carries no metadata (eval card headers, live output); 2.x reads it while running only from progress.
     if (state.status === "running" && state.metadata !== undefined) {

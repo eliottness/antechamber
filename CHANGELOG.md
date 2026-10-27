@@ -7,6 +7,21 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Show OmO's background work as background commands in OpenChamber 2.x. While a terminal monitor, a detached eval
+  cell or a background terminal session runs, the session reads as working ("Background command") after its turn
+  ends, the turn timer keeps running, and the commands are listed above the composer with their output (work no card
+  started, such as a watch a revived agent restored, is listed after a reload). Stop works
+  for eval cells; OmO offers no way to stop a monitor or a background terminal session, so their Stop fails without
+  telling the agent anything. A card that left such work running now settles at once and follows the command, as
+  OpenCode's own background calls do.
+
+### Changed
+
+- The OmO Work section no longer lists monitors, eval cells or background terminal sessions, which OpenChamber now
+  shows itself. It keeps the todo list, the goal timer and other activity.
+
 ## [1.0.24] - 2026-10-27
 
 ### Fixed

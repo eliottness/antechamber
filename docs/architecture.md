@@ -390,14 +390,93 @@ process exits, its watches are marked ended.
 
 OpenChamber 2.x clients do not see these children: `/api/session`,
 `/api/session/active` and the `/api/event` stream leave them out, and the
-OmO Work status section shows the watches instead (next section). The
+watches are reported as OpenCode shells instead (next section). The
 `/api/global/event/ws` socket keeps them, because it carries v1-shaped events
 for OpenChamber 1.24.
+
+### OmO background work as OpenCode shells
+
+OmO's main agent ends its turn while monitors, detached eval cells and
+background terminal sessions keep running, and each of them wakes it again.
+OpenChamber 2.x already models that pause for OpenCode's own background
+commands: an idle session with a running shell keeps its turn open, reads as
+"Background command" in the sidebar, tabs and switcher, holds its turn timer,
+and lists the commands above the composer with their output and a Stop button.
+Running shells do not hold queued messages (only running subagents do), so a
+user message still reaches OmO at once. `omo-shells.ts` reports OmO's work
+through that contract, from the same sources idle eviction and OmO Work use.
+
+Evidence, from OpenChamber 2.5.2 (`packages/ui`) read on October 27, 2026, and
+replayed against its own sync code with antechamber-shaped envelopes:
+
+- `sync/global-session-status.ts` (`useSessionTurnActivity`) resolves a
+  session's activity to `running`, `workflow`, `subagent` or `shell`; `shell`
+  comes from `sync/background-shells.ts`.
+- That index is filled by `GET /api/shell` (directory bootstrap and stream
+  reconnects) and the `shell.created` / `shell.exited` / `shell.deleted`
+  events; `lib/opencode/background-shell.ts` (`runningShellFromWire`) ignores a
+  shell without `metadata.sessionID`.
+- A shell first seen on the event stream counts as background (and appears in
+  the list above the composer) only once a tool call settles with
+  `metadata: {status: "running", shellID}`; one first seen in a list read always
+  counts, but a list read keeps what the stream said about a shell it already
+  holds (`replaceDirectoryShells`). A `shell` card with that metadata is drawn from the shell: live
+  output from `GET /api/shell/{id}/output`, a Stop button, then its result.
+- Stop posts a synthetic note carrying `openchamberShellCancellation` and only
+  then calls `DELETE /api/shell/{id}`; nothing is removed when the note fails.
+- `@opencode/schema` 2.1.4 `shell.js`: ids start with `sh_`; `Info` is
+  `{id, status, command, cwd, shell, file, pid?, exit?, signal?, metadata,
+  time: {started, completed?}}`; `Output` is `{output, cursor, size,
+  truncated}` over an append-only byte stream.
+
+Identity and sources:
+
+- Monitors (`terminal_monitor_state`) and background terminal sessions (the
+  terminal manifest) share OmO's `bash_N` numbering, which restarts with each
+  agent process, so both are `sh_t<agent start, base 36>_<bash_N>`. Manifest
+  entries follow the idle-eviction rule: a live `runtime.pid` and a start no
+  earlier than the current agent process.
+- Detached eval cells (the codemode wake source) are `sh_e_<cellId>`; a cell id
+  is the id of the eval call that started it.
+- The bridge reconciles a session after monitor and wake-source snapshots, tool
+  results, turn and run ends, and custom messages (OmO's background-finished
+  notifications), and before answering `GET /api/shell`. The manifest has no
+  RPC event, so a background session started by a detached cell after its own
+  result appears at the next of those. When the agent process exits, or the
+  session is removed, every shell it ran ends as `killed`.
+
+Cards: a card that leaves work running (`background-results.ts`) records the
+shell it stands for, `backgroundShellID`: the detached cell itself, else the
+first background session it launched. A `monitor` call records its watch from
+`details.bash_id` (`terminal/tools/monitor.js`, `textResult("Monitor started
+with ID: ...", {details: {monitor_id, bash_id, monitor: true}})`), and a
+monitor started inside eval records it on its nested card. On v2 such a card
+settles at once, as OpenCode settles a call it moved to the background, with
+`{status: "running", shellID}` in its metadata; v1 keeps the card running
+until the work reports finishing. When it does, v2 re-announces the card as a
+plain completed one. Work with no card (a watch a revived agent restored, or a
+second background session from the same cell) still keeps the turn open, but
+reaches the list above the composer only once OpenChamber is reloaded and reads
+it from `GET /api/shell` first.
+
+Output: OmO exposes only tails (`eval_cells.peek` returns at most 64 KiB, a
+watch keeps its last 200 matched lines), so each shell keeps an append-only log
+that continues where a new tail's start matches the known end. Background
+terminal sessions have no output OmO exposes over RPC; their output is a
+one-line notice.
+
+Stop: only eval cells (`eval_cells.stop`). The terminal extension registers no
+RPC request to stop a monitor or a background session, so `DELETE` answers 400
+and the stop note naming one is refused before it reaches the agent.
 
 ### OmO Work status section
 
 `extensions/omo-work` is an OpenChamber 2.x Work Status section
-(`contributes.statusSection`) for the session's background work. Its local
+(`contributes.statusSection`) for the session's work OpenChamber has no surface
+for: the todo list, the goal continuation timer and other wake sources.
+Monitors, eval cells and background terminal sessions are OpenChamber's own
+background commands (previous section), so the section no longer lists them;
+the snapshot still carries them for extension versions installed before. Its local
 service reads `<state dir>/run/<pid>.json`, which `serve` writes with a random
 `token` (file 0600, directory 0700), and calls
 `/antechamber/work-status/<session>` with that bearer token. The token opens

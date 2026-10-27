@@ -19,6 +19,7 @@ import type { SessionStore } from "./session-store.js";
 import { evalAgentSession, type SubagentBridge } from "./subagents.js";
 import { MONITOR_NOTIFICATION, type MonitorSessions } from "./monitor-sessions.js";
 import type { WorkStatusBridge } from "./work-status.js";
+import { type OmoShells, terminalShellId } from "./omo-shells.js";
 import {
   applyProviderToolResults,
   finishProviderToolParts,
@@ -205,11 +206,25 @@ export function compactionMessages(
   ];
 }
 
+/**
+ * Events after which OmO's background work may have started or ended: monitor and wake-source snapshots,
+ * tool results that launch work, and the custom messages OmO sends when a background session finishes.
+ */
+const SHELL_SYNC_EVENTS = new Set([
+  "extension_event",
+  "tool_execution_end",
+  "turn_end",
+  "agent_end",
+  "agent_idle",
+  "message_end",
+]);
+
 interface PiEventServices {
   readonly emit: (directory: string, event: OCEvent | TodoUpdated) => void;
   readonly subagents: SubagentBridge;
   readonly monitors: MonitorSessions;
   readonly workStatus: Pick<WorkStatusBridge, "observe">;
+  readonly shells: Pick<OmoShells, "sync">;
   readonly store: Pick<SessionStore, "update">;
   readonly dirtyDiffs: Set<string>;
   readonly ensureMessages: (s: ManagedSession) => OCMessageWithParts[];
@@ -390,6 +405,7 @@ export class PiEventTranslator {
       default:
         break; // turn_start, queue_update — future milestones
     }
+    if (SHELL_SYNC_EVENTS.has(String(ev.type))) this.services.shells.sync(s);
   }
 
   private onTodoEntry(s: ManagedSession, ev: Record<string, unknown>): void {
@@ -407,7 +423,7 @@ export class PiEventTranslator {
     const timestamp = "timestamp" in value ? value.timestamp : undefined;
     const parsed = typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
     const created = typeof parsed === "number" && Number.isFinite(parsed) ? parsed : Date.now();
-    const part = completeBackgroundEval(messages, result, created);
+    const part = completeBackgroundEval(messages, result, created, s.pi?.startedAtMs);
     const prefix = `msg_background_${result.key}_`;
     const unbound = messages.findLast(
       (message) => message.info.id.startsWith(prefix) && s.tree.messageEntries[message.info.id] === undefined,
@@ -1013,7 +1029,7 @@ export class PiEventTranslator {
       if (!part || callID === undefined) continue;
       s.toolByCallId.delete(callID);
       s.todoBridge?.finish(part, toolFailed(tr));
-      finishToolPart(part, tr, callID, Date.now());
+      finishToolPart(part, tr, callID, Date.now(), s.pi?.startedAtMs);
       if (touchedFiles([part]).length > 0) this.services.dirtyDiffs.add(s.info.id);
       this.emitPart(s, part);
       const owner = s.messages?.find((m) => m.info.id === part.messageID);
@@ -1031,6 +1047,11 @@ export class PiEventTranslator {
   private onNestedTools(s: ManagedSession, parent: OCToolPart, details: unknown): void {
     const nested = nestedToolParts(parent, details, {
       monitor: (args) => this.services.monitors.findChild(s.info.id, args),
+      monitorShell: (childID) => {
+        const bashId = this.services.monitors.terminalId(childID);
+        const epoch = s.pi?.startedAtMs;
+        return bashId !== undefined && epoch !== undefined ? terminalShellId(epoch, bashId) : undefined;
+      },
       agent: (args, claimed, after) => evalAgentSession(s.piSessionId ?? s.restored?.piSessionId, args, claimed, after),
     });
     if (nested.length === 0) return;
