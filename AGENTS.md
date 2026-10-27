@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 antechamber is an OpenCode-compatible HTTP/SSE server, so OpenChamber can drive the pi coding agent (default backend: OmO) over JSONL stdio RPC (`<agent> --mode rpc`), with one agent process per session.
-Built with TypeScript 7, Node >=22 and ESM/NodeNext. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (1.24, OmO Graph) and its 2.x alias `@openchamber/sdk-v2` (OmO Work) for the bundled extensions.
+Built with TypeScript 7 and ESM/NodeNext. The published CLI runs on Bun >=1.4 (`#!/usr/bin/env bun`); the dev tooling (tsc, tsx tests, esbuild) runs on Node >=22. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (1.24, OmO Graph) and its 2.x alias `@openchamber/sdk-v2` (OmO Work) for the bundled extensions.
 
 ```
 OpenChamber --HTTP/SSE (OpenCode v1 + v2 /api subset)--> antechamber --JSONL stdio--> omo|pi --mode rpc
@@ -92,7 +92,7 @@ For every bug report:
 ## COMMANDS
 ```bash
 npm ci
-npm run dev -- serve --port 4096         # run from source (tsx)
+npm run dev -- serve --port 4096         # run from source (bun)
 npm run check                            # typecheck + lint + format:check + test (release gate)
 npm run typecheck && npm test && npm run build   # minimum before a PR
 npm run format                           # biome format --write
@@ -103,9 +103,11 @@ npm run build && npm run replay -- [--session ses_x]   # real sessions in a real
 antechamber doctor                       # includes installed vs latest vs running adapter versions
 ```
 CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests.
+The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check, and serves a fake-agent turn through `bin/opencode-antechamber`.
 
 ## NOTES
-- `bin/opencode-antechamber` runs `dist/cli.js`, so a fresh checkout needs `npm run build` before OpenChamber can launch it.
+- `bin/opencode-antechamber` runs `dist/cli.js` with Bun (PATH, then `$BUN_INSTALL/bin`, then `~/.bun/bin`), so a fresh checkout needs `npm run build` before OpenChamber can launch it.
+- The hermetic suite stays on Node's runner: under `bun test`, fake `ChildProcess` streams are read-only and `syncBuiltinESMExports` mocks do not apply. Bun also flushes `child.stdin.write()` only when the event loop runs, so a write followed by a blocking sync call is delayed until that call returns.
 - Teardown of detached OmO task hosts is Linux-only (pidfd via Python, `/proc`, GNU `tail --pid`). On other platforms it warns and skips.
 - `reference/` (gitignored) holds shallow clones of openchamber and pi-mono for protocol lookups. It is not part of the build and Biome ignores it.
 - `.omo/` is gitignored and Biome-ignored.

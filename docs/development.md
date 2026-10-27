@@ -83,7 +83,11 @@ npm run build
 ```
 
 `npm test` runs `test/*.test.ts` and `extensions/*/test/*.test.ts` under
-Node's built-in test runner (`tsx --test`). The extension's
+Node's built-in test runner (`tsx --test`). The published CLI runs on Bun, but
+the suite stays on Node: its fake child processes and builtin-module mocks rely
+on Node internals that Bun does not expose. CI's `bun-runtime` job builds the
+package and serves a turn through `bin/opencode-antechamber` under Bun 1.4.x and
+the latest Bun. The extension's
 `connector-parity.test.ts` imports `ocIdFor` and `SessionRegistryEntry` from
 `src/session-store.ts`. Changing session ids or registry fields therefore
 means updating the extension in the same change. OmO Work's `src/model.ts`

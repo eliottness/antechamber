@@ -1,6 +1,6 @@
 {
   "name": "antechamber",
-  "version": "1.0.24",
+  "version": "2.0.0",
   "description": "OpenCode-compatible HTTP/SSE server that lets OpenChamber drive the pi coding agent (and OmO) over RPC",
   "type": "module",
   "license": "MIT",
@@ -57,7 +57,7 @@
     "pack:extension": "tsx extensions/omo-dag/scripts/pack.ts",
     "pack:work-extension": "tsx extensions/omo-work/scripts/pack.ts",
     "prepack": "npm run build",
-    "dev": "tsx src/cli.ts",
+    "dev": "bun src/cli.ts",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p extensions/omo-dag/tsconfig.json && tsc -p extensions/omo-work/tsconfig.json",
     "lint": "biome lint . --error-on-warnings",
     "format": "biome format --write .",
@@ -75,7 +75,7 @@
     "esbuild@0.28.2": true
   },
   "engines": {
-    "node": ">=22"
+    "bun": ">=1.4.0"
   },
   "publishConfig": {
     "access": "public",

@@ -9,7 +9,8 @@ npm ci
 npm run build
 ```
 
-Node.js 22+ is required. You don't need `pi` or `omo` installed to build, run
+Node.js 22+ is required for the tooling (`tsc`, `tsx` tests, esbuild), and
+Bun 1.4+ to run the CLI (`npm run dev`, `dist/cli.js`). You don't need `pi` or `omo` installed to build, run
 `npm test`, or typecheck; you do need one of them to run the smoke scripts
 (see below) or to exercise antechamber end to end through OpenChamber.
 
@@ -18,7 +19,7 @@ Node.js 22+ is required. You don't need `pi` or `omo` installed to build, run
 | Command | What it does |
 |---|---|
 | `npm run build` | compile `src/` to `dist/` with `tsc`, then bundle the OmO Graph (`extensions/omo-dag/`) and OmO Work (`extensions/omo-work/`) extensions with esbuild |
-| `npm run dev` | run the CLI from source with `tsx`, no build step |
+| `npm run dev` | run the CLI from source with Bun, no build step |
 | `npm run typecheck` | `tsc -p tsconfig.check.json && tsc -p extensions/omo-dag/tsconfig.json && tsc -p extensions/omo-work/tsconfig.json` |
 | `npm test` | run the unit/integration test suite (`test/*.test.ts` and `extensions/*/test/*.test.ts`) |
 | `npm run smoke` | end-to-end smoke test against a real `pi` process |
