@@ -284,17 +284,23 @@ export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
   return msg;
 }
 
+/** OpenCode 2.x renamed `bash` to `shell`; OpenChamber 2.x draws a shell card (command, live output) only for `shell`. */
+function v2ToolName(tool: string): string {
+  return tool === "bash" ? "shell" : tool;
+}
+
 function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, unknown> {
   const st = part.state;
+  const name = v2ToolName(part.tool);
   const start = st.status === "pending" ? undefined : st.time.start;
   const end = st.status === "pending" || st.status === "running" ? undefined : st.time.end;
   const base: Record<string, unknown> = {
     type: "tool",
     id: part.callID,
-    name: part.tool,
+    name,
     // keep the SDK v1 spellings too — harmless and tolerates older readers
     callID: part.callID,
-    tool: part.tool,
+    tool: name,
     executed: false,
     time: {
       ...(start !== undefined ? { created: start, ran: start } : {}),
@@ -724,11 +730,12 @@ export class V2EventTranslator {
 
   private onToolPart(directory: string, part: Extract<OCPart, { type: "tool" }>): V2Envelope[] {
     const st = this.state(part.sessionID);
+    const name = v2ToolName(part.tool);
     let ts = st.tools.get(part.id);
     if (!ts) {
       ts = {
         callID: part.callID,
-        name: part.tool,
+        name,
         started: false,
         inputEnded: false,
         called: false,
@@ -746,7 +753,7 @@ export class V2EventTranslator {
     if (state.status === "pending") {
       if (!ts.started) {
         ts.started = true;
-        frames.push(this.frame(directory, "session.tool.input.started", { ...base, name: part.tool }));
+        frames.push(this.frame(directory, "session.tool.input.started", { ...base, name }));
       }
       const raw = state.raw ?? "";
       if (raw.length > ts.raw.length) {
@@ -757,13 +764,13 @@ export class V2EventTranslator {
       return frames;
     }
 
-    // mapTool renames a call when it leaves pending (eval -> bash). OpenChamber 2.x takes the tool name only from
+    // mapTool renames a call when it leaves pending (eval -> shell). OpenChamber 2.x takes the tool name only from
     // input.started, so announce the card again under its new name before its input ends.
-    if (!ts.started || (ts.name !== part.tool && !ts.inputEnded)) {
+    if (!ts.started || (ts.name !== name && !ts.inputEnded)) {
       ts.started = true;
-      frames.push(this.frame(directory, "session.tool.input.started", { ...base, name: part.tool }));
+      frames.push(this.frame(directory, "session.tool.input.started", { ...base, name }));
     }
-    ts.name = part.tool;
+    ts.name = name;
     if (!ts.inputEnded) {
       ts.inputEnded = true;
       frames.push(

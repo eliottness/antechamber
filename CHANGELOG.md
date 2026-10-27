@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Draw shell and eval cards in OpenChamber 2.x as shell cards: the command as code, then its live output. OpenCode
+  2.x renamed `bash` to `shell`, and OpenChamber 2.x drew `bash` cards with its generic body, listing `Command:` and
+  `Description:`. The v2 API now reports these cards as `shell`, and the OmO Compatibility extension heads `shell`
+  cards too.
+
 ## [1.0.22] - 2026-10-26
 
 ### Fixed

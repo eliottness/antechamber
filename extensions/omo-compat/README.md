@@ -11,10 +11,10 @@ What it does today:
   instead of the generic "Agent Task".
 
 - **Eval cell headers.** OpenChamber 1.24 streams live output only for shell
-  cards, so antechamber shows OmO eval cells as shell cards. With this extension
-  their header reads `JS Eval` (or `Python Eval`) and the cell's summary instead
-  of "Shell Command" and the first line of code. Other shell cards keep their
-  normal header.
+  cards, so antechamber shows OmO eval cells as shell cards (`bash` in OpenChamber
+  1.x, `shell` in 2.x). With this extension their header reads `JS Eval` (or
+  `Python Eval`) and the cell's summary instead of "Shell Command" and the first
+  line of code. Other shell cards keep their normal header.
 
 ## Requirements
 
