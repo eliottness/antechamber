@@ -172,6 +172,8 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
 export interface NestedSessions {
   /** The monitor child session for a recorded `monitor` call. */
   monitor?: (args: Record<string, unknown>) => string | undefined;
+  /** The OpenCode shell id of a monitor child session's watch while it runs (omo-shells.ts). */
+  monitorShell?: (sessionID: string) => string | undefined;
   /** The subagent a recorded `agent()` call started; `claimed` keeps repeated calls apart. */
   agent?: (args: Record<string, unknown>, claimed: Set<string>, after: number) => EvalAgent | null | undefined;
 }
@@ -260,6 +262,8 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
         { description: `Monitor: ${label}`, prompt: command, type: "monitor" },
         sessionID,
       );
+      const shellID = sessions.monitorShell?.(sessionID);
+      if (shellID !== undefined) mapped.metadata = { ...mapped.metadata, backgroundShellID: shellID };
     } else if (entry.name === "task") {
       const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
       const prompt = text(args.prompt) ?? "";

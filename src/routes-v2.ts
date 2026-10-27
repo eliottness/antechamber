@@ -17,6 +17,8 @@ import { vcsRead, VcsError } from "./vcs.js";
 import { announceSessionError, compactSession, getCommands, unsupportedShare } from "./session-commands.js";
 import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Session } from "./v2.js";
 import type { OCSession } from "./types.js";
+import { SHELL_CANCELLATION_KEY } from "./omo-shells.js";
+import { WorkStatusError } from "./work-status.js";
 import {
   agentDescriptors,
   modelRefFromBody,
@@ -214,6 +216,45 @@ async function handleV2Bootstrap(
   return false;
 }
 
+/** Shell ids named by OpenChamber's stop note (background-shell.ts `shellCancellationNote`). */
+function cancelledShells(metadata: Record<string, unknown> | undefined): string[] {
+  const note = metadata?.[SHELL_CANCELLATION_KEY];
+  if (note === null || typeof note !== "object") return [];
+  const ids = "shellIDs" in note ? note.shellIDs : "shellID" in note ? [note.shellID] : [];
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+}
+
+async function handleShell(
+  services: RouteServices,
+  res: ServerResponse,
+  id: string,
+  output: boolean,
+  method: string,
+  url: URL,
+  withLocation: (data: unknown) => unknown,
+): Promise<void> {
+  const shells = services.sessions.shells;
+  const info = shells.get(id);
+  if (info === undefined) {
+    json(res, 404, errorBody("NotFoundError", `Shell not found: ${id}`));
+    return;
+  }
+  try {
+    if (method === "DELETE") {
+      await shells.stop(id);
+      res.writeHead(204).end();
+    } else if (output) {
+      const cursor = numberParam(url.searchParams.get("cursor"));
+      const limit = numberParam(url.searchParams.get("limit"));
+      // @opencode/client returns the body and OpenChamber reads `.data` (lib/opencode/client.ts readShellOutput).
+      json(res, 200, withLocation(await shells.output(id, cursor, limit)));
+    } else json(res, 200, withLocation(info));
+  } catch (error) {
+    if (!(error instanceof WorkStatusError)) throw error;
+    json(res, error.status, errorBody(error.status === 404 ? "NotFoundError" : "UnsupportedError", error.message));
+  }
+}
+
 export async function handleV2(
   services: RouteServices,
   req: IncomingMessage,
@@ -294,10 +335,26 @@ export async function handleV2(
     });
     return;
   }
-  // Read-only inventories OpenChamber loads at bootstrap. OmO has no OpenCode-style shells or
-  // web-search providers, so each is an honest empty list (mutations stay 400);
-  // OmO monitors appear in the OmO Work status section instead (work-status.ts).
-  if ((path === "/api/shell" || path === "/api/websearch/provider") && method === "GET") {
+  // OmO's background work (monitors, background terminal sessions, detached eval cells) as OpenCode shells.
+  if (path === "/api/shell" && method === "GET") {
+    json(res, 200, withLocation(services.sessions.shells.list(directory)));
+    return;
+  }
+  const shellMatch = path.match(/^\/api\/shell\/([^/]+)(\/output)?$/);
+  if (shellMatch && (method === "GET" || (method === "DELETE" && shellMatch[2] === undefined))) {
+    await handleShell(
+      services,
+      res,
+      decodeURIComponent(shellMatch[1]!),
+      shellMatch[2] !== undefined,
+      method,
+      url,
+      withLocation,
+    );
+    return;
+  }
+  // OmO has no web-search providers: an honest empty list.
+  if (path === "/api/websearch/provider" && method === "GET") {
     json(res, 200, withLocation([]));
     return;
   }
@@ -786,6 +843,17 @@ export async function handleV2(
           return;
         }
         const metadata = sessionMetadata(body.metadata);
+        const unstoppable = cancelledShells(metadata).filter((id) => !services.sessions.shells.stoppable(id));
+        if (unstoppable.length > 0) {
+          // OpenChamber sends this note before it removes the shells and stops nothing when the note fails:
+          // refuse it rather than tell the agent about a stop that cannot happen.
+          json(
+            res,
+            400,
+            errorBody("UnsupportedError", `OmO cannot stop ${unstoppable.join(", ")}: only eval cells can be stopped`),
+          );
+          return;
+        }
         const messageID =
           typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
         const text = body.text;

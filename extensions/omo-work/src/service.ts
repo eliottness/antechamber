@@ -4,9 +4,8 @@ import { resolve } from "node:path";
 import { type AdapterServer, defaultStateDirs, discoverServers, expandHome } from "./discovery.ts";
 
 const SESSION_ID = /^ses_[0-9A-Za-z]+$/;
-const CELL_ID = /^[\w.:-]{1,128}$/;
 const STATUS_TIMEOUT_MS = 5000;
-/** Above the adapter's own 10 s RPC deadline, so a slow Stop is not reported as unreachable. */
+/** Above the adapter's own 10 s RPC deadline, so a slow Fire now is not reported as unreachable. */
 const ACTION_TIMEOUT_MS = 15_000;
 
 export interface ServiceOptions {
@@ -120,20 +119,11 @@ export function createServer(options: ServiceOptions): http.Server {
     if (!SESSION_ID.test(session)) return fail(res, 400, "session query must be an OpenChamber session id");
     const custom = url.searchParams.get("stateDir")?.trim();
     const stateDirs = custom ? [resolve(expandHome(custom))] : defaultDirs();
-    const cell = url.searchParams.get("cell") ?? "";
     const method = req.method ?? "GET";
     req.resume();
     if (url.pathname === "/status" && method === "GET") return void relayStatus(res, session, stateDirs);
     if (url.pathname === "/goal/fire" && method === "POST")
       return void relayAction(res, session, stateDirs, "POST", "goal/fire");
-    if (url.pathname.startsWith("/eval")) {
-      if (!CELL_ID.test(cell)) return fail(res, 400, "cell query must be an eval cell id");
-      const tail = Number(url.searchParams.get("tailBytes") ?? 8192);
-      if (url.pathname === "/eval" && method === "GET")
-        return void relayAction(res, session, stateDirs, "GET", `eval/${encodeURIComponent(cell)}?tailBytes=${tail}`);
-      if (url.pathname === "/eval/stop" && method === "POST")
-        return void relayAction(res, session, stateDirs, "POST", `eval/${encodeURIComponent(cell)}/stop`);
-    }
     return fail(res, 404, "not-found");
   });
 }

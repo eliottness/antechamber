@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isActive, parseWorkStatus, type TodoPhase, type WorkStatus } from "../src/model.ts";
-import { cellMeta, focusPhase, formatDuration, monitorMeta, monitorTone, summarizePhase } from "../src/view.ts";
+import { focusPhase, formatDuration, isEmpty, summarizePhase } from "../src/view.ts";
 
 const monitor = {
   id: "bash_7",
@@ -59,27 +59,22 @@ test("phases count live tasks and open on the one in progress, else the first un
   assert.equal(summarizePhase(running[2]!).current, "d");
 });
 
-test("monitor rows read as watching, paused or how they ended", () => {
-  assert.equal(monitorMeta({ monitor, lines: [] }, 65_000), "watching 1m 05s · 1 event");
-  assert.equal(monitorTone({ monitor: { ...monitor, paused: true }, lines: [] }), "warn");
-  const failed = {
-    monitor: { ...monitor, fireCount: 3 },
-    ending: { reason: "exit", exitCode: 2, endedAtMs: 5, label: "command exited with code 2" },
-    lines: [],
-  };
-  assert.equal(monitorTone(failed), "bad");
-  assert.equal(monitorMeta(failed, 10), "command exited with code 2 · 3 events");
-});
-
-test("cell rows show elapsed time only while the cell runs", () => {
-  assert.equal(cellMeta({ cellId: "c", language: "py", state: "running", startedAtMs: 0 }, 2_000), "py · running · 2s");
-  assert.equal(cellMeta({ cellId: "c", state: "completed", startedAtMs: 0 }, 2_000), "completed");
-});
-
 test("the snapshot parser rejects other shapes and activity keeps polling fast", () => {
   assert.throws(() => parseWorkStatus('{"version":2}'), /unexpected work-status shape/);
   const status = parseWorkStatus(JSON.stringify(empty));
   assert.equal(isActive(status), false);
-  assert.equal(isActive({ ...status, evalCells: [{ cellId: "c", state: "queued" }] }), true);
-  assert.equal(isActive({ ...status, monitors: [{ monitor, lines: [] }] }), true);
+  assert.equal(isActive({ ...status, goal: { armed: true, dueAtMs: 5 } }), true);
+  assert.equal(isActive({ ...status, wakeSources: [{ source: "loop-guard", activeCount: 1, items: [] }] }), true);
+});
+
+test("background commands are OpenChamber's to show: they neither fill the section nor keep it polling", () => {
+  const busy = {
+    ...empty,
+    monitors: [{ monitor, lines: [] }],
+    evalCells: [{ cellId: "c", state: "running" }],
+    background: [{ id: "bash_3", command: "npm run dev", startedAtMs: 0 }],
+  };
+  assert.equal(isEmpty(busy), true);
+  assert.equal(isActive(busy), false);
+  assert.equal(isEmpty({ ...empty, goal: { armed: false } }), false);
 });

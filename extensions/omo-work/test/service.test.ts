@@ -28,7 +28,6 @@ function fakeAdapter(token: string, sessions: Record<string, { live: boolean }>)
       const body = { version: 1, sessionID: session, live: known.live, todo: [], monitors: [], evalCells: [] };
       return res.writeHead(200).end(JSON.stringify({ ...body, background: [], wakeSources: [], goal: null }));
     }
-    if (rest[0] === "eval" && rest[2] === "stop") return res.writeHead(200).end(JSON.stringify({ state: "cancelled" }));
     if (rest[0] === "goal") return res.writeHead(204).end();
     res.writeHead(404).end("{}");
   });
@@ -87,7 +86,6 @@ describe("service", () => {
   test("rejects requests without the host token and validates ids", async () => {
     assert.equal((await call("/status?session=ses_a", "GET", "nope")).status, 401);
     assert.equal((await call("/status?session=../x")).status, 400);
-    assert.equal((await call("/eval?session=ses_a&cell=a/b")).status, 400);
   });
 
   test("prefers the server that runs the session's agent over one that only knows it from disk", async () => {
@@ -99,13 +97,11 @@ describe("service", () => {
   test("relays actions to the server that answered for the session", async () => {
     live.calls.length = 0;
     assert.equal((await call("/status?session=ses_b")).status, 200);
-    const stop = await call("/eval/stop?session=ses_b&cell=cell_1", "POST");
-    assert.equal(stop.status, 200);
-    assert.deepEqual(await stop.json(), { state: "cancelled" });
     assert.equal((await call("/goal/fire?session=ses_b", "POST")).status, 204);
+    // Eval cells moved to OpenChamber's background commands: the section no longer relays them.
+    assert.equal((await call("/eval/stop?session=ses_b&cell=cell_1", "POST")).status, 404);
     assert.deepEqual(live.calls, [
       "GET /antechamber/work-status/ses_b",
-      "POST /antechamber/work-status/ses_b/eval/cell_1/stop",
       "POST /antechamber/work-status/ses_b/goal/fire",
     ]);
   });

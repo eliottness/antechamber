@@ -1,24 +1,11 @@
 import { connectHost, type HostReadyContext } from "@openchamber/sdk-v2";
 import { applyHostReady } from "@openchamber/sdk-v2/ui";
 import { isActive, parseWorkStatus, type WorkStatus } from "./model.ts";
-import {
-  cellMeta,
-  cellTone,
-  focusPhase,
-  formatDuration,
-  isCellRunning,
-  isEmpty,
-  monitorMeta,
-  monitorTone,
-  summarizePhase,
-  type Tone,
-  wakeSourceLabel,
-} from "./view.ts";
+import { focusPhase, formatDuration, isEmpty, summarizePhase, type Tone, wakeSourceLabel } from "./view.ts";
 
 const POLL_ACTIVE_MS = 1500;
 const POLL_IDLE_MS = 5000;
 const POLL_ERROR_MS = 10000;
-const PEEK_BYTES = 4096;
 const TASK_GLYPHS = { completed: "✓", in_progress: "●", pending: "○", cancelled: "–" } as const;
 
 const host = connectHost();
@@ -33,11 +20,6 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let showSettings = false;
 /** Phases the reader opened or closed; others follow the phase in progress. */
 const phaseChoice = new Map<string, boolean>();
-const openMonitors = new Set<string>();
-const openCells = new Set<string>();
-const peeks = new Map<string, string>();
-/** The cell state each peek was taken in; a state change (such as finishing) takes one more. */
-const peekStates = new Map<string, string>();
 const pending = new Set<string>();
 /** Relative times refreshed every second without refetching. */
 let tickers: Array<(now: number) => void> = [];
@@ -110,8 +92,6 @@ async function refresh(): Promise<void> {
     if (current !== generation) return;
     status = next;
     error = null;
-    await refreshPeeks(next, current);
-    if (current !== generation) return;
     render();
     schedule(isActive(next) ? POLL_ACTIVE_MS : POLL_IDLE_MS);
   } catch (cause) {
@@ -120,28 +100,6 @@ async function refresh(): Promise<void> {
     render();
     schedule(POLL_ERROR_MS);
   }
-}
-
-async function refreshPeeks(next: WorkStatus, current: number): Promise<void> {
-  const cells = next.evalCells.filter(
-    (cell) => openCells.has(cell.cellId) && (isCellRunning(cell) || peekStates.get(cell.cellId) !== cell.state),
-  );
-  await Promise.all(
-    cells.map(async (cell) => {
-      try {
-        const body = JSON.parse(
-          await service("GET", "/eval", { cell: cell.cellId, tailBytes: String(PEEK_BYTES) }),
-        ) as {
-          outputTail?: unknown;
-        };
-        if (current !== generation) return;
-        peeks.set(cell.cellId, typeof body.outputTail === "string" ? body.outputTail : "");
-        peekStates.set(cell.cellId, cell.state);
-      } catch (cause) {
-        if (current === generation) peeks.set(cell.cellId, `(output unavailable: ${(cause as Error).message})`);
-      }
-    }),
-  );
 }
 
 async function act(key: string, method: "POST", path: string, extra: Record<string, string>, done: string) {
@@ -224,141 +182,6 @@ function todoGroup(current: WorkStatus): HTMLElement | null {
     return [row, tasks];
   });
   return group("Todo", `${done}/${total}`, ...rows);
-}
-
-function monitorGroup(current: WorkStatus): HTMLElement | null {
-  if (current.monitors.length === 0) return null;
-  const live = current.monitors.filter((view) => view.ending === undefined).length;
-  const rows = current.monitors.flatMap((view) => {
-    const id = view.monitor.id;
-    const open = openMonitors.has(id);
-    const tone = monitorTone(view);
-    const row = h(
-      "button",
-      {
-        class: `row t-${tone}${open ? " is-open" : ""}`,
-        type: "button",
-        "aria-expanded": String(open),
-        title: view.monitor.command ?? view.monitor.description,
-        click: () => {
-          if (open) openMonitors.delete(id);
-          else openMonitors.add(id);
-          render();
-        },
-      },
-      dot(tone),
-      h(
-        "span",
-        { class: "stack" },
-        h("span", { class: "title" }, view.monitor.description),
-        ticking((now) => monitorMeta(view, now)),
-      ),
-      h("span", { class: "side" }, id),
-    );
-    if (!open) return [row];
-    const detail = h(
-      "div",
-      { class: "detail" },
-      view.monitor.command !== null && h("div", { class: "kv" }, `$ ${view.monitor.command}`),
-      view.monitor.filter !== null && h("div", { class: "kv" }, `filter ${view.monitor.filter}`),
-      h(
-        "div",
-        { class: "kv" },
-        view.monitor.persistent
-          ? "persistent"
-          : view.monitor.deadlineMs !== null && view.ending === undefined
-            ? ticking((now) => `deadline in ${formatDuration((view.monitor.deadlineMs ?? now) - now)}`, "")
-            : "",
-      ),
-      view.lines.length > 0 ? h("pre", {}, view.lines.join("\n")) : h("div", { class: "kv" }, "no matched lines yet"),
-    );
-    return [row, detail];
-  });
-  return group("Monitors", live > 0 ? `${live} live` : String(current.monitors.length), ...rows);
-}
-
-function evalGroup(current: WorkStatus): HTMLElement | null {
-  if (current.evalCells.length === 0) return null;
-  const running = current.evalCells.filter(isCellRunning).length;
-  const rows = current.evalCells.flatMap((cell) => {
-    const open = openCells.has(cell.cellId);
-    const tone = cellTone(cell);
-    const stopKey = `stop:${cell.cellId}`;
-    const row = h(
-      "div",
-      { class: `row t-${tone}${open ? " is-open" : ""}` },
-      dot(tone),
-      h(
-        "button",
-        {
-          class: "stack",
-          type: "button",
-          "aria-expanded": String(open),
-          title: current.live ? "Show output" : "The agent is not running",
-          click: () => {
-            if (open) openCells.delete(cell.cellId);
-            else openCells.add(cell.cellId);
-            render();
-            if (!open && current.live) void refresh();
-          },
-        },
-        h("span", { class: "title" }, cell.summary ?? cell.cellId),
-        ticking((now) => cellMeta(cell, now)),
-      ),
-      h(
-        "span",
-        { class: "side" },
-        isCellRunning(cell) &&
-          current.live &&
-          h(
-            "button",
-            {
-              class: "action danger",
-              type: "button",
-              disabled: pending.has(stopKey),
-              "aria-label": `Stop eval cell ${cell.summary ?? cell.cellId}`,
-              click: () => void act(stopKey, "POST", "/eval/stop", { cell: cell.cellId }, "Eval cell stopped"),
-            },
-            "Stop",
-          ),
-      ),
-    );
-    if (!open) return [row];
-    const output = peeks.get(cell.cellId);
-    return [
-      row,
-      h(
-        "div",
-        { class: "detail" },
-        h("div", { class: "kv" }, cell.cellId),
-        h("pre", {}, output === undefined ? "loading…" : output === "" ? "(no output yet)" : output),
-      ),
-    ];
-  });
-  const note = !current.evalCellsListed && current.live && h("div", { class: "note" }, "Cell output needs codemode.");
-  return group("Eval cells", running > 0 ? `${running} running` : String(current.evalCells.length), ...rows, note);
-}
-
-function backgroundGroup(current: WorkStatus): HTMLElement | null {
-  if (current.background.length === 0) return null;
-  return group(
-    "Background",
-    String(current.background.length),
-    ...current.background.map((entry) =>
-      h(
-        "div",
-        { class: "row t-run", title: entry.command },
-        dot("run"),
-        h(
-          "span",
-          { class: "stack" },
-          h("span", { class: "title" }, entry.command),
-          ticking((now) => `${entry.id} · ${formatDuration(now - entry.startedAtMs)}`),
-        ),
-        h("span", { class: "side" }, entry.pid !== undefined ? `pid ${entry.pid}` : ""),
-      ),
-    ),
-  );
 }
 
 function goalGroup(current: WorkStatus): HTMLElement | null {
@@ -463,16 +286,14 @@ function render(): void {
   else if (status === null) children.push(h("div", { class: "note is-error" }, error));
   else {
     if (error !== null) children.push(h("div", { class: "note is-error" }, error));
-    const groups = [todoGroup, monitorGroup, evalGroup, backgroundGroup, goalGroup, wakeGroup].map((build) =>
-      build(status as WorkStatus),
-    );
+    const groups = [todoGroup, goalGroup, wakeGroup].map((build) => build(status as WorkStatus));
     children.push(...groups);
     if (isEmpty(status))
       children.push(
         h(
           "div",
           { class: "note" },
-          status.live ? "No background work." : "No background work. The agent is not running.",
+          status.live ? "No todo list or goal." : "No todo list or goal. The agent is not running.",
         ),
       );
   }
@@ -510,10 +331,6 @@ host.onSession((next) => {
   sessionId = id;
   status = null;
   error = null;
-  openCells.clear();
-  openMonitors.clear();
-  peeks.clear();
-  peekStates.clear();
   pending.clear();
   phaseChoice.clear();
   generation++;

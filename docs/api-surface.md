@@ -59,7 +59,7 @@ invented resource IDs.
 | `GET /api/info` | 200 | OpenCode API version, process ID, server URL, and temporary path. |
 | `GET /api/location` | 200 | Current directory and project location. |
 | `GET /api/config` | 200 | Bare `ConfigEntry[]` (OpenCode 2.x contract): one `{type: "document", path: "antechamber", info: {default_agent}}` entry that OpenChamber folds with `mergeConfigDocuments`. |
-| `GET /api/shell` | 200 | `{location, data: []}`; OmO has no background shells to list. |
+| `GET /api/shell` | 200 | `{location, data: Shell.Info[]}`: OmO's running background work in the directory (terminal monitors, background terminal sessions, detached eval cells) as OpenCode shells, `metadata.sessionID` naming the session. See [OmO background work as shells](architecture.md#omo-background-work-as-opencode-shells). |
 | `GET /api/websearch/provider` | 200 | `{location, data: []}`; no web-search providers are configured through antechamber. |
 | `GET /api/provider` | 200 | `{location, data: Provider[]}` from the agent catalog. |
 | `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog; `variants` lists thinking levels as `{id, settings}[]`. |
@@ -158,13 +158,16 @@ invented resource IDs.
 | GET | `/api/session/{sessionID}/todo` | 200 | `{data: Todo[]}`. |
 | POST | `/api/session/{sessionID}/compact`, `/api/session/{sessionID}/summarize` | 200 | `{data: true}` after compaction. |
 | POST | `/api/session/{sessionID}/shell` | 204 | Runs a shell command; 400 for invalid input and 409 if busy. |
+| GET | `/api/shell/{shellID}` | 200 | `{location, data: Shell.Info}` for a running shell or one of the 25 most recently ended; 404 if unknown. |
+| GET | `/api/shell/{shellID}/output` | 200 | `{location, data: {output, cursor, size, truncated}}` from byte `cursor`, at most `limit` bytes, ending on a character boundary: a monitor's command, filter and matched lines; an eval cell's output (`eval_cells.peek`); a notice for a background terminal session, whose output OmO does not expose. 404 if unknown. |
+| DELETE | `/api/shell/{shellID}` | 204 | Stops an eval cell (`eval_cells.stop`). 400 `UnsupportedError` for a monitor or a background terminal session, which OmO cannot stop over RPC; 404 if unknown. |
 | POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command; 400 if missing. |
 | POST or DELETE | `/api/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/api/session/{sessionID}/generate` | 400 | `UnsupportedError`; session generation is unavailable with OmO. Unknown sessions return 404. Unsupported. |
 | POST | `/api/session/{sessionID}/background` | 400 | `UnsupportedError`; background session control is unavailable with OmO. Unknown sessions return 404. Unsupported. |
 | POST | `/api/session/{sessionID}/move` | 400 | `UnsupportedError`; session moves are unavailable with OmO. Unknown sessions return 404. Unsupported. |
 | POST | `/api/session/{sessionID}/prompt` | 200 | Admission record `{data: {id, sessionID, time, type: "user", payload: {text, files?, agents?}, delivery, metadata?}}`. Requires string `text`; missing/non-string text, or empty/whitespace text without files or agents, returns 400 `{_tag: "InvalidRequestError", message}` before admission or agent activity. Attachment-only prompts remain valid with string `text`. `files: [{uri, name?}]` and `agents: [{name, mention?}]` become prompt parts: OmO receives inline text attachments, images, file references and `@agent` mentions with the text, and the user message lists them back as `files: [{mime, name?, source: {type: "uri", uri}}]`, `agents` and `metadata` after reloads; the `session.inbox.enqueued` payload carries the same `files`, `agents` and `metadata`. Any `skills` reference answers 400 `{_tag: "InvalidRequestError", message: "Skill not found: <id>"}` because no skills are listed. |
-| POST | `/api/session/{sessionID}/synthetic`, `/api/session/{sessionID}/context` | 200 | No-reply context admission returning `{data: {id, sessionID, time: {created}, type: "synthetic", payload: {text}}}` (the captured OpenCode 2.x record; OpenChamber 2.3.2 aborts the send on any other status). Requires non-whitespace string `text`; missing/non-string or empty/whitespace text returns 400 `{_tag: "InvalidRequestError", message}` before admission or agent activity. The text joins the native conversation as an OmO custom message (`send_custom_message`, `triggerTurn: false`) without starting a turn, so the next prompt carries it; it emits `session.inbox.enqueued` (payload `{text, metadata?}`) and `delivered`, lists as `type: "synthetic"`, becomes the saved native leaf so it survives restarts even without a later prompt, and never titles the session. `context` is a compatibility alias for `synthetic`. |
+| POST | `/api/session/{sessionID}/synthetic`, `/api/session/{sessionID}/context` | 200 | No-reply context admission returning `{data: {id, sessionID, time: {created}, type: "synthetic", payload: {text}}}` (the captured OpenCode 2.x record; OpenChamber 2.3.2 aborts the send on any other status). A note whose `metadata.openchamberShellCancellation` names a shell that cannot be stopped (anything but a running eval cell) returns 400 `UnsupportedError` and is not admitted: OpenChamber sends that note before `DELETE /api/shell/{shellID}` and stops nothing when it fails. Requires non-whitespace string `text`; missing/non-string or empty/whitespace text returns 400 `{_tag: "InvalidRequestError", message}` before admission or agent activity. The text joins the native conversation as an OmO custom message (`send_custom_message`, `triggerTurn: false`) without starting a turn, so the next prompt carries it; it emits `session.inbox.enqueued` (payload `{text, metadata?}`) and `delivered`, lists as `type: "synthetic"`, becomes the saved native leaf so it survives restarts even without a later prompt, and never titles the session. `context` is a compatibility alias for `synthetic`. |
 | POST | `/api/session/{sessionID}/interrupt` | 200 | Bare `{interrupted: boolean}`, as OpenCode 2.x returns it; OpenChamber reads `result.interrupted` directly. |
 | POST | `/api/session/{sessionID}/fork` | 200 | `{data: Session}`; accepts `before` or legacy `messageID` (a user message is excluded, an assistant reply is kept, as `/btw` expects). |
 | POST | `/api/session/{sessionID}/revert`, `/api/session/{sessionID}/revert/stage` | 200 | `{data: revert}`; requires a valid user-message boundary. |
@@ -375,7 +378,8 @@ Interrupted and failed executions likewise do not later emit a success
 terminal. Successful steps use `session.step.ended`.
 
 V2 also projects staged/cleared/committed revert events, compaction
-started/ended/failed events, shell started/ended events, permission events,
+started/ended/failed events, shell started/ended events, `shell.created` /
+`shell.exited` for OmO background work, permission events,
 question forms, session ancestry/metadata, and text/reasoning deltas. Other
 OpenCode events with no adapter source are not emitted.
 

@@ -1,7 +1,11 @@
 # OmO Work: design
 
-OmO Work is an OpenChamber 2.x Work Status section for the background work of
-the open session. This document covers its parts, its data, its security
+OmO Work is an OpenChamber 2.x Work Status section for the open session's work
+that OpenChamber has no surface for: the todo list, the goal continuation timer
+and other wake sources. Monitors, eval cells and background terminal sessions
+are OpenChamber's own background commands, reported by antechamber as OpenCode
+shells ([docs/architecture.md](../../../docs/architecture.md#omo-background-work-as-opencode-shells)),
+so the section does not list them. This document covers its parts, its data, its security
 boundary and its limits. Where each field comes from in OmO is documented in
 [docs/architecture.md](../../../docs/architecture.md#omo-work-status-section).
 
@@ -10,7 +14,7 @@ boundary and its limits. Where each field comes from in OmO is documented in
 ```
 OpenChamber Work Status panel
   └─ section frame (status/index.html + status/main.js, sandboxed iframe)
-       │ host.serviceRequest  GET /status, GET /eval, POST /eval/stop, POST /goal/fire
+       │ host.serviceRequest  GET /status, POST /goal/fire
        ▼
 OpenChamber host ── loopback + OPENCHAMBER_SERVICE_TOKEN ──▶ service/main.js (Node, on the host)
                                                               │ reads <state dir>/run/<pid>.json
@@ -18,7 +22,7 @@ OpenChamber host ── loopback + OPENCHAMBER_SERVICE_TOKEN ──▶ service/m
                                                               ▼
                                          antechamber  /antechamber/work-status/<session>[...]
                                                               │ snapshot from its bridges,
-                                                              ▼ eval_cells.* / goal RPC to OmO
+                                                              ▼ goal RPC to OmO
                                                          omo --mode rpc
 ```
 
@@ -42,7 +46,7 @@ OpenChamber host ── loopback + OPENCHAMBER_SERVICE_TOKEN ──▶ service/m
 
 | Field | Content |
 |---|---|
-| `live` | the session's agent process is running; peek, Stop and Fire now need it |
+| `live` | the session's agent process is running; Fire now needs it |
 | `todo` | todo phases in OmO's order, each `{name, tasks: [{content, status}]}`, status `pending`, `in_progress`, `completed` or `cancelled` |
 | `monitors` | live watches (newest first), then the five most recently ended, each with its last 20 matched lines and, once ended, a readable reason |
 | `evalCells` | detached eval cells from `eval_cells.list`, or from the codemode wake source when the list is unavailable (`evalCellsListed: false`) |
@@ -50,27 +54,27 @@ OpenChamber host ── loopback + OPENCHAMBER_SERVICE_TOKEN ──▶ service/m
 | `goal` | the goal continuation timer (`armed`, `kind`, `dueAtMs`) and the wake-source counts it waits on, or `null` |
 | `wakeSources` | other active wake sources without a dedicated view |
 
-The frame checks the envelope (`src/model.ts`) and imports these types from the
-adapter, so a shape change on either side fails the typecheck.
+The frame shows `todo`, `goal` and `wakeSources`. `monitors`, `evalCells` and
+`background` stay in the snapshot, and the adapter keeps its
+`/antechamber/work-status/<session>/eval/<cell>[/stop]` routes, for section
+versions installed before these moved to OpenChamber's background commands
+(ZIP installs never update). The frame checks the envelope (`src/model.ts`) and
+imports these types from the adapter, so a shape change on either side fails
+the typecheck.
 
 ## Refresh
 
 The frame polls `/status` one request at a time:
 
-- every 1.5 s while anything can change on its own (a live monitor, a running
-  or queued cell, a background session, an armed timer, a task in progress);
+- every 1.5 s while anything it shows can change on its own (an armed timer,
+  another wake source, a task in progress);
 - every 5 s otherwise, and while the page is hidden;
 - every 10 s after an error, keeping the last snapshot on screen with the
   error above it.
 
 A session switch bumps a generation counter, so a late answer for the previous
 session is dropped. Elapsed times and countdowns tick every second from the
-snapshot without refetching. An open eval cell's output is re-read on each
-poll while the cell runs, and once more when its state changes, so a finished
-cell shows its last lines.
-
-The adapter caches `eval_cells.list` for one second per session, so several
-open sections cost one RPC.
+snapshot without refetching.
 
 ## Choosing the server
 
@@ -97,21 +101,13 @@ loopback.
 - **Frame**: the sandboxed iframe holds no token. It reaches the service only
   through the host, which adds its own per-service token. All text from OmO is
   inserted with `textContent`, never as HTML.
-- **Inputs**: session IDs must match `ses_[0-9A-Za-z]+` and cell IDs
-  `[\w.:-]{1,128}`, in both the service and the adapter. Output peeks are
-  capped at 64 KiB.
-- **Actions**: Stop and Fire now map to OmO's own RPC requests
-  (`eval_cells.stop`, `goal_continuation_fire_now`). The extension kills no
-  process itself.
+- **Inputs**: session IDs must match `ses_[0-9A-Za-z]+`, in both the service
+  and the adapter.
+- **Actions**: Fire now maps to OmO's own RPC request
+  (`goal_continuation_fire_now`). The extension kills no process itself.
 
 ## Limits
 
-- No Stop for monitors or background terminal sessions, and no continuation
-  holds: OmO exposes neither over RPC.
-- Eval cells need OmO's codemode. Without it, or while the agent process is
-  stopped, the section shows the cells OmO last reported, without output or
-  Stop.
-- Background sessions come from OmO's terminal manifest, which OmO writes on
-  start and exit; their command is shown but not their output.
+- No continuation holds: OmO does not publish them over RPC.
 - The service must run on the machine that runs antechamber, since it reads
   the run records.

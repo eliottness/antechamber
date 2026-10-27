@@ -43,6 +43,7 @@ import {
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
 import { WorkStatusBridge } from "./work-status.js";
+import { OmoShells } from "./omo-shells.js";
 import { sessionDiff } from "./session-diff.js";
 import { announceSessionNotice, noticeMessage, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
@@ -134,6 +135,8 @@ export interface ManagedSession extends ThinkingState {
   hasBackgroundWork?: () => boolean;
   /** Live wake sources OmO publishes over RPC (detached eval cells), which also block idle eviction. */
   hasWakeSources?: () => boolean;
+  /** antechamber stopped the agent process itself (lifecycle `dormant`): its in-process work died with it. */
+  onDormant?: () => void;
   /** Why the agent last stopped on its own; persisted and replayed as a notice until the next prompt. */
   lastStop?: { message: string; at: number };
 }
@@ -191,6 +194,7 @@ export class SessionManager {
   readonly subagents: SubagentBridge;
   readonly monitors: MonitorSessions;
   readonly workStatus: WorkStatusBridge;
+  readonly shells: OmoShells;
   /** directory → last scan freshness (pi dir mtime + wall clock). */
   private scanCache = new Map<string, { mtimeMs: number; at: number }>();
   /** freshness of the all-directories scan (see listAll). */
@@ -209,11 +213,13 @@ export class SessionManager {
     );
     this.monitors = new MonitorSessions(this.sessions, this.emit);
     this.workStatus = new WorkStatusBridge(this.monitors);
+    this.shells = new OmoShells(this.sessions, this.monitors, this.workStatus, this.emit);
     this.events = new PiEventTranslator({
       emit: this.emit,
       subagents: this.subagents,
       monitors: this.monitors,
       workStatus: this.workStatus,
+      shells: this.shells,
       store: this.store,
       dirtyDiffs: this.dirtyDiffs,
       ensureMessages: (s) => this.ensureMessages(s),
@@ -299,6 +305,7 @@ export class SessionManager {
       this.subagents.wire(managed);
       this.monitors.wire(managed);
       this.workStatus.wire(managed);
+      this.wireDormant(managed);
       this.lifecycle.touch(managed);
       this.wirePi(managed, pi);
 
@@ -421,6 +428,7 @@ export class SessionManager {
       this.subagents.finishCalls(s.info.id, true);
       this.monitors.stopParent(s.info.id);
       this.workStatus.stopParent(s.info.id);
+      this.shells.stopParent(s.info.id);
       void this.lifecycle
         .dormant(s)
         .catch((error: unknown) => console.error("[lifecycle] exit cleanup failed:", error));
@@ -533,6 +541,7 @@ export class SessionManager {
     const child = this.subagents.remove(sessionId);
     this.monitors.remove(sessionId);
     this.workStatus.stopParent(sessionId);
+    this.shells.stopParent(sessionId);
     if (piPath !== undefined) {
       try {
         unlinkSync(piPath);
@@ -1657,7 +1666,17 @@ export class SessionManager {
     this.subagents.wire(managed);
     this.monitors.wire(managed);
     this.workStatus.wire(managed);
+    this.wireDormant(managed);
     return managed;
+  }
+
+  /** The same cleanup as an agent exit, for a process antechamber disposed after unwiring its exit handler. */
+  private wireDormant(s: ManagedSession): void {
+    s.onDormant = () => {
+      this.monitors.stopParent(s.info.id);
+      this.workStatus.stopParent(s.info.id);
+      this.shells.stopParent(s.info.id);
+    };
   }
 
   /** Resolve a bare session id (e.g. deep link after restart) via known directories. */

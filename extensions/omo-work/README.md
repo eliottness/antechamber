@@ -10,15 +10,13 @@ For the open session it shows:
 
 - **Todo**: OmO's todo list grouped by phase, with progress per phase. The
   phase in progress is open; click any phase to open or close it.
-- **Monitors**: each terminal monitor with its state, age and event count.
-  Click one for its command, filter, deadline and latest matched lines. On
-  OpenChamber 2.x, monitors appear here instead of as subagent sessions.
-- **Eval cells**: detached eval cells with their language, state and running
-  time. Click one to follow its output; **Stop** stops a running or queued
-  cell.
-- **Background**: background terminal sessions that are still running.
 - **Goal**: the goal continuation timer, what it waits on, and **Fire now**.
 - **Other activity**: any other wake source OmO reports.
+
+Terminal monitors, detached eval cells and background terminal sessions are not
+listed here: antechamber reports them to OpenChamber as background commands,
+so the session reads as working while they run and OpenChamber lists them above
+the composer with their output (and Stop, for eval cells).
 
 The section sizes itself to its content, up to OpenChamber's 320 px limit, and
 scrolls inside beyond that.
@@ -64,7 +62,7 @@ section (sandboxed iframe) --serviceRequest /status?session=ses_...--> OpenChamb
 `antechamber serve` writes `<state dir>/run/<pid>.json` (mode 0600) with its
 URL and a random token that opens only the `/antechamber/work-status` routes. The service
 picks the running server whose agent holds the session and relays the snapshot
-and the Stop and Fire now actions. It keeps no state. See [docs/DESIGN.md](docs/DESIGN.md) for the snapshot, refresh,
+and the Fire now action. It keeps no state. See [docs/DESIGN.md](docs/DESIGN.md) for the snapshot, refresh,
 server choice and security boundary, and
 [docs/architecture.md](../../docs/architecture.md#omo-work-status-section) for
 where each piece of data comes from in OmO.
@@ -77,13 +75,8 @@ the extension's OpenChamber storage.
 
 ## Limitations
 
-OmO does not expose these over RPC, so the section cannot offer them:
-
-- stopping a monitor or a background terminal session;
-- continuation holds (the loop guard publishes them in-process only).
-
-Eval cells need OmO's codemode. Without it, or while the agent process is not
-running, the section lists the cells OmO last reported, without output or Stop.
+OmO does not publish continuation holds over RPC (the loop guard keeps them
+in-process), so the section cannot show them.
 
 ## Development
 

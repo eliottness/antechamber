@@ -1,4 +1,4 @@
-import type { EvalCellView, MonitorView, TodoPhase, WorkStatus } from "./model.ts";
+import type { TodoPhase, WorkStatus } from "./model.ts";
 
 export type Tone = "run" | "ok" | "warn" | "bad" | "idle";
 
@@ -43,47 +43,6 @@ export function focusPhase(phases: TodoPhase[]): number {
   return phases.findIndex((phase) => !summarizePhase(phase).finished);
 }
 
-export function monitorTone(view: MonitorView): Tone {
-  if (view.ending === undefined) return view.monitor.paused ? "warn" : "run";
-  if (view.ending.reason === "exit") return view.ending.exitCode === 0 || view.ending.exitCode === null ? "ok" : "bad";
-  return view.ending.reason === "timeout" || view.ending.reason === "killed" ? "idle" : "warn";
-}
-
-export function monitorMeta(view: MonitorView, now: number): string {
-  const events = `${view.monitor.fireCount} event${view.monitor.fireCount === 1 ? "" : "s"}`;
-  if (view.ending !== undefined) return `${view.ending.label} · ${events}`;
-  const state = view.monitor.paused ? "paused" : "watching";
-  return `${state} ${formatDuration(now - view.monitor.startedAtMs)} · ${events}`;
-}
-
-const RUNNING_CELL_STATES = new Set(["running", "queued"]);
-
-export function isCellRunning(cell: EvalCellView): boolean {
-  return RUNNING_CELL_STATES.has(cell.state);
-}
-
-export function cellTone(cell: EvalCellView): Tone {
-  switch (cell.state) {
-    case "running":
-      return "run";
-    case "queued":
-      return "warn";
-    case "completed":
-      return "ok";
-    case "failed":
-      return "bad";
-    default:
-      return "idle";
-  }
-}
-
-export function cellMeta(cell: EvalCellView, now: number): string {
-  const parts = [cell.language, cell.state];
-  if (cell.startedAtMs !== undefined && isCellRunning(cell)) parts.push(formatDuration(now - cell.startedAtMs));
-  if (cell.queuedBehind !== undefined) parts.push(`behind ${cell.queuedBehind.join(", ")}`);
-  return parts.filter((part) => part !== undefined).join(" · ");
-}
-
 export function wakeSourceLabel(source: string): string {
   switch (source) {
     case "senpi-codemode":
@@ -99,13 +58,10 @@ export function wakeSourceLabel(source: string): string {
   }
 }
 
+/**
+ * Monitors, eval cells and background sessions are OpenChamber's own background commands (antechamber reports
+ * them as OpenCode shells), so the section shows only what OpenChamber has no surface for.
+ */
 export function isEmpty(status: WorkStatus): boolean {
-  return (
-    status.todo.length === 0 &&
-    status.monitors.length === 0 &&
-    status.evalCells.length === 0 &&
-    status.background.length === 0 &&
-    status.goal === null &&
-    status.wakeSources.length === 0
-  );
+  return status.todo.length === 0 && status.goal === null && status.wakeSources.length === 0;
 }

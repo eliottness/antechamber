@@ -262,6 +262,11 @@ export class WorkStatusBridge {
     }
   }
 
+  /** Detached eval cells codemode reports running or queued. */
+  liveCells(sessionID: string): WakeSourceItem[] {
+    return this.work.get(sessionID)?.wakeSources.get(CODEMODE_WAKE_SOURCE)?.items ?? [];
+  }
+
   /** The agent process exited: its in-process wake sources and timers died with it. */
   stopParent(sessionID: string): void {
     this.work.delete(sessionID);

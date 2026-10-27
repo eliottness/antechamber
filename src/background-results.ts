@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ManagedSession } from "./sessions.js";
 import type { OCMessageWithParts, OCModelRef, OCToolPart } from "./types.js";
 import { resultMetadata, resultText, toolFailed, type ToolResult } from "./tool-map.js";
+import { evalShellId, terminalShellId } from "./omo-shells.js";
 
 export interface BackgroundResult {
   /** Content hash; identical notifications are told apart by `backgroundID`'s occurrence index. */
@@ -93,16 +94,33 @@ function waitsOf(part: OCToolPart): string[] {
   return Array.isArray(waits) ? waits.filter((id): id is string => typeof id === "string") : [];
 }
 
+/**
+ * The OpenCode shell (omo-shells.ts) a card stands for while its work runs: the detached cell itself, else the
+ * first background session it launched. OpenChamber 2.x ties one shell to a card.
+ */
+function backgroundShellID(callID: string, waits: string[], agentStartedAtMs: number | undefined): string | undefined {
+  if (waits.includes(callID)) return evalShellId(callID);
+  const shell = waits.find((id) => /^bash_\d+$/.test(id));
+  return shell !== undefined && agentStartedAtMs !== undefined ? terminalShellId(agentStartedAtMs, shell) : undefined;
+}
+
 /** Keep a finished card running, with its result already shown, until `waits` report finishing. */
-export function holdForBackground(part: OCToolPart, waits: string[], final: Final): void {
+export function holdForBackground(part: OCToolPart, waits: string[], final: Final, agentStartedAtMs?: number): void {
   const state = part.state;
   if (state.status === "pending" || waits.length === 0) return;
   const title = state.status === "running" || state.status === "completed" ? state.title : undefined;
+  const shellID = backgroundShellID(part.callID, waits, agentStartedAtMs);
   part.state = {
     status: "running",
     input: state.input,
     ...(title !== undefined ? { title } : {}),
-    metadata: { ...state.metadata, output: final.output, backgroundWaits: waits, backgroundFailed: final.failed },
+    metadata: {
+      ...state.metadata,
+      output: final.output,
+      backgroundWaits: waits,
+      backgroundFailed: final.failed,
+      ...(shellID !== undefined ? { backgroundShellID: shellID } : {}),
+    },
     time: { start: state.time.start },
   };
 }
@@ -110,7 +128,13 @@ export function holdForBackground(part: OCToolPart, waits: string[], final: Fina
 function finish(part: OCToolPart, final: Final, at: number): void {
   const state = part.state;
   if (state.status === "pending") return;
-  const { backgroundWaits: _waits, backgroundFailed: _failed, output: _output, ...metadata } = state.metadata ?? {};
+  const {
+    backgroundWaits: _waits,
+    backgroundFailed: _failed,
+    backgroundShellID: _shell,
+    output: _output,
+    ...metadata
+  } = state.metadata ?? {};
   const time = { start: state.time.start, end: Math.max(at, state.time.start) };
   const title = state.status === "running" || state.status === "completed" ? (state.title ?? part.tool) : part.tool;
   part.state = final.failed
@@ -162,6 +186,7 @@ export function completeBackgroundEval(
   messages: readonly OCMessageWithParts[],
   result: BackgroundResult,
   completed: number,
+  agentStartedAtMs?: number,
 ): OCToolPart | undefined {
   if (result.kind !== "eval") return undefined;
   for (const message of messages) {
@@ -177,7 +202,7 @@ export function completeBackgroundEval(
     ];
     const remaining = [...new Set(waits)];
     if (part.state.status !== "pending" && remaining.length > 0) {
-      holdForBackground(part, remaining, final);
+      holdForBackground(part, remaining, final, agentStartedAtMs);
     } else finish(part, final, completed);
     return part;
   }
@@ -185,14 +210,22 @@ export function completeBackgroundEval(
 }
 
 /** A tool result finishes its card at `at`; a result that left work running keeps it running. */
-export function finishToolPart(part: OCToolPart, result: ToolResult, callID: string, at: number): void {
+export function finishToolPart(
+  part: OCToolPart,
+  result: ToolResult,
+  callID: string,
+  at: number,
+  agentStartedAtMs?: number,
+): void {
   const state = part.state;
   const text = resultText(result.content);
   const commands = backgroundCommands(result);
+  const monitor = monitorShellID(part, result, agentStartedAtMs);
   const metadata = {
     ...(state.status !== "pending" ? state.metadata : {}),
     ...resultMetadata(part.tool, result),
     ...commands,
+    ...(monitor !== undefined ? { backgroundShellID: monitor } : {}),
   };
   const time = { start: state.status !== "pending" ? state.time.start : at, end: at };
   const title = state.status === "running" || state.status === "completed" ? (state.title ?? part.tool) : part.tool;
@@ -201,7 +234,22 @@ export function finishToolPart(part: OCToolPart, result: ToolResult, callID: str
     ? { status: "error", input: state.input ?? {}, error: text || `tool ${part.tool} failed`, metadata, time }
     : { status: "completed", input: state.input ?? {}, output: text, title, metadata, time };
   const waits = backgroundWaits(callID, text, commands.backgroundCommands);
-  if (waits.length > 0) holdForBackground(part, waits, { output: text, failed });
+  if (waits.length > 0) holdForBackground(part, waits, { output: text, failed }, agentStartedAtMs);
+}
+
+/**
+ * A `monitor` call returns at once with the watch's terminal id: `details: {monitor_id, bash_id, monitor: true}`
+ * (senpi core/extensions/builtin/terminal/tools/monitor.js, installed 2026-10-27).
+ */
+function monitorShellID(
+  part: OCToolPart,
+  result: ToolResult,
+  agentStartedAtMs: number | undefined,
+): string | undefined {
+  if (part.tool !== "monitor" || toolFailed(result) || agentStartedAtMs === undefined) return undefined;
+  const details = result.details;
+  if (details === null || typeof details !== "object" || !("bash_id" in details)) return undefined;
+  return typeof details.bash_id === "string" ? terminalShellId(agentStartedAtMs, details.bash_id) : undefined;
 }
 
 /**
