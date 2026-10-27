@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /** CLI parsing and dispatch. Server code is loaded only for serve/default mode. */
 import { parseArgs } from "node:util";
 import { ADAPTER_VERSION, OPENCODE_API_VERSION } from "./version.js";

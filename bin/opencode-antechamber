@@ -3,7 +3,7 @@
 # at this file. OpenChamber runs `<binary> serve --hostname H --port P` and
 # `<binary> --version`, and OpenChamber 2.x's Update action runs `<binary> upgrade`;
 # anything else is rejected.
-# Requires a build (`npm run build`) so that dist/cli.js exists.
+# Requires a build (`npm run build`) so that dist/cli.js exists, and Bun to run it.
 set -eu
 SCRIPT_PATH=$0
 while [ -h "$SCRIPT_PATH" ]; do
@@ -20,10 +20,20 @@ if [ ! -f "$CLI" ]; then
   echo "opencode-antechamber: $CLI not found; run 'npm run build' first" >&2
   exit 1
 fi
+# antechamber runs on Bun. GUI apps and services often have a PATH without
+# Bun's install directory, so also look where the Bun installer puts it.
+BUN=$(command -v bun || true)
+for CANDIDATE in "${BUN_INSTALL:-${HOME:-}/.bun}/bin/bun" "${HOME:-}/.bun/bin/bun"; do
+  if [ -z "$BUN" ] && [ -x "$CANDIDATE" ]; then BUN=$CANDIDATE; fi
+done
+if [ -z "$BUN" ]; then
+  echo "opencode-antechamber: bun not found on PATH or in ~/.bun/bin; install it from https://bun.sh" >&2
+  exit 1
+fi
 case "${1:-}" in
-  serve) shift; exec node "$CLI" serve "$@" ;;
-  --version|-v) exec node "$CLI" --version ;;
-  upgrade) exec node "$CLI" upgrade ;;
+  serve) shift; exec "$BUN" "$CLI" serve "$@" ;;
+  --version|-v) exec "$BUN" "$CLI" --version ;;
+  upgrade) exec "$BUN" "$CLI" upgrade ;;
 esac
 echo "opencode-antechamber: unsupported command '${1:-}' (only 'serve', '--version' and 'upgrade' are implemented)" >&2
 exit 1

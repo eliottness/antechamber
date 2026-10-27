@@ -49,7 +49,12 @@ export function doctor(
   const add = (name: string, status: DoctorCheck["status"], message: string): void => {
     checks.push({ name, status, message });
   };
-  add("node", Number(ctx.nodeVersion.split(".")[0]) >= 22 ? "PASS" : "FAIL", `Node ${ctx.nodeVersion}; requires >=22`);
+  const [bunMajor = 0, bunMinor = 0] = (ctx.bunVersion ?? "").split(".").map(Number);
+  add(
+    "bun",
+    bunMajor > 1 || (bunMajor === 1 && bunMinor >= 4) ? "PASS" : "FAIL",
+    ctx.bunVersion === undefined ? "not running on Bun; requires Bun >=1.4" : `Bun ${ctx.bunVersion}; requires >=1.4`,
+  );
   const backend = agentBinary(ctx.env);
   const binary = resolveBinary(backend, ctx);
   if (binary === undefined) add("backend", "FAIL", `${backend} is not an executable on PATH`);

@@ -69,7 +69,9 @@ and event-stream inventory.
 
 ## Quick start
 
-Needs Node.js 22+ and OmO's `omo` command on PATH (`bun add -g omo-ai`).
+Needs [Bun](https://bun.sh) 1.4+, which OmO already uses, and OmO's `omo`
+command on PATH (`bun add -g omo-ai`). antechamber runs on Bun whether npm or
+bun installed it.
 
 ```bash
 npm i -g antechamber
@@ -196,14 +198,16 @@ git clone https://github.com/eliottness/antechamber.git
 cd antechamber
 npm ci
 npm run build
-node dist/cli.js doctor
-node dist/cli.js setup --binary "$PWD/bin/opencode-antechamber"
+bun dist/cli.js doctor
+bun dist/cli.js setup --binary "$PWD/bin/opencode-antechamber"
 # isolated alternative:
-node dist/cli.js setup --profile ~/.config/antechamber-openchamber \
+bun dist/cli.js setup --profile ~/.config/antechamber-openchamber \
   --binary "$PWD/bin/opencode-antechamber"
 ```
 
-The source launcher requires the built `dist/cli.js`. Pull updates, run
+Building needs Node.js 22+ for the development tooling; the built CLI runs on
+Bun. The source launcher requires the built `dist/cli.js` and finds Bun on PATH,
+in `$BUN_INSTALL/bin` or in `~/.bun/bin`. Pull updates, run
 `npm ci && npm run build`, and restart OpenChamber.
 
 `npm run build` also builds the OmO Graph and OmO Work extensions; `setup`

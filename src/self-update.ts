@@ -160,7 +160,7 @@ function run(binary: string, args: readonly string[], env: NodeJS.ProcessEnv, ti
   });
 }
 
-/** Prefers the npm shipped beside the running node: service PATHs often lack the user's tool directories. */
+/** Prefers an npm beside the running runtime (bun or node): service PATHs often lack the user's tool directories. */
 export function npmBinaryFor(execPath: string = process.execPath): string {
   const sibling = join(dirname(execPath), process.platform === "win32" ? "npm.cmd" : "npm");
   return existsSync(sibling) ? sibling : "npm";

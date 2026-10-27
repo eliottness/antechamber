@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultStateDir, envSetting } from "../config.js";
 
@@ -13,7 +13,10 @@ export interface CommandContext {
   readonly exec: (binary: string, args: readonly string[]) => string;
   readonly now: () => Date;
   readonly platform: NodeJS.Platform;
-  readonly nodeVersion: string;
+  /** Bun's version, or undefined when this process is not running on Bun. */
+  readonly bunVersion: string | undefined;
+  /** The running Bun executable, or undefined when this process is not running on Bun. */
+  readonly bunBinary: string | undefined;
   readonly output: (line: string) => void;
   readonly cliPath: string;
   readonly launcherPath: string;
@@ -42,7 +45,8 @@ export function createContext(overrides: Partial<CommandContext> = {}): CommandC
     },
     now: () => new Date(),
     platform: process.platform,
-    nodeVersion: process.versions.node,
+    bunVersion: process.versions.bun,
+    bunBinary: process.versions.bun === undefined ? undefined : process.execPath,
     output: console.log,
     cliPath: packageCliPath,
     launcherPath: fileURLToPath(new URL("../../bin/opencode-antechamber", import.meta.url)),
@@ -112,13 +116,16 @@ export function autoUpdateLauncherPath(ctx: CommandContext): string {
   );
 }
 
-export function autoUpdateLauncherText(binary: string): string {
+export function autoUpdateLauncherText(binary: string, bunBinary?: string): string {
+  const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
   return [
     "#!/bin/sh",
     "# Written by `antechamber setup --auto-update`; rerun `antechamber setup` without it to stop auto-updates.",
     "ANTECHAMBER_AUTO_UPDATE=1",
     "export ANTECHAMBER_AUTO_UPDATE",
-    `exec '${binary.replaceAll("'", "'\\''")}' "$@"`,
+    // The CLI's `env bun` shebang must find Bun even when OpenChamber's PATH lacks its directory.
+    ...(bunBinary === undefined ? [] : [`PATH=${quote(dirname(bunBinary))}:"$PATH"`, "export PATH"]),
+    `exec ${quote(binary)} "$@"`,
     "",
   ].join("\n");
 }
