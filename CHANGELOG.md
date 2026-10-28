@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-10-28
+
 ### Fixed
 
 - Find OmO's builtin `/mcp` command when an extension such as `pi-mcp-adapter` also registers `mcp` and OmO renames
