@@ -84,6 +84,13 @@ function mcpCommand(command, subcommand, name, redirect) {
     reply(command, true, { disposition: "handled" });
     return;
   }
+  if (subcommand === "reconnect") {
+    // Tokens are shared on disk, so a reconnect picks up a sign-in made in another process.
+    servers.set(name, { status: "connected", authStatus: "oAuth" });
+    send({ type: "loaded_surfaces_changed" });
+    reply(command, true, { disposition: "handled" });
+    return;
+  }
   if (subcommand === "auth-start") {
     pasteStates.set(name, `state-${name}`);
     authEntry(
@@ -164,7 +171,7 @@ function handle(command) {
       finishLoopback(command.name);
       return;
     case "prompt": {
-      const match = /^\/(\S+) (auth|auth-start|auth-complete) (\S+)(?: (\S+))?$/.exec(command.message);
+      const match = /^\/(\S+) (auth|auth-start|auth-complete|reconnect) (\S+)(?: (\S+))?$/.exec(command.message);
       if (match !== null && match[1] !== builtinName) {
         reply(command, false, undefined, `Unknown command /${match[1]}. Did you mean /mcp:1, /mcp:2?`);
         return;

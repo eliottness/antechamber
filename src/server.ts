@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { Duplex } from "node:stream";
+import { disposeMcpAgents } from "./mcp.js";
 import { debugLog } from "./misc-routes.js";
 import { SessionManager } from "./sessions.js";
 import type { TodoUpdated } from "./todo-bridge.js";
@@ -88,7 +89,7 @@ export class AdapterServer {
     for (const socket of this.webSocketClients) socket.destroy();
     this.webSocketClients.clear();
     try {
-      await this.sessions.disposeAll();
+      await Promise.all([this.sessions.disposeAll(), disposeMcpAgents()]);
     } finally {
       // An in-flight HTTP request must not hold shutdown open after teardown.
       this.server.closeAllConnections();

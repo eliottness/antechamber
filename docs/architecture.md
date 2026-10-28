@@ -577,7 +577,11 @@ wait for the subagent, or cancel it from the parent session.
 OpenChamber scopes MCP calls by directory, while OmO owns MCP per session
 process. The connector answers them from the most recently used session in the
 directory that has a running agent. It never revives a dormant session for MCP,
-and a status read does not itself refresh the idle timer (only agent events do). Evidence below is from the
+and a status read does not itself refresh the idle timer (only agent events do).
+A sign-in in a directory without a running agent runs in an agent started with
+`--no-session` for that flow alone. That agent holds OmO's pending state, so it
+lives until the flow completes, fails, is cancelled or expires (10 minutes), and
+stops with the server. Evidence below is from the
 installed `@code-yeongyu/senpi` 2026.10.13 bundle (omo-ai 5.1.33); it is covered
 by the hermetic fixture `test/fixtures/mcp-omo.mjs`, not by a dated live probe.
 
@@ -643,8 +647,8 @@ pasting. When OpenChamber opens the URL itself and OmO's `xdg-open` also
 works, two tabs may open. OpenChamber 2.3.2 shows the sign-in only on the MCP
 settings page, and that page lists servers from OpenCode config files, so
 servers defined only in OmO get status there but no sign-in button. Tokens are
-stored globally, but other live sessions in the directory keep their own MCP
-connections until they reconnect.
+stored globally, so after a sign-in the connector sends `/mcp reconnect {name}`
+to every other live session; their status updates once that reconnect finishes.
 
 ### Capability gaps to decide explicitly
 
