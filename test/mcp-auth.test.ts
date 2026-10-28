@@ -10,11 +10,15 @@ import { V2EventTranslator } from "../src/v2.js";
 
 const fixture = resolve("test/fixtures/mcp-omo.mjs");
 
-async function startServer(t: TestContext) {
+async function startServer(t: TestContext, env: Record<string, string> = {}) {
   const root = mkdtempSync(join(tmpdir(), "antechamber-mcp-"));
   const saved = new Map(
-    ["ANTECHAMBER_PI_BINARY", "ANTECHAMBER_STATE_DIR", "PI_CODING_AGENT_DIR"].map((key) => [key, process.env[key]]),
+    ["ANTECHAMBER_PI_BINARY", "ANTECHAMBER_STATE_DIR", "PI_CODING_AGENT_DIR", ...Object.keys(env)].map((key) => [
+      key,
+      process.env[key],
+    ]),
   );
+  Object.assign(process.env, env);
   process.env.ANTECHAMBER_PI_BINARY = fixture;
   process.env.ANTECHAMBER_STATE_DIR = join(root, "state");
   process.env.PI_CODING_AGENT_DIR = join(root, "agent");
@@ -249,6 +253,21 @@ test("v2 lists OmO servers and signs in through auth-start and auth-complete", a
     status: "connected",
   });
   assert.deepEqual(server["sessions"].messages(id), []);
+});
+
+test("the builtin MCP command is found when an extension also registers mcp", async (t) => {
+  const { server, url } = await startServer(t, { FAKE_MCP_COMMAND_COLLISION: "1" });
+  const { pi } = await liveSession(server, url);
+  const original = pi.command.bind(pi);
+  const prompts: string[] = [];
+  t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+    if (args[0].type === "prompt") prompts.push(String(args[0].message));
+    return original(...args);
+  });
+  assert.equal((await call(url, "POST", "/mcp/linear/auth")).status, 200);
+  const done = await call(url, "POST", "/mcp/linear/auth/callback", { code: "good-code" });
+  assert.deepEqual(done, { status: 200, body: { status: "connected" } });
+  assert.deepEqual(prompts, ["/mcp:1 auth linear"]);
 });
 
 test("v1 auth failures, unknown servers and unsafe names are rejected", async (t) => {

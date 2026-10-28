@@ -2,6 +2,8 @@
 // Fake OmO for MCP routes: loaded-surfaces inventory plus the native `/mcp auth`, `auth-start`
 // and `auth-complete` commands. `/mcp auth` listens on a real loopback callback like OmO;
 // `fixture_approve` stands in for the browser reaching it.
+// FAKE_MCP_COMMAND_COLLISION=1 mirrors OmO with the pi-mcp-adapter extension installed: both
+// register `mcp`, so OmO lists the builtin as `mcp:1` and rejects a bare `/mcp` as unknown.
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -23,6 +25,8 @@ const servers = new Map([
 ]);
 const pendingAuth = new Map();
 const pasteStates = new Map();
+const collision = process.env.FAKE_MCP_COMMAND_COLLISION === "1";
+const builtinName = collision ? "mcp:1" : "mcp";
 
 function send(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -142,7 +146,12 @@ function handle(command) {
       return;
     case "get_commands":
       reply(command, true, {
-        commands: [{ name: "mcp", description: "Inspect and manage MCP servers.", source: "extension" }],
+        commands: collision
+          ? [
+              { name: "mcp:1", source: "extension", sourceInfo: { path: "<builtin:mcp>", source: "builtin" } },
+              { name: "mcp:2", source: "extension", sourceInfo: { path: "/agent/npm/pi-mcp-adapter/index.ts" } },
+            ]
+          : [{ name: "mcp", description: "Inspect and manage MCP servers.", source: "extension" }],
       });
       return;
     case "get_loaded_surfaces":
@@ -155,12 +164,16 @@ function handle(command) {
       finishLoopback(command.name);
       return;
     case "prompt": {
-      const match = /^\/mcp (auth|auth-start|auth-complete) (\S+)(?: (\S+))?$/.exec(command.message);
+      const match = /^\/(\S+) (auth|auth-start|auth-complete) (\S+)(?: (\S+))?$/.exec(command.message);
+      if (match !== null && match[1] !== builtinName) {
+        reply(command, false, undefined, `Unknown command /${match[1]}. Did you mean /mcp:1, /mcp:2?`);
+        return;
+      }
       if (match === null || command.expandPromptTemplates !== true) {
         reply(command, false, undefined, `fixture refuses model prompt: ${command.message}`);
         return;
       }
-      mcpCommand(command, match[1], match[2], match[3]);
+      mcpCommand(command, match[2], match[3], match[4]);
       return;
     }
     default:

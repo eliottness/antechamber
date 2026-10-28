@@ -17,6 +17,8 @@
  * Commands are sent straight to the agent, outside the conversation queue: they neither
  * wait behind a running turn nor create a user message, and the session is held active so
  * the reaper cannot stop the process (and its listener or pending state) mid-flow.
+ * An extension that registers its own `mcp` command makes OmO rename the builtin (`mcp:1`),
+ * so the builtin is found by its source, not by name.
  */
 
 import { randomUUID } from "node:crypto";
@@ -53,6 +55,8 @@ interface RouteResult {
 interface AuthFlow {
   s: ManagedSession;
   pi: PiRpcClient;
+  /** The slash-command name OmO gave its builtin MCP command in this agent. */
+  commandName: string;
   /** `auth` may finish in OmO (loopback); `auth-start` always waits for `auth-complete`. */
   command: "auth" | "auth-start";
   attemptID: string;
@@ -78,6 +82,7 @@ const MCP_AUTH_ATTEMPT_TTL_MS = 10 * 60_000;
 const SERVER_NAME = /^[^\s"'\\]+$/;
 const INTEGRATION_PREFIX = "mcp_";
 const OAUTH_METHOD_ID = "oauth";
+const BUILTIN_MCP_PATH = "<builtin:mcp>";
 
 const flows = new Map<string, AuthFlow>();
 const admissions = new Map<string, Promise<Admission>>();
@@ -151,12 +156,16 @@ async function directoryServers(sessions: SessionManager, directory: string): Pr
   return live === undefined ? [] : loadedServers(live.pi).catch(() => []);
 }
 
-async function hasMcpCommand(pi: PiRpcClient): Promise<boolean> {
+/** The builtin MCP command's name in this agent; builds without `sourceInfo` only know it as `mcp`. */
+async function mcpCommandName(pi: PiRpcClient): Promise<string | undefined> {
   const response = await pi.probe<unknown>({ type: "get_commands" }, undefined, AbortSignal.timeout(MCP_READ_WAIT_MS));
-  if (!response.success || !isRecord(response.data) || !Array.isArray(response.data.commands)) return false;
-  return response.data.commands.some(
-    (command: unknown) => isRecord(command) && command.name === "mcp" && command.source === "extension",
+  if (!response.success || !isRecord(response.data) || !Array.isArray(response.data.commands)) return undefined;
+  const commands = response.data.commands.flatMap((command: unknown) =>
+    isRecord(command) && command.source === "extension" && typeof command.name === "string"
+      ? [{ name: command.name, builtin: isRecord(command.sourceInfo) && command.sourceInfo.path === BUILTIN_MCP_PATH }]
+      : [],
   );
+  return (commands.find((command) => command.builtin) ?? commands.find((command) => command.name === "mcp"))?.name;
 }
 
 /** The URL OmO prints on its own line after naming the server (`auth` and `auth-start` both do). */
@@ -208,6 +217,7 @@ function runMcpCommand(
   s: ManagedSession,
   pi: PiRpcClient,
   name: string,
+  commandName: string,
   args: string,
   observe: { url?: (url: string) => void; authorized?: () => void } = {},
 ): Promise<void> {
@@ -232,7 +242,7 @@ function runMcpCommand(
   return sessions.lifecycle
     .use(s, () =>
       pi.command<unknown>(
-        { type: "prompt", message: `/mcp ${args}`, expandPromptTemplates: true },
+        { type: "prompt", message: `/${commandName} ${args}`, expandPromptTemplates: true },
         MCP_AUTH_COMMAND_TIMEOUT_MS,
       ),
     )
@@ -308,12 +318,14 @@ async function startFlow(
   const servers = await loadedServers(pi);
   if (!servers.some((server) => server.name === name))
     return { error: { status: 404, body: errorBody("McpServerNotFoundError", `MCP server not found: ${name}`) } };
-  if (!(await hasMcpCommand(pi)))
+  const commandName = await mcpCommandName(pi);
+  if (commandName === undefined)
     return { error: { status: 400, body: errorBody("UnsupportedError", "This OmO build has no /mcp command") } };
   const url = Promise.withResolvers<string>();
   const flow: AuthFlow = {
     s,
     pi,
+    commandName,
     command,
     attemptID: randomUUID(),
     created: Date.now(),
@@ -322,7 +334,7 @@ async function startFlow(
     running: true,
     authorized: false,
   };
-  flow.done = runMcpCommand(services.sessions, s, pi, name, `${command} ${name}`, {
+  flow.done = runMcpCommand(services.sessions, s, pi, name, commandName, `${command} ${name}`, {
     url: (found) => {
       flow.authorizationUrl ??= found;
       url.resolve(found);
@@ -405,11 +417,19 @@ async function completeFlow(
       }
       await flow.done;
     } else {
-      await runMcpCommand(services.sessions, flow.s, flow.pi, name, `auth-complete ${name} ${redirect}`, {
-        authorized: () => {
-          flow.authorized = true;
+      await runMcpCommand(
+        services.sessions,
+        flow.s,
+        flow.pi,
+        name,
+        flow.commandName,
+        `auth-complete ${name} ${redirect}`,
+        {
+          authorized: () => {
+            flow.authorized = true;
+          },
         },
-      });
+      );
       announce(services, directory, name);
     }
   } catch (error) {

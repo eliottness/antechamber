@@ -601,9 +601,13 @@ by the hermetic fixture `test/fixtures/mcp-omo.mjs`, not by a dated live probe.
   (`modes/rpc/client-admissions.js`). The `prompt` response arrives only after
   the handler returns, so the connector gives it a 10-minute transport budget.
   It sends the command outside the conversation queue and holds the session
-  active so the reaper cannot stop the listener. Before sending, it checks
-  `get_commands` for the extension command `mcp`, so a missing command can never
-  reach the model as prompt text. Handler failures arrive as `notify` errors.
+  active so the reaper cannot stop the listener. Before sending, it looks the
+  command up in `get_commands`, so a missing command can never reach the model as
+  prompt text. An extension that registers its own `mcp` (such as
+  `pi-mcp-adapter`) makes OmO list the builtin under a suffixed name (`mcp:1`)
+  and reject a bare `/mcp`, so the connector picks the extension command whose
+  `sourceInfo.path` is `<builtin:mcp>`, falling back to `mcp` for builds without
+  `sourceInfo`. Handler failures arrive as `notify` errors.
 - The `mcp-auth` entries persist in the session JSONL as custom entries. They
   are not LLM context, and history rebuilding does not render them.
 - The headless pair documented in `docs/mcp.md` ("Auth") is `/mcp auth-start
