@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Find OmO's builtin `/mcp` command when an extension such as `pi-mcp-adapter` also registers `mcp` and OmO renames
+  the builtin to `mcp:1`. MCP sign-in used to fail there with "Unknown command /mcp".
+
 ## [1.0.26] - 2026-10-28
 
 ### Fixed
