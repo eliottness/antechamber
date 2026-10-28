@@ -11,6 +11,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Sign in to an MCP server from OpenChamber without a running OmO session in that directory. The sign-in now runs in
+  an agent started for it alone, which stops once the sign-in completes, is cancelled or expires, and every running
+  session reconnects the server afterwards so it picks up the new token.
 - Find OmO's builtin `/mcp` command when an extension such as `pi-mcp-adapter` also registers `mcp` and OmO renames
   the builtin to `mcp:1`. MCP sign-in used to fail there with "Unknown command /mcp".
 
