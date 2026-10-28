@@ -238,6 +238,11 @@ interface PiEventServices {
 export class PiEventTranslator {
   /** Ended assistant messages whose completion waits on their tools. */
   private awaitingTools = new WeakSet<OCMessageWithParts["info"]>();
+  /**
+   * Errored assistant messages held open until agent_end says whether OmO retries them. OpenChamber prints a
+   * completed message's error as "failed to send message", and v2 cannot retract a `session.step.failed`.
+   */
+  private heldFailures = new WeakMap<OCMessageWithParts["info"], Pick<OCAssistantMessage, "finish" | "error">>();
 
   constructor(private services: PiEventServices) {}
 
@@ -462,7 +467,11 @@ export class PiEventTranslator {
         this.setStatus(s, { type: "busy" });
         return;
       case "agent_end":
-        if (ev.willRetry === true) return; // auto-retry keeps the session busy
+        if (ev.willRetry === true) {
+          // auto-retry keeps the session busy, and the failed step it retries is not a failure to report.
+          this.completeHeldFailures(s, false);
+          return;
+        }
         if (s.interruptRequested)
           this.finishInterruptedRun(s, { name: "MessageAbortedError", data: { message: "Cancelled" } });
         s.approvals?.finishTurn();
@@ -695,15 +704,17 @@ export class PiEventTranslator {
           s.streaming.message.modelID = s.model.modelID;
         }
         applyUsage(s.streaming.message, ended.usage);
-        Object.assign(s.streaming.message, piStopReason(ended.stopReason, ended.errorMessage));
+        const stop = piStopReason(ended.stopReason, ended.errorMessage);
+        if (ended.stopReason === "error") this.heldFailures.set(s.streaming.message, stop);
+        else Object.assign(s.streaming.message, stop);
         // OpenCode completes an assistant message only after its tools settle, and
         // OpenChamber marks active tools under a completed message as Interrupted.
         // pi ends a toolUse message before executing its tool calls, so defer its
         // completion to the last tool result (applyToolResults), the next step, or
-        // the run end. Errored/aborted messages never run their tools.
+        // the run end. Errored/aborted messages never run their tools; an errored one completes at agent_end.
         if (ended.stopReason === "toolUse" && hasActiveTools(s, s.streaming.message.id))
           this.awaitingTools.add(s.streaming.message);
-        else s.streaming.message.time.completed = Date.now();
+        else if (ended.stopReason !== "error") s.streaming.message.time.completed = Date.now();
         this.services.emit(s.info.directory, { type: "message.updated", properties: { info: s.streaming.message } });
         this.finishStreaming(s);
         if (syncSessionCost(s))
@@ -1092,8 +1103,22 @@ export class PiEventTranslator {
     this.completeAwaitingTools(s); // the run is over
   }
 
+  /** Complete held errored messages: with their error when the run failed, without it when OmO retries the step. */
+  private completeHeldFailures(s: ManagedSession, failed: boolean): void {
+    const now = Date.now();
+    for (const { info } of s.messages ?? []) {
+      const stop = this.heldFailures.get(info);
+      if (stop === undefined || info.role !== "assistant") continue;
+      this.heldFailures.delete(info);
+      if (failed) Object.assign(info, stop);
+      info.time.completed = now;
+      this.services.emit(s.info.directory, { type: "message.updated", properties: { info } });
+    }
+  }
+
   /** Complete every ended message of this session still waiting on its tools. */
   private completeAwaitingTools(s: ManagedSession): void {
+    this.completeHeldFailures(s, true);
     const now = Date.now();
     for (const { info } of s.messages ?? []) {
       if (!this.awaitingTools.has(info) || info.role !== "assistant") continue;

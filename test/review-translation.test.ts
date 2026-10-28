@@ -80,6 +80,46 @@ test("a retried provider error keeps its tool-call message completed, so v2 repo
   assert.ok(!frames.includes("session.execution.failed"), frames.join(","));
 });
 
+test("a provider error OmO retries is never shown as a failed message or step", (t) => {
+  const { events, frames, feed } = replaySession(t);
+  const rejected = {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: '400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.15: ..."}}',
+    },
+  };
+  feed(
+    { type: "agent_start" },
+    assistantStart,
+    rejected,
+    { type: "agent_end", willRetry: true },
+    { type: "auto_retry_start", attempt: 1, errorMessage: "Retried without web search replay data", delayMs: 0 },
+    assistantStart,
+    assistantEnd("stop"),
+    { type: "agent_end" },
+    { type: "agent_idle" },
+  );
+  const failed = events.filter(
+    (event) => event.type === "message.updated" && "error" in event.properties.info && event.properties.info.error,
+  );
+  assert.deepEqual(failed, []);
+  assert.ok(!frames.includes("session.step.failed"), frames.join(","));
+  assert.ok(frames.includes("session.execution.succeeded"), frames.join(","));
+
+  // The same error without a retry still fails the message, the step and the run.
+  const { events: lastEvents, frames: lastFrames, feed: feedLast } = replaySession(t);
+  feedLast({ type: "agent_start" }, assistantStart, rejected, { type: "agent_end" }, { type: "agent_idle" });
+  const shown = lastEvents.findLast((event) => event.type === "message.updated");
+  const info = shown?.type === "message.updated" ? shown.properties.info : undefined;
+  assert.ok(info?.role === "assistant");
+  assert.equal(info.finish, "error");
+  assert.ok(info.time.completed !== undefined);
+  assert.ok(lastFrames.includes("session.step.failed"), lastFrames.join(","));
+  assert.ok(lastFrames.includes("session.execution.failed"), lastFrames.join(","));
+});
+
 test("a background task's step completes before the next step, so v2 never reopens it", (t) => {
   const { frames, feed } = replaySession(t);
   feed(

@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop showing "Opencode failed to send message" for a provider error that OmO retries on its own, such as
+  Anthropic's 400 for a `web_search` tool use with no `web_search_tool_result`, which OmO retries without web search
+  replay data. The errored reply now waits for OmO's retry decision: a retried step completes without the error and
+  v2 no longer reports `session.step.failed`. An error that is not retried still fails the message, step and run.
+
 ## [1.0.25] - 2026-10-27
 
 ### Added
