@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-10-28
+
 ### Fixed
 
 - Stop OmO from cancelling a `/compact` that revives a session. OmO cancels a running compaction whenever an MCP
