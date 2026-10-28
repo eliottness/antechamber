@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.28] - 2026-10-28
+
+- fix(mcp): sign in to MCP servers without a running OmO session (#79)
+
 ## [1.0.27] - 2026-10-28
 
 ### Fixed
