@@ -12,7 +12,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { systemClock, type LifecycleClock } from "./lifecycle.js";
 import { agentBinary, envSetting } from "./config.js";
@@ -39,6 +39,27 @@ export class UpstreamProtocolError extends Error {
   }
 }
 const PROCESS_KILL_GRACE_MS = 5_000;
+/**
+ * How far above antechamber's own `oom_score_adj` each agent is placed. The agent and everything it starts
+ * (test runners, compilers, OmO's task host) inherit it, so under memory pressure the kernel OOM killer and
+ * earlyoom take a workload before the adapter, whose death stops every session at once.
+ */
+export const AGENT_OOM_SCORE_ADJ_MARGIN = 300;
+
+/** Linux only: rank the agent above antechamber for the OOM killer. Raising a child's score needs no privilege. */
+function rankAboveAdapterForOom(pid: number): void {
+  if (process.platform !== "linux") return;
+  try {
+    const target = Math.min(
+      1000,
+      Number(readFileSync("/proc/self/oom_score_adj", "utf8")) + AGENT_OOM_SCORE_ADJ_MARGIN,
+    );
+    if (Number(readFileSync(`/proc/${pid}/oom_score_adj`, "utf8")) < target)
+      writeFileSync(`/proc/${pid}/oom_score_adj`, String(target));
+  } catch (error) {
+    console.error(`[pi-rpc] could not raise the agent's OOM score: ${error instanceof Error ? error.message : error}`);
+  }
+}
 
 /** A process's group and kernel start time: with the PID, the identity that survives PID reuse checks. */
 interface ProcessIdentity {
@@ -237,6 +258,7 @@ export class PiRpcClient extends EventEmitter {
       },
       detached: true,
     });
+    if (this.proc.pid !== undefined) rankAboveAdapterForOom(this.proc.pid);
 
     this.proc.stderr!.on("data", (chunk: Buffer) => {
       this.stderrTail = (this.stderrTail + chunk.toString()).slice(-8192);

@@ -285,6 +285,17 @@ That report is not evidence of connector teardown. The harness later cleans
 its private HOME's helpers in its separate `finally` cleanup; cleanup can
 never turn a failed shutdown assertion into a PASS.
 
+The adapter is the one process whose death stops every session: OmO
+exits when its RPC pipes close, and a DAG lives in the parent session's
+agent. On Linux each spawned agent's `oom_score_adj` is therefore raised to
+the adapter's own plus 300 (capped at 1000). Agents, their tools and the task
+hosts they start inherit it, so the kernel OOM killer and earlyoom take a
+workload first. On 2026-10-27, eight parallel exec/verify lanes running vitest
+and tsc pushed a 16 GB WSL host under earlyoom's limits; every process in
+`openchamber.service` shared `oom_score_adj=200`, earlyoom avoids `bun` (the
+agents) but not `node`, and it SIGTERMed then SIGKILLed the adapter at 589 MiB,
+taking the DAG's driving agent and its unfinished children with it.
+
 ### User shell cancellation and extension commands
 
 The installed OmO RPC exposes two different abort commands. `abort` acknowledges

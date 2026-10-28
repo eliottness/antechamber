@@ -7,7 +7,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
-import { PiRpcClient } from "../src/pi-rpc.js";
+import { AGENT_OOM_SCORE_ADJ_MARGIN, PiRpcClient } from "../src/pi-rpc.js";
 import type { LifecycleClock } from "../src/lifecycle.js";
 import { SessionManager } from "../src/sessions.js";
 import { SessionStore } from "../src/session-store.js";
@@ -306,6 +306,19 @@ test("F2 S1 failed private-host teardown is reported but local state is still re
   assert.equal(manager.get(info.id), undefined, "sessions are released even though host teardown failed");
   assert.doesNotThrow(() => process.kill(owned.pid, 0), "fail closed: an unverified host is never signalled");
   assert.doesNotThrow(() => process.kill(owned.enginePid, 0));
+});
+
+test("agents and the tools they start rank above the adapter for the OOM killer", { skip: linuxOnly }, async (t) => {
+  const { dir } = setup(t);
+  const own = Number(fs.readFileSync("/proc/self/oom_score_adj", "utf8"));
+  const expected = String(Math.min(1000, own + AGENT_OOM_SCORE_ADJ_MARGIN));
+  const pi = new PiRpcClient({ cwd: dir, piBinary: fixture });
+  t.after(() => pi.dispose());
+  assert.ok(pi.pid);
+  assert.equal(fs.readFileSync(`/proc/${pi.pid}/oom_score_adj`, "utf8").trim(), expected);
+  const tool = await pi.command<{ output: string }>({ type: "bash", command: "cat /proc/self/oom_score_adj" });
+  assert.equal(tool.data?.output.trim(), expected, "a tool the agent spawns inherits the raised score");
+  assert.equal(String(own), fs.readFileSync("/proc/self/oom_score_adj", "utf8").trim(), "the adapter keeps its own");
 });
 
 test("hung OmO receives SIGKILL at the injected five second deadline", { timeout: 15_000 }, async (t) => {
