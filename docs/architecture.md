@@ -138,6 +138,19 @@ markers below newer output. Evidence: the installed OpenChamber 1.24.2
 `useAppFontEffects-DcdrFv2Z.js` parent-based turn projector and copied-session
 desktop/phone replay on 2026-10-18.
 
+OmO cancels a running compaction whenever its active tool set changes
+(`setActiveTools` -> `abortCompaction`, senpi `chunks/chunk-NNQ7DPUD.js`), and a
+freshly started agent registers its MCP servers' tools about a second after
+`get_state` answers. A `/compact` that revives a dormant session therefore waits
+(at most 10 s) until `get_loaded_surfaces` reports no server `connecting`,
+re-reading it on each `loaded_surfaces_changed` event. Cancellations nobody asked
+for are still retried up to four times, and a retried cancellation is not
+published, so OpenChamber 2.5 (which draws `session.compaction.failed` as a
+transcript row) shows one compaction. Evidence: OmO `logs/session.log` on
+2026-10-27 (two `aborted` decisions within a second of startup, then
+`committed`), and a real-OmO probe on 2026-10-28: three servers `connecting`
+after `get_state`, all `connected` 871 ms later.
+
 The registry also stores the published part IDs in message order under each
 stable message ID. On history reconstruction, those IDs are restored onto the
 parsed parts so clients keep their live identities after a restart. History

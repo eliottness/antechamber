@@ -45,6 +45,7 @@ import { MonitorSessions } from "./monitor-sessions.js";
 import { WorkStatusBridge } from "./work-status.js";
 import { OmoShells } from "./omo-shells.js";
 import { sessionDiff } from "./session-diff.js";
+import { waitForMcpServers } from "./mcp.js";
 import { announceSessionNotice, noticeMessage, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
   ocIdFor,
@@ -79,7 +80,11 @@ const PI_FILE_RESOLVE_RETRY_MS = 200;
 const SESSION_TITLE_MAX_CHARS = 60;
 /** OmO's reply when a compaction is aborted (`CompactionCancelledError`). */
 const OMO_COMPACTION_CANCELLED = "Compaction cancelled";
-const COMPACT_CANCEL_RETRIES = 2;
+// Real revivals took two cancels before the third attempt committed (OmO compaction.log, 2026-10-27),
+// so two retries left no margin for one more MCP server connecting late.
+const COMPACT_CANCEL_RETRIES = 4;
+/** Longest a compaction waits for connecting MCP servers; a stuck server falls back to the retries. */
+const MCP_SETTLE_WAIT_MS = 10_000;
 
 interface StreamingState {
   message: OCAssistantMessage;
@@ -113,6 +118,10 @@ export interface ManagedSession extends ThinkingState {
   /** A manual compaction started while idle; its end returns the session to idle. */
   compactingFromIdle?: boolean;
   compactionID?: string;
+  /** Retries sessionRpc still owes a `compact` command that OmO cancels on its own. */
+  compactRetry?: { left: number; aborts: number };
+  /** A cancelled compaction_end held back while its retry may continue the same compaction. */
+  heldCompactionEnd?: Record<string, unknown>;
   /** Cancels the adapter-owned user bash waiter and its OmO execution. */
   cancelShell?: (interrupted?: boolean) => void;
   /**
@@ -985,24 +994,39 @@ export class SessionManager {
       if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
       this.lifecycle.touch(s);
       const timeout = command.type === "compact" ? COMPACT_RPC_TIMEOUT_MS : RPC_COMMAND_TIMEOUT_MS;
+      // OmO cancels a compaction whenever an MCP server's tools register, which a freshly revived agent
+      // does for about a second; start it once they have. The retries below remain the backstop.
+      if (command.type === "compact") await waitForMcpServers(pi, MCP_SETTLE_WAIT_MS, signal);
       signal?.throwIfAborted();
       const abortsBefore = s.abortRequests ?? 0;
-      let response = await pi.command<T>(command, timeout, undefined, onDispatch);
-      // OmO cancels a running compaction whenever its active tool set changes. On a session
-      // just revived for this request, MCP servers finish connecting a moment after startup
-      // and cancel it although nobody asked. Retry unless the user sent an abort meanwhile.
-      for (
-        let retry = 0;
-        retry < COMPACT_CANCEL_RETRIES &&
-        command.type === "compact" &&
-        !response.success &&
-        response.error === OMO_COMPACTION_CANCELLED &&
-        (s.abortRequests ?? 0) === abortsBefore &&
-        !signal?.aborted &&
-        s.pi === pi;
-        retry++
-      )
-        response = await pi.command<T>(command, timeout);
+      // The translator holds back a cancellation this loop may retry, so the UI shows one compaction.
+      if (command.type === "compact") s.compactRetry = { left: COMPACT_CANCEL_RETRIES, aborts: abortsBefore };
+      let response: PiRpcResponse<T>;
+      try {
+        response = await pi.command<T>(command, timeout, undefined, onDispatch);
+        // OmO cancels a running compaction whenever its active tool set changes. On a session
+        // just revived for this request, MCP servers finish connecting a moment after startup
+        // and cancel it although nobody asked. Retry unless the user sent an abort meanwhile.
+        for (
+          let retry = 0;
+          retry < COMPACT_CANCEL_RETRIES &&
+          command.type === "compact" &&
+          !response.success &&
+          response.error === OMO_COMPACTION_CANCELLED &&
+          (s.abortRequests ?? 0) === abortsBefore &&
+          !signal?.aborted &&
+          s.pi === pi;
+          retry++
+        ) {
+          if (s.compactRetry) s.compactRetry.left--;
+          response = await pi.command<T>(command, timeout);
+        }
+      } finally {
+        if (command.type === "compact") {
+          delete s.compactRetry;
+          this.events.releaseCompactionEnd(s);
+        }
+      }
       if (!signal?.aborted && response.success && (command.type === "compact" || command.type === "bash"))
         await this.reloadMessagesLive(s, signal);
       return response;

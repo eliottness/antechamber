@@ -7,6 +7,15 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop OmO from cancelling a `/compact` that revives a session. OmO cancels a running compaction whenever an MCP
+  server's tools register, which a freshly started agent does for about a second, so the chat showed
+  "Compaction failed" twice (OpenChamber 2.5 draws these events as transcript rows) above a compaction that then
+  succeeded. A compaction now waits, at most 10 s, until OmO reports no MCP server still connecting. Cancellations
+  nobody asked for are retried up to four times instead of two, and a retried attempt is no longer reported as a
+  failure; a compaction the user stops still is.
+
 ## [1.0.28] - 2026-10-28
 
 - fix(mcp): sign in to MCP servers without a running OmO session (#79)

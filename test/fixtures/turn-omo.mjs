@@ -31,6 +31,15 @@ let thinkingLevel = entries.filter((e) => e.type === "thinking_level_change").at
 let nestedEntries;
 // OmO cancels a compaction when its tool set changes (e.g. MCP servers connecting after startup).
 let cancelledCompacts = Number(process.env.ANTECHAMBER_TEST_CANCELLED_COMPACTS ?? 0);
+// OmO's MCP servers start out "connecting"; each one's tools register later, announced by loaded_surfaces_changed,
+// and a registration cancels a running compaction (setActiveTools -> abortCompaction, senpi chunks/chunk-NNQ7DPUD.js).
+// Live probe 2026-10-28: three servers connecting at get_state, all connected within about a second.
+const mcpTotal = Number(process.env.ANTECHAMBER_TEST_CONNECTING_MCP ?? 0);
+let connectingMcp = mcpTotal;
+const connectMcp = () => {
+  connectingMcp--;
+  send({ type: "loaded_surfaces_changed" });
+};
 let heldCompact;
 let evalCells;
 let firedGoal = 0;
@@ -421,7 +430,10 @@ createInterface({ input: process.stdin })
         heldCompact = cmd;
         return;
       }
-      if (cancelledCompacts > 0) {
+      if (connectingMcp > 0) {
+        connectMcp();
+        cancelCompaction();
+      } else if (cancelledCompacts > 0) {
         cancelledCompacts--;
         cancelCompaction();
       }
@@ -459,6 +471,13 @@ createInterface({ input: process.stdin })
         data = { disposition: "started" };
       }
     }
+    if (cmd.type === "get_loaded_surfaces" && process.env.ANTECHAMBER_TEST_CONNECTING_MCP !== undefined)
+      data = {
+        mcpServers: Array.from({ length: mcpTotal }, (_, index) => ({
+          name: `mcp${index}`,
+          status: index < connectingMcp ? "connecting" : "connected",
+        })),
+      };
     send({
       type: "response",
       id: cmd.id,
@@ -467,5 +486,7 @@ createInterface({ input: process.stdin })
       data,
       ...(!success ? { error } : {}),
     });
+    // The next server finishes connecting while the adapter waits.
+    if (cmd.type === "get_loaded_surfaces" && connectingMcp > 0) connectMcp();
   })
   .on("close", () => process.exit(0));
