@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-10-28
+
 ### Fixed
 
 - Stop showing "Opencode failed to send message" for a provider error that OmO retries on its own, such as
