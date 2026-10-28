@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { Duplex } from "node:stream";
-import { disposeMcpAgents } from "./mcp.js";
+import { disposeMcpAgents, mcpSurfacesChanged } from "./mcp.js";
 import { debugLog } from "./misc-routes.js";
 import { SessionManager } from "./sessions.js";
 import type { TodoUpdated } from "./todo-bridge.js";
@@ -50,6 +50,8 @@ export class AdapterServer {
       undefined,
       options.defaultDirectory,
     );
+    this.sessions.onMcpSurfacesChanged = () =>
+      mcpSurfacesChanged((directory, event) => this.broadcast(directory, event));
     this.server = createServer((req, res) => void this.route(req, res));
     this.server.on("upgrade", (req, socket, head) => this.handleUpgrade(req, socket, head));
   }

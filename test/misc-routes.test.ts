@@ -47,7 +47,7 @@ test("owned routes return real listings or truthful neutral and unsupported resp
   for (const path of ["/skill", "/lsp", "/formatter", "/experimental/tool/ids"]) {
     assert.deepEqual(await get(path), { status: 200, body: [] });
   }
-  for (const path of ["/provider/auth", "/mcp"]) assert.deepEqual(await get(path), { status: 200, body: {} });
+  assert.deepEqual(await get("/provider/auth"), { status: 200, body: {} });
   for (const [method, path] of [
     ["PUT", "/auth/anthropic"],
     ["POST", "/provider/anthropic/oauth/authorize"],

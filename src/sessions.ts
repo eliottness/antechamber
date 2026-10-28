@@ -209,6 +209,9 @@ export class SessionManager {
   /** freshness of the all-directories scan (see listAll). */
   private scanAllCache: { mtimeMs: number; at: number } | undefined;
 
+  /** Called when an agent starts, stops or reports a change to its MCP servers. */
+  onMcpSurfacesChanged: (() => void) | undefined;
+
   constructor(
     private emit: EventSink,
     store?: SessionStore,
@@ -400,6 +403,7 @@ export class SessionManager {
     s.unwirePi?.();
     const onEvent = (payload: Record<string, unknown>): void => {
       if (s.pi !== pi) return;
+      if (payload.type === "loaded_surfaces_changed") this.onMcpSurfacesChanged?.();
       this.lifecycle.touch(s);
       s.approvals?.observeQuestion(payload);
       try {
@@ -416,6 +420,7 @@ export class SessionManager {
     };
     const onExit = (code: number | null, signal: string | null): void => {
       if (s.pi !== pi) return;
+      this.onMcpSurfacesChanged?.();
       // An agent that stopped on its own (timeout, broken pipe, crash) must say why: a notice card in the
       // transcript, the same error on the reply it interrupted, and a replay after an adapter restart.
       // Pending commands reject with the same PiStoppedError; prompt admission leaves it to this handler.
@@ -451,6 +456,7 @@ export class SessionManager {
     pi.onEvent(onEvent);
     pi.onExtensionUI(onExtensionUI);
     pi.onExit(onExit);
+    this.onMcpSurfacesChanged?.();
     s.unwirePi = () => {
       pi.off("event", onEvent);
       pi.off("extension_ui_request", onExtensionUI);

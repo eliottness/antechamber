@@ -93,8 +93,19 @@ const INTEGRATION_PREFIX = "mcp_";
 const OAUTH_METHOD_ID = "oauth";
 const BUILTIN_MCP_PATH = "<builtin:mcp>";
 
+/** How long an inventory read without a running agent is reused. */
+const MCP_INVENTORY_TTL_MS = 30_000;
+/** A fresh agent answers `get_state` once its extensions loaded, about 1.3 s on a typical install. */
+const MCP_INVENTORY_START_MS = 15_000;
+/** OmO reports each server settling separately at startup; one announcement covers the burst. */
+const MCP_CHANGE_DEBOUNCE_MS = 250;
+
 const flows = new Map<string, AuthFlow>();
 const admissions = new Map<string, Promise<Admission>>();
+const watchedDirectories = new Set<string>();
+const inventories = new Map<string, { at: number; servers: Promise<OmoMcpServer[]> }>();
+const inventoryAgents = new Set<PiRpcClient>();
+let changeTimer: ReturnType<typeof setTimeout> | undefined;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -199,11 +210,56 @@ export async function waitForMcpServers(pi: PiRpcClient, budgetMs: number, signa
 }
 
 async function directoryServers(sessions: SessionManager, directory: string): Promise<OmoMcpServer[]> {
-  // A directory whose sessions are all dormant would list nothing. Its servers are mostly
-  // the user's global and built-in ones, so any running session gives a better answer.
-  const fallback = sessions.liveSessions()[0]?.pi;
-  const live = liveSession(sessions, directory) ?? (fallback === undefined ? undefined : { pi: fallback });
-  return live === undefined ? [] : loadedServers(live.pi).catch(() => []);
+  watchedDirectories.add(directory);
+  // A directory whose sessions are all dormant reads a running session elsewhere: its servers are
+  // mostly the user's global and built-in ones. An agent that just exited is skipped.
+  const agents = new Set([liveSession(sessions, directory)?.pi, ...sessions.liveSessions().map((s) => s.pi)]);
+  for (const pi of agents) {
+    if (pi === undefined) continue;
+    try {
+      return await loadedServers(pi);
+    } catch {}
+  }
+  return inventory(directory);
+}
+
+/** With no running agent, a short-lived `--no-session` agent reads the inventory, shared for a while. */
+function inventory(directory: string): Promise<OmoMcpServer[]> {
+  const cached = inventories.get(directory);
+  if (cached !== undefined && Date.now() - cached.at < MCP_INVENTORY_TTL_MS) return cached.servers;
+  const servers: Promise<OmoMcpServer[]> = readInventory(directory).catch((error: unknown) => {
+    if (inventories.get(directory)?.servers === servers) inventories.delete(directory);
+    console.error(`[mcp] listing servers for ${directory} failed: ${errorMessage(error)}`);
+    return [];
+  });
+  inventories.set(directory, { at: Date.now(), servers });
+  return servers;
+}
+
+async function readInventory(directory: string): Promise<OmoMcpServer[]> {
+  const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+  inventoryAgents.add(pi);
+  try {
+    await pi.command({ type: "get_state" }, MCP_INVENTORY_START_MS);
+    return await loadedServers(pi);
+  } finally {
+    inventoryAgents.delete(pi);
+    await pi.dispose();
+  }
+}
+
+/**
+ * An agent started, stopped or reported new MCP state. Every directory a client read is told to read
+ * again: with the cross-directory fallback, one agent can change the answer for all of them.
+ */
+export function mcpSurfacesChanged(broadcast: RouteServices["broadcast"]): void {
+  inventories.clear();
+  clearTimeout(changeTimer);
+  changeTimer = setTimeout(() => {
+    for (const directory of watchedDirectories)
+      broadcast(directory, { type: "mcp.tools.changed", properties: { server: "" } });
+  }, MCP_CHANGE_DEBOUNCE_MS);
+  changeTimer.unref();
 }
 
 /** The builtin MCP command's name in this agent; builds without `sourceInfo` only know it as `mcp`. */
@@ -347,14 +403,16 @@ function release(flow: AuthFlow): void {
     .catch((error: unknown) => console.error(`[mcp] stopping an auth agent failed: ${errorMessage(error)}`));
 }
 
-/** Stops the agents spawned for sign-ins; live sessions are stopped by their own manager. */
+/** Stops the agents spawned for sign-ins and inventories; live sessions are stopped by their own manager. */
 export async function disposeMcpAgents(): Promise<void> {
+  clearTimeout(changeTimer);
+  inventories.clear();
   const dedicated = [...flows.values()].filter((flow) => flow.s === undefined && !flow.released);
   for (const flow of dedicated) {
     flow.released = true;
     clearTimeout(flow.expiry);
   }
-  await Promise.all(dedicated.map((flow) => flow.pi.dispose()));
+  await Promise.all([...dedicated.map((flow) => flow.pi.dispose()), ...[...inventoryAgents].map((pi) => pi.dispose())]);
 }
 
 async function flowStatus(flow: AuthFlow, name: string): Promise<OmoMcpServer | undefined> {
