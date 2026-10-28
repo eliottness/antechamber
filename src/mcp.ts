@@ -5,7 +5,10 @@
  * Everything therefore targets the most recently used LIVE session in the directory; a
  * dormant session is never revived just to answer an MCP request. Status reads for a
  * directory without one fall back to the most recently used live session elsewhere.
- * Authorization stays scoped to the directory.
+ * Authorization in a directory without one runs in an agent spawned for that flow alone
+ * (`--no-session`), disposed once the flow completes, fails, is cancelled or expires.
+ * OmO stores tokens globally, so a completed sign-in reconnects the server in every other
+ * live session.
  *
  * Status comes from the read-only `get_loaded_surfaces` RPC. Authorization drives OmO's
  * documented `/mcp` subcommands (docs/mcp.md "Auth"):
@@ -23,7 +26,7 @@
 
 import { randomUUID } from "node:crypto";
 import { errorBody } from "./http.js";
-import type { PiRpcClient } from "./pi-rpc.js";
+import { PiRpcClient } from "./pi-rpc.js";
 import type { RouteServices } from "./route-services.js";
 import type { ManagedSession, SessionManager } from "./sessions.js";
 
@@ -53,7 +56,8 @@ interface RouteResult {
 }
 
 interface AuthFlow {
-  s: ManagedSession;
+  /** Undefined when the flow runs in an agent antechamber spawned for it alone. */
+  s: ManagedSession | undefined;
   pi: PiRpcClient;
   /** The slash-command name OmO gave its builtin MCP command in this agent. */
   commandName: string;
@@ -68,6 +72,11 @@ interface AuthFlow {
   running: boolean;
   authorized: boolean;
   error?: string;
+  /** A dedicated agent's last status for the server, read before the agent is disposed. */
+  server?: OmoMcpServer;
+  /** A dedicated agent exited or was disposed. */
+  released: boolean;
+  expiry?: ReturnType<typeof setTimeout>;
 }
 
 /** Bounds how long an HTTP caller waits on a read-only RPC; the transport keeps its own budget. */
@@ -214,7 +223,7 @@ function sameCallback(target: URL, authorization: string): boolean {
 
 function runMcpCommand(
   sessions: SessionManager,
-  s: ManagedSession,
+  s: ManagedSession | undefined,
   pi: PiRpcClient,
   name: string,
   commandName: string,
@@ -239,13 +248,12 @@ function runMcpCommand(
   };
   pi.onEvent(onEvent);
   pi.onExtensionUI(onNotify);
-  return sessions.lifecycle
-    .use(s, () =>
-      pi.command<unknown>(
-        { type: "prompt", message: `/${commandName} ${args}`, expandPromptTemplates: true },
-        MCP_AUTH_COMMAND_TIMEOUT_MS,
-      ),
-    )
+  const send = () =>
+    pi.command<unknown>(
+      { type: "prompt", message: `/${commandName} ${args}`, expandPromptTemplates: true },
+      MCP_AUTH_COMMAND_TIMEOUT_MS,
+    );
+  return (s === undefined ? send() : sessions.lifecycle.use(s, send))
     .then((response) => {
       if (!response.success) throw new Error(response.error ?? "OmO rejected the /mcp command");
       const disposition = isRecord(response.data) ? response.data.disposition : undefined;
@@ -262,12 +270,64 @@ function announce(services: RouteServices, directory: string, name: string): voi
   services.broadcast(directory, { type: "mcp.tools.changed", properties: { server: name } });
 }
 
+/** Other live sessions keep their own connection, which still lacks the new token until it reconnects. */
+function authorized(services: RouteServices, directory: string, name: string, flow: AuthFlow): void {
+  announce(services, directory, name);
+  const reconnects = services.sessions.liveSessions().flatMap((s) => {
+    const pi = s.pi;
+    if (pi === undefined || pi === flow.pi) return [];
+    return [
+      mcpCommandName(pi)
+        .then((commandName) =>
+          commandName === undefined
+            ? undefined
+            : runMcpCommand(services.sessions, s, pi, name, commandName, `reconnect ${name}`),
+        )
+        .catch((error: unknown) =>
+          console.error(`[mcp] reconnecting ${name} in session ${s.info.id} failed: ${errorMessage(error)}`),
+        ),
+    ];
+  });
+  if (reconnects.length > 0) void Promise.all(reconnects).then(() => announce(services, directory, name));
+}
+
 type Admission = { flow: AuthFlow } | { error: RouteResult };
+
+function agentCurrent(flow: AuthFlow): boolean {
+  return flow.s === undefined ? !flow.released : flow.s.pi === flow.pi;
+}
+
+function release(flow: AuthFlow): void {
+  if (flow.s !== undefined) return;
+  flow.released = true;
+  clearTimeout(flow.expiry);
+  void flow.pi
+    .dispose()
+    .catch((error: unknown) => console.error(`[mcp] stopping an auth agent failed: ${errorMessage(error)}`));
+}
+
+/** Stops the agents spawned for sign-ins; live sessions are stopped by their own manager. */
+export async function disposeMcpAgents(): Promise<void> {
+  const dedicated = [...flows.values()].filter((flow) => flow.s === undefined && !flow.released);
+  for (const flow of dedicated) {
+    flow.released = true;
+    clearTimeout(flow.expiry);
+  }
+  await Promise.all(dedicated.map((flow) => flow.pi.dispose()));
+}
+
+async function flowStatus(flow: AuthFlow, name: string): Promise<OmoMcpServer | undefined> {
+  if (flow.server !== undefined || !agentCurrent(flow)) return flow.server;
+  return currentStatus(flow.pi, name);
+}
 
 function pruneFlows(): void {
   const now = Date.now();
   for (const [key, flow] of flows)
-    if (!flow.running && (flow.s.pi !== flow.pi || now - flow.created > MCP_AUTH_ATTEMPT_TTL_MS)) flows.delete(key);
+    if (!flow.running && (!agentCurrent(flow) || now - flow.created > MCP_AUTH_ATTEMPT_TTL_MS)) {
+      flows.delete(key);
+      release(flow);
+    }
 }
 
 /** Concurrent clicks share one admission, so a second `/mcp auth` never races the first. */
@@ -301,26 +361,31 @@ async function startFlow(
 ): Promise<Admission> {
   if (!SERVER_NAME.test(name))
     return { error: { status: 400, body: errorBody("InvalidRequestError", "invalid MCP server name") } };
-  const live = liveSession(services.sessions, directory);
-  if (live === undefined)
-    return {
-      error: {
-        status: 400,
-        body: errorBody("McpUnavailableError", "MCP authorization needs a running OmO session in this directory"),
-      },
-    };
-  const { s, pi } = live;
   const key = flowKey(directory, name);
   pruneFlows();
   const existing = flows.get(key);
-  if (existing?.running && existing.pi === pi)
+  if (existing?.running && agentCurrent(existing))
     return existing.command === command ? { flow: existing } : inProgress(name);
-  const servers = await loadedServers(pi);
+  const live = liveSession(services.sessions, directory);
+  const s = live?.s;
+  const pi = live?.pi ?? new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+  const refuse = async (status: number, error: string, message: string): Promise<Admission> => {
+    if (live === undefined) await pi.dispose();
+    return { error: { status, body: errorBody(error, message) } };
+  };
+  let servers: OmoMcpServer[];
+  let commandName: string | undefined;
+  try {
+    // A spawned agent answers its first RPC only once it has started.
+    if (live === undefined) await pi.command({ type: "get_state" });
+    servers = await loadedServers(pi);
+    commandName = await mcpCommandName(pi);
+  } catch (error) {
+    return refuse(400, "McpUnavailableError", `OmO could not start for MCP authorization: ${errorMessage(error)}`);
+  }
   if (!servers.some((server) => server.name === name))
-    return { error: { status: 404, body: errorBody("McpServerNotFoundError", `MCP server not found: ${name}`) } };
-  const commandName = await mcpCommandName(pi);
-  if (commandName === undefined)
-    return { error: { status: 400, body: errorBody("UnsupportedError", "This OmO build has no /mcp command") } };
+    return refuse(404, "McpServerNotFoundError", `MCP server not found: ${name}`);
+  if (commandName === undefined) return refuse(400, "UnsupportedError", "This OmO build has no /mcp command");
   const url = Promise.withResolvers<string>();
   const flow: AuthFlow = {
     s,
@@ -333,7 +398,15 @@ async function startFlow(
     done: Promise.resolve(),
     running: true,
     authorized: false,
+    released: false,
   };
+  if (live === undefined) {
+    pi.onExit(() => {
+      flow.released = true;
+    });
+    flow.expiry = setTimeout(() => release(flow), MCP_AUTH_ATTEMPT_TTL_MS);
+    flow.expiry.unref();
+  }
   flow.done = runMcpCommand(services.sessions, s, pi, name, commandName, `${command} ${name}`, {
     url: (found) => {
       flow.authorizationUrl ??= found;
@@ -343,11 +416,18 @@ async function startFlow(
       flow.authorized = true;
     },
   })
-    .then(() => {
-      if (flow.authorized) announce(services, directory, name);
+    .then(async () => {
+      if (!flow.authorized) return;
+      if (live === undefined) {
+        const server = await currentStatus(pi, name).catch(() => undefined);
+        if (server !== undefined) flow.server = server;
+        release(flow);
+      }
+      authorized(services, directory, name, flow);
     })
     .catch((error: unknown) => {
       flow.error = errorMessage(error);
+      release(flow);
       throw error;
     })
     .finally(() => {
@@ -357,6 +437,7 @@ async function startFlow(
   void flow.done.catch((error: unknown) =>
     console.error(`[mcp] authorization of ${name} failed: ${errorMessage(error)}`),
   );
+  if (existing !== undefined) release(existing);
   flows.set(key, flow);
   return { flow };
 }
@@ -394,9 +475,10 @@ async function completeFlow(
   const fail = (status: number, name_: string, message: string) => ({
     error: { status, body: errorBody(name_, message) },
   });
-  if (flow === undefined || flow.s.pi !== flow.pi || Date.now() - flow.created > MCP_AUTH_ATTEMPT_TTL_MS)
+  if (flow === undefined || Date.now() - flow.created > MCP_AUTH_ATTEMPT_TTL_MS)
     return fail(400, "McpAuthError", `No pending authorization for ${name}; start it again`);
-  if (flow.authorized) return { server: await currentStatus(flow.pi, name) };
+  if (flow.authorized) return { server: await flowStatus(flow, name) };
+  if (!agentCurrent(flow)) return fail(400, "McpAuthError", `No pending authorization for ${name}; start it again`);
   if (flow.error !== undefined)
     return fail(400, "McpAuthError", `Authorization of ${name} failed (${flow.error}); start it again`);
   if (typeof input !== "string" || flow.authorizationUrl === undefined)
@@ -404,11 +486,15 @@ async function completeFlow(
   const redirect = redirectInput(flow.authorizationUrl, input);
   if (redirect === undefined)
     return fail(400, "InvalidRequestError", "code must be an authorization code or redirect URL");
+  // OmO consumes the pending state on any answer, so a dedicated agent has nothing left to wait for.
+  let attempted = false;
+  let server: OmoMcpServer | undefined;
   try {
     if (flow.running && flow.command === "auth") {
       const target = new URL(redirect);
       if (!sameCallback(target, flow.authorizationUrl))
         return fail(400, "McpAuthError", `OmO is waiting for ${name} on its loopback callback; paste that redirect`);
+      attempted = true;
       const delivered = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(MCP_READ_WAIT_MS) });
       if (!delivered.ok) {
         // OmO ends the flow on a rejected callback; settle it so a retry cannot join the dead flow.
@@ -417,6 +503,7 @@ async function completeFlow(
       }
       await flow.done;
     } else {
+      attempted = true;
       await runMcpCommand(
         services.sessions,
         flow.s,
@@ -430,15 +517,19 @@ async function completeFlow(
           },
         },
       );
-      announce(services, directory, name);
+      if (flow.authorized) authorized(services, directory, name, flow);
+      else announce(services, directory, name);
     }
+    if (!flow.authorized)
+      return fail(400, "McpAuthError", flow.error ?? `MCP server ${name} did not complete authorization`);
+    server = await flowStatus(flow, name);
   } catch (error) {
     flow.error = errorMessage(error);
     return fail(400, "McpAuthError", flow.error);
+  } finally {
+    if (attempted) release(flow);
   }
-  if (!flow.authorized)
-    return fail(400, "McpAuthError", flow.error ?? `MCP server ${name} did not complete authorization`);
-  return { server: await currentStatus(flow.pi, name) };
+  return { server };
 }
 
 function decodeName(raw: string): string | undefined {
@@ -489,7 +580,7 @@ export async function mcpRoute(
         status: 400,
         body: errorBody("McpAuthError", `MCP server ${name} is waiting for its authorization code; paste it to finish`),
       };
-    const server = await currentStatus(flow.pi, name);
+    const server = await flowStatus(flow, name);
     return { status: 200, body: server === undefined ? { status: "disabled" } : openCodeMcpStatus(server) };
   }
   const announced = await awaitAuthorizationUrl(flow, name);
@@ -588,7 +679,10 @@ export async function mcpRouteV2(
     return "error" in result ? result.error : { status: 204 };
   }
   if (method === "DELETE") {
-    if (flow !== undefined) flows.delete(flowKey(directory, name));
+    if (flow !== undefined) {
+      flows.delete(flowKey(directory, name));
+      release(flow);
+    }
     return { status: 204 };
   }
   if (method !== "GET") return undefined;

@@ -124,7 +124,7 @@ invented resource IDs.
 | PUT | `/auth/{providerID}` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/provider/{providerID}/oauth/authorize` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/provider/{providerID}/oauth/callback` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/mcp/{name}/auth` | 200 | `{authorizationUrl, oauthState}` announced by OmO's native `/mcp auth {name}` in the live session; the flow then finishes inside OmO (loopback callback, token exchange, reconnect). 400 without a live session, on an OmO error or when no URL appears within 30 s; 404 for an unknown server. |
+| POST | `/mcp/{name}/auth` | 200 | `{authorizationUrl, oauthState}` announced by OmO's native `/mcp auth {name}` in the directory's live session, else in an agent started for this flow alone; the flow then finishes inside OmO (loopback callback, token exchange, reconnect). 400 when that agent cannot start, on an OmO error or when no URL appears within 30 s; 404 for an unknown server. |
 | POST | `/mcp/{name}/auth/authenticate` | 200 | `McpStatus` after the same native flow completes (OmO opens the browser itself); joins a flow already running for that server. Same errors as `/mcp/{name}/auth`, plus 400 when OmO parked the flow for a pasted code. Both routes return 409 while a different auth flow for the server is running in the same agent; concurrent identical requests share one flow. |
 | POST or DELETE | `/mcp/{name}/connect`, `/mcp/{name}/disconnect`, DELETE `/mcp/{name}/auth` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/mcp/{name}/auth/callback` | 200 | `McpStatus` once `{code}` (a bare code or the whole redirect URL) finishes the pending flow. A flow still waiting on OmO's loopback listener receives the redirect there; a parked flow (`mcp.oauthCallbackUrl` set) is finished with `/mcp auth-complete {name} {redirect}`. A bare code is rebuilt from the authorization request's `redirect_uri` and `state`. 400 when nothing is pending or OmO rejects the response. |
@@ -135,7 +135,7 @@ invented resource IDs.
 | PATCH | `/api/credential/{credentialID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | POST | `/api/credential/{credentialID}/activate` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | GET | `/api/integration/mcp_{name}` | 200 | `{location, data: IntegrationInfo}` for an OAuth-capable OmO MCP server; 404 otherwise. |
-| POST | `/api/integration/mcp_{name}/connect/oauth` | 200 | `{location, data: IntegrationAttempt}` with `mode: "code"`: runs OmO's headless `/mcp auth-start {name}` and returns its authorization URL. |
+| POST | `/api/integration/mcp_{name}/connect/oauth` | 200 | `{location, data: IntegrationAttempt}` with `mode: "code"`: runs OmO's headless `/mcp auth-start {name}` (in the directory's live session, else in an agent started for this attempt and stopped when it completes, is cancelled or expires) and returns its authorization URL. |
 | GET | `/api/integration/mcp_{name}/connect/oauth/{attemptID}` | 200 | `{location, data: IntegrationAttemptStatus}` (`pending`, `complete`, `failed`, `expired` after 10 min); 404 for an unknown attempt. |
 | POST | `/api/integration/mcp_{name}/connect/oauth/{attemptID}/complete` | 204 | `{code}` (bare code or redirect URL) is finished with `/mcp auth-complete {name} {redirect}` in the session that started it; 400 when OmO rejects it, 404 for an unknown attempt. |
 | DELETE | `/api/integration/mcp_{name}/connect/oauth/{attemptID}` | 204 | Forgets the attempt; OmO's parked state is replaced by the next start. |
@@ -348,9 +348,9 @@ fix; this adapter does not invent a reply target absent from native state.
 | `app.agents` | static pi agent descriptors: `build` plus pi's own agent name |
 | `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
 | `mcp.status` | RPC `get_loaded_surfaces` on the newest live session in the directory |
-| `mcp.auth.start`, `mcp.auth.authenticate` | RPC `prompt` `/mcp auth {name}` sent outside the conversation queue |
+| `mcp.auth.start`, `mcp.auth.authenticate` | RPC `prompt` `/mcp auth {name}` sent outside the conversation queue, to the live session or a `--no-session` agent for the flow |
 | `mcp.auth.callback` | loopback redirect to OmO's waiting listener, or RPC `prompt` `/mcp auth-complete {name} {redirect}` |
-| v2 `mcp.list`, `integration.*` for `mcp_*` | `get_loaded_surfaces`; `/mcp auth-start` + `/mcp auth-complete`; `mcp.status.changed` after a sign-in |
+| v2 `mcp.list`, `integration.*` for `mcp_*` | `get_loaded_surfaces`; `/mcp auth-start` + `/mcp auth-complete`; `/mcp reconnect {name}` in the other live sessions and `mcp.status.changed` after a sign-in |
 | `auth.set`, `provider.oauth`, `mcp.connect/disconnect`, `mcp.auth.remove` | unsupported with OmO; configure providers and MCP in OmO |
 
 ## SSE event contract
