@@ -157,6 +157,47 @@ async function loadedServers(pi: PiRpcClient): Promise<OmoMcpServer[]> {
   );
 }
 
+/**
+ * Resolves once no MCP server is still connecting, after `budgetMs`, or on abort. OmO cancels a running
+ * compaction whenever a server's tools register (setActiveTools -> abortCompaction, senpi
+ * chunks/chunk-NNQ7DPUD.js). A probe on 2026-10-28 found three servers connecting when get_state answered,
+ * all connected within about a second, each change announced by `loaded_surfaces_changed`.
+ */
+export async function waitForMcpServers(pi: PiRpcClient, budgetMs: number, signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  let changed = false;
+  let wake = (): void => {};
+  const listener = (ev: Record<string, unknown>): void => {
+    if (ev.type !== "loaded_surfaces_changed") return;
+    changed = true;
+    wake();
+  };
+  pi.onEvent(listener);
+  try {
+    while (!signal?.aborted) {
+      changed = false;
+      const servers = await loadedServers(pi).catch(() => []);
+      if (!servers.some((server) => server.status === "connecting")) return;
+      if (changed) continue;
+      const left = deadline - Date.now();
+      if (left <= 0) return;
+      await new Promise<void>((resolve) => {
+        const done = (): void => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", done);
+          wake = () => {};
+          resolve();
+        };
+        const timer = setTimeout(done, left);
+        signal?.addEventListener("abort", done, { once: true });
+        wake = done;
+      });
+    }
+  } finally {
+    pi.off("event", listener);
+  }
+}
+
 async function directoryServers(sessions: SessionManager, directory: string): Promise<OmoMcpServer[]> {
   // A directory whose sessions are all dormant would list nothing. Its servers are mostly
   // the user's global and built-in ones, so any running session gives a better answer.

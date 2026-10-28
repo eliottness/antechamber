@@ -105,15 +105,37 @@ async function compactCommands(h: ReturnType<typeof bugHarness>, id: string): Pr
 }
 
 test("a compaction OmO cancels on its own is retried", { timeout: 15000 }, async (t) => {
-  withEnv(t, "ANTECHAMBER_TEST_CANCELLED_COMPACTS", "1");
+  withEnv(t, "ANTECHAMBER_TEST_CANCELLED_COMPACTS", "3");
   const h = bugHarness(t);
   const session = await h.manager.create(h.root);
   await h.manager.prompt(session.id, "normal");
+  const from = h.events.length;
 
   assert.deepEqual(await compactSession(h.manager, session.id), { kind: "compacted" });
-  assert.equal(await compactCommands(h, session.id), 2);
+  assert.equal(await compactCommands(h, session.id), 4);
+  // The retried attempt is one compaction to the user, not a failure followed by another.
+  const compactionEvents = h.events
+    .slice(from)
+    .flatMap((e) => (e.type.startsWith("session.compaction.") ? [e.type] : []));
+  assert.deepEqual(compactionEvents, ["session.compaction.started", "session.compaction.ended"]);
   const summary = h.manager.messages(session.id)?.at(-1);
   assert.ok(summary?.info.role === "assistant" && summary.info.summary === true);
+});
+
+test("a compaction waits for MCP servers still connecting instead of being cancelled", {
+  timeout: 15000,
+}, async (t) => {
+  withEnv(t, "ANTECHAMBER_TEST_CONNECTING_MCP", "2");
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  const from = h.events.length;
+
+  assert.deepEqual(await compactSession(h.manager, session.id), { kind: "compacted" });
+  assert.equal(await compactCommands(h, session.id), 1);
+  const compactionEvents = h.events
+    .slice(from)
+    .flatMap((e) => (e.type.startsWith("session.compaction.") ? [e.type] : []));
+  assert.deepEqual(compactionEvents, ["session.compaction.started", "session.compaction.ended"]);
 });
 
 test("a compaction the user aborts is not retried", { timeout: 15000 }, async (t) => {
@@ -125,12 +147,18 @@ test("a compaction the user aborts is not retried", { timeout: 15000 }, async (t
   const started = h.wait(
     (e) => e.type === "session.updated" && e.properties.info.id === session.id && !!e.properties.info.time.compacting,
   );
+  const from = h.events.length;
   const result = compactSession(h.manager, session.id);
   await started;
   await h.manager.abort(session.id);
 
   assert.deepEqual(await result, { kind: "error", message: "Compaction cancelled" });
   assert.equal(await compactCommands(h, session.id), 1);
+  const compactionEvents = h.events
+    .slice(from)
+    .flatMap((e) => (e.type.startsWith("session.compaction.") ? [e.type] : []));
+  assert.deepEqual(compactionEvents, ["session.compaction.started", "session.compaction.failed"]);
+  assert.equal(h.manager.get(session.id)?.info.time.compacting, undefined);
 });
 
 test("background compaction after agent_end remains selected through revival", { timeout: 15000 }, async (t) => {

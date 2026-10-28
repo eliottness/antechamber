@@ -729,6 +729,11 @@ export class PiEventTranslator {
   private onCompactionEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     switch (ev.type) {
       case "compaction_start":
+        // sessionRpc retried a cancelled compaction: the UI still shows the first attempt running.
+        if (s.heldCompactionEnd !== undefined) {
+          delete s.heldCompactionEnd;
+          return;
+        }
         // An auto-compaction can fall between steps; its summary is a new step.
         this.completeAwaitingTools(s);
         s.compactionID = id("compaction");
@@ -749,6 +754,11 @@ export class PiEventTranslator {
         }
         return;
       case "compaction_end": {
+        const retry = s.compactRetry;
+        if (ev.aborted === true && retry !== undefined && retry.left > 0 && (s.abortRequests ?? 0) === retry.aborts) {
+          s.heldCompactionEnd = ev;
+          return;
+        }
         delete s.info.time.compacting;
         const result = ev.result as { summary?: unknown; firstKeptEntryId?: unknown } | undefined;
         const inputID = s.compactionID ?? id("compaction");
@@ -816,6 +826,14 @@ export class PiEventTranslator {
       default:
         return;
     }
+  }
+
+  /** Publishes a held compaction cancellation once sessionRpc will not retry it. */
+  releaseCompactionEnd(s: ManagedSession): void {
+    const ev = s.heldCompactionEnd;
+    if (ev === undefined) return;
+    delete s.heldCompactionEnd;
+    this.onCompactionEvent(s, ev);
   }
 
   private finishStreaming(s: ManagedSession): void {
