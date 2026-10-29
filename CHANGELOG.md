@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.31] - 2026-10-29
+
 ### Fixed
 
 - Show the MCP servers and their count before a session runs. A directory with no running agent used to report no servers,
