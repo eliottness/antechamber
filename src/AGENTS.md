@@ -38,6 +38,7 @@ cli.ts (parseArgs, lazy import per command; no command framework)
 ## INVARIANTS
 - JSONL frames split on `\n` only. Never use `readline`, which also splits on U+2028/U+2029.
   The frame cap is `MAX_JSONL_FRAME_BYTES` (64 MiB) and the per-command timeout is `RPC_COMMAND_TIMEOUT_MS` (60 s).
+  A user `bash` has no deadline until `PiRpcClient.abortBash()`; then it gets the ordinary 60 s.
 - Prompt, fork, revert, unrevert, compact, bash and history refresh all share one conversation-operation queue.
   Code that already owns the queue must not enqueue recursively. An abort releases the HTTP waiter but not the ordering barrier.
 - Revert only changes conversation context. It never restores files, takes snapshots or computes diffs. Unknown messageIDs are rejected with 400 before any navigation.

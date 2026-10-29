@@ -235,6 +235,38 @@ test("a silent prompt still closes the transport after the ordinary deadline", a
   await assert.rejects(pi.command({ type: "get_state" }), /not running/);
 });
 
+test("a user bash without a deadline waits for its command however long it runs", async (t) => {
+  const { pi, stdin, stdout } = transport(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const sent = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
+  const pending = pi.command({ type: "bash", command: "oz login" });
+  const [chunk] = await sent;
+  const command = JSON.parse(String(chunk));
+  t.mock.timers.tick(COMPACT_RPC_TIMEOUT_MS + RPC_COMMAND_TIMEOUT_MS);
+  const data = { output: "logged in", exitCode: 0, cancelled: false, truncated: false };
+  stdout.write(`${JSON.stringify({ type: "response", id: command.id, command: "bash", success: true, data })}\n`);
+  assert.deepEqual((await pending).data, data);
+  await answersNextCommand(pi, stdin, stdout);
+});
+
+test("a user bash still unanswered a deadline after abortBash stops the agent", async (t) => {
+  const { pi, stdin } = transport(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.mock.method(console, "error", () => {});
+  const sent = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
+  const pending = pi.command({ type: "bash", command: "oz login" });
+  const rejected = assert.rejects(pending, stoppedBy("bash", RPC_COMMAND_TIMEOUT_MS));
+  await sent;
+  t.mock.timers.tick(COMPACT_RPC_TIMEOUT_MS);
+  const aborted = once(stdin, "data", { signal: AbortSignal.timeout(1_000) });
+  pi.abortBash();
+  assert.equal(JSON.parse(String((await aborted)[0])).type, "abort_bash");
+  pi.abortBash();
+  t.mock.timers.tick(RPC_COMMAND_TIMEOUT_MS);
+  await rejected;
+  await assert.rejects(pi.command({ type: "get_state" }), /not running/);
+});
+
 test("ending compaction does not resume the deadline while the agent is still active", async (t) => {
   const { pi, stdout } = transport(t);
   t.mock.timers.enable({ apis: ["setTimeout"] });

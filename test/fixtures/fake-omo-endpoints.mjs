@@ -173,7 +173,22 @@ input.on("line", (line) => {
         reply(command, true, { output: "", cancelled: true, truncated: false });
         return;
       }
-      if (command.command === "sleep 600" || command.command === "sleep 600 late") {
+      // Real OmO streams user bash output as bash_execution_update frames, keyed by the request's executionId,
+      // before the reply (agent-session.js executeBash; RPC probe 2026-10-28).
+      if (command.command === "fixture-login") {
+        send({
+          type: "bash_execution_update",
+          id: command.executionId,
+          delta: "Open https://login.example.test/device\n",
+        });
+        send({ type: "bash_execution_update", id: "another-shell", delta: "NOT_THIS_SHELL\n" });
+        send({ type: "bash_execution_update", id: command.executionId, delta: "Waiting for login...\n" });
+      }
+      if (
+        command.command === "sleep 600" ||
+        command.command === "sleep 600 late" ||
+        command.command === "fixture-login"
+      ) {
         pendingBash = command;
         send({ type: "fixture_bash_pending" });
         return;
@@ -194,7 +209,10 @@ input.on("line", (line) => {
     }
     case "abort_bash":
       send({ type: "fixture_abort_bash" });
-      if (pendingBash !== undefined && pendingBash.command === "sleep 600") {
+      if (
+        pendingBash !== undefined &&
+        (pendingBash.command === "sleep 600" || pendingBash.command === "fixture-login")
+      ) {
         const bash = pendingBash;
         pendingBash = undefined;
         reply(bash, true, { output: "", cancelled: true, truncated: false });

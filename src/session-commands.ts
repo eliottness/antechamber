@@ -38,6 +38,23 @@ interface ShareNoticeContext {
 
 type CompactResult = { kind: "compacted" } | { kind: "error"; message: string };
 
+/**
+ * Live output kept on a running shell card: the newest part. Every snapshot carries all of it, so it is kept small;
+ * the finished card gets OmO's full output.
+ */
+const LIVE_SHELL_OUTPUT_CHARS = 64 * 1024;
+/** Output chunks arriving within this window reach clients as one card snapshot. */
+const LIVE_SHELL_OUTPUT_FLUSH_MS = 100;
+
+/** Appends a chunk and keeps the newest `limit` chars, starting at a line boundary when one leaves anything. */
+export function appendLiveOutput(previous: string, delta: string, limit = LIVE_SHELL_OUTPUT_CHARS): string {
+  const output = previous + delta;
+  if (output.length <= limit) return output;
+  const tail = output.slice(output.length - limit);
+  const lineStart = tail.indexOf("\n") + 1;
+  return lineStart > 0 && lineStart < tail.length ? tail.slice(lineStart) : tail;
+}
+
 // OpenChamber drops rejected Share actions, so emit a visible session notice too.
 export const unsupportedShare = {
   name: "UnsupportedError",
@@ -396,12 +413,31 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   const afterEntryId = session.tree.leafId ?? null;
   const controller = new AbortController();
   let interrupted = false;
+  // OmO streams user bash output as `bash_execution_update {id: executionId, delta}` frames before its reply
+  // (agent-session.js `executeBash`; real RPC probe on 2026-10-28). Showing them live lets the user act on
+  // output while the command waits, such as a login link.
+  let streaming: PiRpcClient | undefined;
+  let liveOutput = "";
+  let flush: NodeJS.Timeout | undefined;
+  const onOutput = (event: Record<string, unknown>): void => {
+    const [part] = message.parts;
+    if (event.type !== "bash_execution_update" || event.id !== part.callID || typeof event.delta !== "string") return;
+    if (part.state.status !== "running") return;
+    liveOutput = appendLiveOutput(liveOutput, event.delta);
+    part.state.metadata = { ...part.state.metadata, output: liveOutput };
+    flush ??= setTimeout(() => {
+      flush = undefined;
+      if (part.state.status === "running") shellEvent(context, { type: "message.part.updated", properties: { part } });
+    }, LIVE_SHELL_OUTPUT_FLUSH_MS);
+  };
+  // A stopped card keeps what the command printed, such as a link the user still needs.
+  const streamed = (): { output?: string } => (liveOutput === "" ? {} : { output: liveOutput });
   session.cancelShell = (byRestart = false) => {
     interrupted = byRestart;
     delete session.cancelShell;
     // Agent abort does not stop user bash. Dispatch the dedicated RPC first,
     // then release our waiter; a correlated late response is discarded.
-    if (dispatch[message.info.id]) session.pi?.notify({ type: "abort_bash" });
+    if (dispatch[message.info.id]) session.pi?.abortBash();
     controller.abort();
   };
   sessions.appendMessage(session.info.id, user);
@@ -418,10 +454,12 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     await sessions.update(session.info.id, {});
     const response = await sessions.sessionRpc<unknown>(
       session.info.id,
-      { type: "bash", command },
+      { type: "bash", command, executionId: message.parts[0].callID },
       controller.signal,
       () => {
         dispatch[message.info.id] = true;
+        streaming = session.pi;
+        streaming?.onEvent(onOutput);
         // Only actual dispatch admissions are durable; queued attempts stay in the live cache.
         (session.tree.localShellTurns ??= []).push({ afterEntryId, messages: [user, message] });
         // A native result can land beyond the last synchronized leaf.
@@ -438,7 +476,11 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     }
     const result = parseShellResult(response.data);
     if (result.cancelled) {
-      failShellMessage(message, command, "Command cancelled", { cancelled: true, exitCode: result.exitCode });
+      failShellMessage(message, command, "Command cancelled", {
+        ...streamed(),
+        cancelled: true,
+        exitCode: result.exitCode,
+      });
     } else {
       completeShellMessage(message, command, result);
     }
@@ -446,12 +488,10 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     return { kind: "completed", message };
   } catch (error) {
     if (controller.signal.aborted) {
-      failShellMessage(
-        message,
-        command,
-        interrupted ? "Interrupted by restart" : "Command cancelled",
-        interrupted ? { interrupted: true } : { cancelled: true },
-      );
+      failShellMessage(message, command, interrupted ? "Interrupted by restart" : "Command cancelled", {
+        ...streamed(),
+        ...(interrupted ? { interrupted: true } : { cancelled: true }),
+      });
       emitShellMessage(context, message);
       return { kind: "completed", message };
     }
@@ -459,6 +499,8 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     emitShellMessage(context, message);
     throw error;
   } finally {
+    streaming?.off("event", onOutput);
+    clearTimeout(flush);
     delete session.cancelShell;
     const state = message.parts[0].state;
     const metadata = state.status === "pending" ? undefined : state.metadata;
