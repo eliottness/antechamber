@@ -7,6 +7,15 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop killing the agent when a shell command run from the composer takes longer than a minute, such as an
+  interactive login. A user shell now runs until its command exits or you press Stop; only a shell that OmO still
+  has not answered a minute after Stop stops the agent.
+- Show a shell command's output live in its card while it runs, so a link or code a command prints before it waits
+  (such as a login URL) can be copied. Before, the card stayed empty until the command ended. A command you stop
+  keeps the output it printed.
+
 ## [1.0.31] - 2026-10-29
 
 ### Fixed

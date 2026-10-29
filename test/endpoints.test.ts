@@ -620,6 +620,60 @@ test("a late bash reply cannot resurrect or duplicate a cancelled shell after re
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
 });
 
+// The transport's no-deadline behavior for bash is tested in pi-rpc.test.ts; this locks the route's wiring.
+test("the shell route sends bash without an RPC deadline", {
+  timeout: 30_000,
+}, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionId = await createSession(url);
+  const pi = server["sessions"].get(sessionId)?.pi;
+  assert.ok(pi);
+  const command = t.mock.method(pi, "command");
+  const response = await fetch(`${url}/session/${sessionId}/shell`, {
+    method: "POST",
+    body: JSON.stringify({ command: "echo LOGIN" }),
+  });
+  assert.equal(response.status, 200);
+  const bash = command.mock.calls.find((call) => call.arguments[0].type === "bash");
+  assert.ok(bash);
+  assert.equal(bash.arguments[1], undefined);
+});
+
+test("a running user shell shows its output live, before the command ends", { timeout: 30_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionId = await createSession(url);
+  const stream = startEvents(url);
+  const v2 = startEvents(url, "/api/event");
+  t.after(stream.close);
+  t.after(v2.close);
+  await Promise.all([stream.ready, v2.ready]);
+  const expected = "Open https://login.example.test/device\nWaiting for login...\n";
+  const live = stream.waitFor("message.part.updated", (event) => {
+    const text = JSON.stringify(event);
+    return text.includes('"status":"running"') && text.includes("Waiting for login");
+  });
+  const progress = v2.waitFor("session.tool.progress", (event) => JSON.stringify(event).includes("Waiting for login"));
+  const shell = fetch(`${url}/session/${sessionId}/shell`, {
+    method: "POST",
+    body: JSON.stringify({ command: "fixture-login" }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const event = await live;
+  const part = event.properties?.part as { state: { metadata?: { output?: unknown } } };
+  assert.equal(part.state.metadata?.output, expected);
+  const v2Event = (await progress) as { data?: { metadata?: { output?: unknown } } };
+  assert.equal(v2Event.data?.metadata?.output, expected);
+  assert.equal((await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" })).status, 200);
+  assert.equal((await shell).status, 200);
+  // Stop keeps what the command printed on the cancelled card.
+  const card = (server["sessions"].messages(sessionId) ?? [])
+    .flatMap((message) => message.parts)
+    .find((item) => item.type === "tool" && item.state.input.command === "fixture-login");
+  assert.ok(card?.type === "tool" && card.state.status === "error");
+  assert.equal(card.state.metadata?.cancelled, true);
+  assert.equal(card.state.metadata?.output, expected);
+});
+
 test("a native cancelled bash reply without exitCode ends the card as cancelled", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);

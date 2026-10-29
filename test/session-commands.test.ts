@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { PiRpcClient } from "../src/pi-rpc.js";
-import { getCommands } from "../src/session-commands.js";
+import { appendLiveOutput, getCommands } from "../src/session-commands.js";
+
+test("live shell output keeps its newest part without emptying on a trailing newline", () => {
+  assert.equal(appendLiveOutput("ab\n", "cd\n", 10), "ab\ncd\n");
+  // One chunk over the limit whose only newline is its last char keeps the bounded suffix.
+  assert.equal(appendLiveOutput("", `${"x".repeat(20)}\n`, 10), `${"x".repeat(9)}\n`);
+  // A partial first line is dropped when whole lines remain.
+  assert.equal(appendLiveOutput("first line\n", "second\n", 10), "second\n");
+});
 
 test("command discovery shares concurrent calls, caches briefly, and expires", { timeout: 30_000 }, async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "antechamber-command-cache-"));

@@ -180,6 +180,7 @@ interface PendingRequest {
   resolve: (r: PiRpcResponse) => void;
   reject: (e: Error) => void;
   onWorkState?: () => void;
+  onAbortBash?: () => void;
 }
 
 export class PiRpcClient extends EventEmitter {
@@ -492,6 +493,10 @@ export class PiRpcClient extends EventEmitter {
     const expectedCommand = String(cmd.type);
     const deadlineMs = timeoutMs ?? RPC_COMMAND_TIMEOUT_MS;
     const waitsForWork = expectedCommand === "prompt" && timeoutMs === undefined;
+    // A user `bash` answers when its command exits: OmO awaits `executeBash` with no time limit (senpi
+    // 2026.10.25-2, dist/modes/rpc/connection-handler.js `case "bash"`), and an interactive command such as a
+    // login waits on the user. Without a caller deadline it gets one only once `abortBash` asks OmO to stop it.
+    const waitsForShell = expectedCommand === "bash" && timeoutMs === undefined;
     return new Promise((resolve, reject) => {
       let timer: NodeJS.Timeout | undefined;
       let admissionTimer: NodeJS.Timeout | undefined;
@@ -518,7 +523,7 @@ export class PiRpcClient extends EventEmitter {
         if (!waitsForWork || !(this.agentActive || this.compacting))
           timer = setTimeout(() => expire(deadlineMs), deadlineMs);
       };
-      armDeadline();
+      if (!waitsForShell) armDeadline();
       if (waitsForWork)
         admissionTimer = setTimeout(() => expire(PROMPT_ADMISSION_TIMEOUT_MS), PROMPT_ADMISSION_TIMEOUT_MS);
       this.pending.set(id, {
@@ -530,11 +535,18 @@ export class PiRpcClient extends EventEmitter {
         },
         reject: rejectCommand,
         ...(waitsForWork ? { onWorkState: armDeadline } : {}),
+        ...(waitsForShell ? { onAbortBash: () => timer === undefined && armDeadline() } : {}),
       });
       signal?.addEventListener("abort", onAbort, { once: true });
       this.write({ ...cmd, id });
       onDispatch?.();
     });
+  }
+
+  /** Asks OmO to stop the user shell; a pending `bash` still unanswered after the ordinary deadline means a hung agent. */
+  abortBash(): void {
+    this.write({ type: "abort_bash" });
+    for (const request of this.pending.values()) request.onAbortBash?.();
   }
 
   /** Fire-and-forget command (no response correlation). */

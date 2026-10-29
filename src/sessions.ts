@@ -999,7 +999,13 @@ export class SessionManager {
       const pi = s.pi;
       if (pi === undefined) throw new Error(`session cannot be resumed: ${sessionId}`);
       this.lifecycle.touch(s);
-      const timeout = command.type === "compact" ? COMPACT_RPC_TIMEOUT_MS : RPC_COMMAND_TIMEOUT_MS;
+      // A user shell runs until its command exits or the user stops it (`PiRpcClient.abortBash`).
+      const timeout =
+        command.type === "compact"
+          ? COMPACT_RPC_TIMEOUT_MS
+          : command.type === "bash"
+            ? undefined
+            : RPC_COMMAND_TIMEOUT_MS;
       // OmO cancels a compaction whenever an MCP server's tools register, which a freshly revived agent
       // does for about a second; start it once they have. The retries below remain the backstop.
       if (command.type === "compact") await waitForMcpServers(pi, MCP_SETTLE_WAIT_MS, signal);

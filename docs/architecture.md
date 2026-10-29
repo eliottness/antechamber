@@ -65,7 +65,17 @@ show nothing.
 
 Default `prompt` timeouts are suspended during active turns, retries, or compaction,
 then reset to 60 seconds when work settles, with a 32-minute overall cap.
-Explicit deadlines and other RPC commands keep fixed limits.
+Explicit deadlines and other RPC commands keep fixed limits, except a user `bash`.
+OmO answers it only when the command exits and sets no limit of its own
+(senpi 2026.10.25-2 `dist/modes/rpc/connection-handler.js`, `case "bash"`), and an
+interactive command such as a login waits on the user. It therefore has no deadline
+until Stop sends `abort_bash`; a reply still missing 60 seconds later stops the agent.
+
+While it runs, OmO streams its output as `bash_execution_update {id, delta}` frames,
+where `id` is the `executionId` the request carried (`agent-session.js` `executeBash`;
+RPC probe 2026-10-28). The adapter sends the card's call id as `executionId` and keeps
+the newest 64 KiB on the running card's `metadata.output`, sent at most every 100 ms.
+A stopped card keeps that output; a finished card gets OmO's full output.
 
 ## Mapping concerns
 
