@@ -344,7 +344,7 @@ test("a sign-in reconnects the server in the other running sessions", async (t) 
   const attemptID = at((await call(url, "POST", `${base}${query}`, { methodID: "oauth" })).body, "data", "attemptID");
   const reconnected = nextEvent(pi, (event) => event.type === "loaded_surfaces_changed");
   const completed = await call(url, "POST", `${base}/${String(attemptID)}/complete${query}`, { code: "good-code" });
-  assert.equal(completed.status, 204);
+  assert.equal(completed.status, 204, JSON.stringify(completed.body));
   await reconnected;
   assert.deepEqual(at(named(at((await call(url, "GET", `/api/mcp${query}`)).body, "data"), "linear"), "status"), {
     status: "connected",
