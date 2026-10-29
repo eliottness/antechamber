@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.32] - 2026-10-29
+
 ### Fixed
 
 - Stop killing the agent when a shell command run from the composer takes longer than a minute, such as an
