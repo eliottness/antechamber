@@ -319,6 +319,17 @@ test("signing in without a running session uses an agent of its own, stopped onc
   assert.equal(stopped(), 2, "a refused start stops its agent too");
 });
 
+test("a sign-in survives OmO answering auth-start only while auth-complete runs", async (t) => {
+  const { url } = await startServer(t, { FAKE_MCP_DEFER_START_REPLY: "1" });
+  const base = "/api/integration/mcp_linear/connect/oauth";
+  const started = await call(url, "POST", base, { methodID: "oauth" });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const attemptID = at(started.body, "data", "attemptID") as string;
+  const completed = await call(url, "POST", `${base}/${attemptID}/complete`, { code: "good-code" });
+  assert.equal(completed.status, 204, JSON.stringify(completed.body));
+  assert.equal(at((await call(url, "GET", `${base}/${attemptID}`)).body, "data", "status"), "complete");
+});
+
 test("the builtin MCP command is found when an extension also registers mcp", async (t) => {
   const { server, url } = await startServer(t, { FAKE_MCP_COMMAND_COLLISION: "1" });
   const { pi } = await liveSession(server, url);

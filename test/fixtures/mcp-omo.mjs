@@ -26,6 +26,10 @@ const servers = new Map([
 const pendingAuth = new Map();
 const pasteStates = new Map();
 const collision = process.env.FAKE_MCP_COMMAND_COLLISION === "1";
+// Reproduces OmO answering `auth-start` only after `auth-complete` authorized the server: the URL
+// entry and the reply are separate writes, so a connector can answer its caller between them.
+const deferStartReply = process.env.FAKE_MCP_DEFER_START_REPLY === "1";
+let deferredStart;
 const builtinName = collision ? "mcp:1" : "mcp";
 
 function send(value) {
@@ -96,7 +100,8 @@ function mcpCommand(command, subcommand, name, redirect) {
     authEntry(
       `Open this URL, approve, then run /mcp auth-complete ${name} <redirect-url>:\n${authorizeUrl(name, "http://127.0.0.1:0/callback")}`,
     );
-    reply(command, true, { disposition: "handled" });
+    if (deferStartReply) deferredStart = command;
+    else reply(command, true, { disposition: "handled" });
     return;
   }
   if (subcommand === "auth-complete") {
@@ -108,6 +113,11 @@ function mcpCommand(command, subcommand, name, redirect) {
     } else {
       pasteStates.delete(name);
       authorize(name);
+    }
+    // The late start reply lands first, while this command is still in flight.
+    if (deferredStart !== undefined) {
+      reply(deferredStart, true, { disposition: "handled" });
+      deferredStart = undefined;
     }
     reply(command, true, { disposition: "handled" });
     return;

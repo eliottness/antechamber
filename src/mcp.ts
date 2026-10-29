@@ -71,6 +71,8 @@ interface AuthFlow {
   done: Promise<void>;
   running: boolean;
   authorized: boolean;
+  /** Set while `completeFlow` has a command in flight; it then owns the agent's lifetime. */
+  completing: boolean;
   error?: string;
   /** A dedicated agent's last status for the server, read before the agent is disposed. */
   server?: OmoMcpServer;
@@ -497,6 +499,7 @@ async function startFlow(
     done: Promise.resolve(),
     running: true,
     authorized: false,
+    completing: false,
     released: false,
   };
   if (live === undefined) {
@@ -517,7 +520,8 @@ async function startFlow(
   })
     .then(async () => {
       if (!flow.authorized) return;
-      if (live === undefined) {
+      // A completion in flight set `authorized` and owns the agent: stopping it now would kill its command.
+      if (live === undefined && !flow.completing) {
         const server = await currentStatus(pi, name).catch(() => undefined);
         if (server !== undefined) flow.server = server;
         release(flow);
@@ -588,6 +592,7 @@ async function completeFlow(
   // OmO consumes the pending state on any answer, so a dedicated agent has nothing left to wait for.
   let attempted = false;
   let server: OmoMcpServer | undefined;
+  flow.completing = true;
   try {
     if (flow.running && flow.command === "auth") {
       const target = new URL(redirect);
@@ -626,6 +631,7 @@ async function completeFlow(
     flow.error = errorMessage(error);
     return fail(400, "McpAuthError", flow.error);
   } finally {
+    flow.completing = false;
     if (attempted) release(flow);
   }
   return { server };
