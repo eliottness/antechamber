@@ -7,6 +7,16 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show the MCP servers and their count before a session runs. A directory with no running agent used to report no servers,
+  so the sidebar's "MCP servers" count sat at 0 in a new chat, on a dormant project and after the idle reaper stopped the
+  last agent. The servers are now read by a short-lived agent started for that read alone.
+- Keep that list current: antechamber announces `mcp.status.changed` when an agent starts, stops or reports new MCP state,
+  so OpenChamber re-reads instead of keeping a stale count (it treats an answer as fresh for a minute).
+- Stop a sign-in from failing with "pi process disposed" when OmO answers `auth-start` only while `auth-complete` is
+  already running. The agent started for the sign-in was stopped mid-command; the completion now owns it until it ends.
+
 ## [1.0.30] - 2026-10-28
 
 - update

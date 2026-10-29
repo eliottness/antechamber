@@ -74,6 +74,37 @@ function nextEvent(pi: PiRpcClient, match: (event: Record<string, unknown>) => b
   return seen.promise;
 }
 
+/** Resolves on the next v2 `mcp.status.changed` for `directory`; the stream is open before this returns. */
+async function nextMcpStatusChange(
+  t: TestContext,
+  url: string,
+  directory: string,
+): Promise<{ changed: Promise<void> }> {
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const response = await fetch(`${url}/api/event?directory=${encodeURIComponent(directory)}`, {
+    signal: controller.signal,
+  });
+  const reader = response.body!.getReader();
+  await reader.read();
+  const changed = (async () => {
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) throw new Error("event stream ended before mcp.status.changed");
+        buffer += decoder.decode(next.value, { stream: true });
+        if (buffer.includes('"type":"mcp.status.changed"')) return;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  return { changed };
+}
+
 const authEntry = (event: Record<string, unknown>): boolean =>
   event.type === "entry_appended" && (event.entry as { customType?: string } | undefined)?.customType === "mcp-auth";
 
@@ -115,9 +146,8 @@ test("v2 announces MCP status changes as mcp.status.changed", () => {
   assert.deepEqual(frame?.data, { server: "x" });
 });
 
-test("v1 status comes from a live session, preferring the directory's, and is empty without one", async (t) => {
+test("v1 status comes from a live session, preferring the directory's", async (t) => {
   const { server, url, root } = await startServer(t);
-  assert.deepEqual(await call(url, "GET", "/mcp"), { status: 200, body: {} });
   await liveSession(server, url);
   const expected = {
     linear: { status: "needs_auth" },
@@ -209,7 +239,6 @@ test("v1 callback hands a pasted code to OmO's waiting loopback listener", async
 
 test("v2 lists OmO servers and signs in through auth-start and auth-complete", async (t) => {
   const { server, url, root } = await startServer(t);
-  assert.deepEqual(at((await call(url, "GET", "/api/mcp")).body, "data"), []);
   const { id } = await liveSession(server, url);
   const listed = await call(url, "GET", "/api/mcp");
   assert.deepEqual(at(listed.body, "location"), { directory: root });
@@ -290,6 +319,17 @@ test("signing in without a running session uses an agent of its own, stopped onc
   assert.equal(stopped(), 2, "a refused start stops its agent too");
 });
 
+test("a sign-in survives OmO answering auth-start only while auth-complete runs", async (t) => {
+  const { url } = await startServer(t, { FAKE_MCP_DEFER_START_REPLY: "1" });
+  const base = "/api/integration/mcp_linear/connect/oauth";
+  const started = await call(url, "POST", base, { methodID: "oauth" });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const attemptID = at(started.body, "data", "attemptID") as string;
+  const completed = await call(url, "POST", `${base}/${attemptID}/complete`, { code: "good-code" });
+  assert.equal(completed.status, 204, JSON.stringify(completed.body));
+  assert.equal(at((await call(url, "GET", `${base}/${attemptID}`)).body, "data", "status"), "complete");
+});
+
 test("the builtin MCP command is found when an extension also registers mcp", async (t) => {
   const { server, url } = await startServer(t, { FAKE_MCP_COMMAND_COLLISION: "1" });
   const { pi } = await liveSession(server, url);
@@ -315,11 +355,49 @@ test("a sign-in reconnects the server in the other running sessions", async (t) 
   const attemptID = at((await call(url, "POST", `${base}${query}`, { methodID: "oauth" })).body, "data", "attemptID");
   const reconnected = nextEvent(pi, (event) => event.type === "loaded_surfaces_changed");
   const completed = await call(url, "POST", `${base}/${String(attemptID)}/complete${query}`, { code: "good-code" });
-  assert.equal(completed.status, 204);
+  assert.equal(completed.status, 204, JSON.stringify(completed.body));
   await reconnected;
   assert.deepEqual(at(named(at((await call(url, "GET", `/api/mcp${query}`)).body, "data"), "linear"), "status"), {
     status: "connected",
   });
+});
+
+test("with no running agent, servers are listed by a short-lived agent that is stopped again", async (t) => {
+  const { server, url } = await startServer(t);
+  const listed = new Set<PiRpcClient>();
+  const disposed = new Set<PiRpcClient>();
+  const command = PiRpcClient.prototype.command;
+  const dispose = PiRpcClient.prototype.dispose;
+  t.mock.method(
+    PiRpcClient.prototype,
+    "command",
+    function (this: PiRpcClient, ...args: Parameters<PiRpcClient["command"]>) {
+      if (args[0].type === "get_loaded_surfaces") listed.add(this);
+      return command.apply(this, args);
+    },
+  );
+  t.mock.method(PiRpcClient.prototype, "dispose", function (this: PiRpcClient) {
+    disposed.add(this);
+    return dispose.call(this);
+  });
+  const first = at((await call(url, "GET", "/api/mcp")).body, "data") as Array<{ name: string }>;
+  assert.deepEqual(first.map((entry) => entry.name).sort(), ["broken", "github", "linear", "local", "notion"]);
+  assert.deepEqual(Object.keys((await call(url, "GET", "/mcp")).body as object).length, 5);
+  assert.equal(listed.size, 1, "one inventory read is shared");
+  assert.deepEqual(
+    [...listed].filter((agent) => !disposed.has(agent)),
+    [],
+    "the inventory agent is stopped",
+  );
+  assert.deepEqual(server["sessions"].list(), []);
+});
+
+test("clients reading a directory's MCP status are told when an agent starts", async (t) => {
+  const { url, root } = await startServer(t);
+  await call(url, "GET", "/api/mcp");
+  const { changed } = await nextMcpStatusChange(t, url, root);
+  assert.equal((await call(url, "POST", "/session")).status, 200);
+  await changed;
 });
 
 test("v1 auth failures, unknown servers and unsafe names are rejected", async (t) => {

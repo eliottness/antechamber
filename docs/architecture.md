@@ -600,8 +600,19 @@ wait for the subagent, or cancel it from the parent session.
 
 OpenChamber scopes MCP calls by directory, while OmO owns MCP per session
 process. The connector answers them from the most recently used session in the
-directory that has a running agent. It never revives a dormant session for MCP,
-and a status read does not itself refresh the idle timer (only agent events do).
+directory that has a running agent, else from a live session elsewhere, else
+from a short-lived `--no-session` agent started for the read and stopped again
+(its answer is shared for 30 seconds). A new chat, a project whose sessions are
+all dormant and a just-started adapter therefore still list the servers. It
+never revives a dormant session for MCP, and a status read does not itself
+refresh the idle timer (only agent events do).
+
+Answers change as agents come and go, because a running agent is preferred over
+the inventory read. Whenever an agent starts, stops or announces
+`loaded_surfaces_changed`, the connector drops the cached inventory and sends
+`mcp.status.changed` (with no server name) to every directory whose MCP status a
+client has read; OpenChamber holds its status per directory and re-reads only
+those it already holds. One announcement covers a startup burst.
 A sign-in in a directory without a running agent runs in an agent started with
 `--no-session` for that flow alone. That agent holds OmO's pending state, so it
 lives until the flow completes, fails, is cancelled or expires (10 minutes), and

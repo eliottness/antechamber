@@ -46,7 +46,7 @@ invented resource IDs.
 | `GET /formatter` | 200 | Empty array; formatter inventory is unavailable. |
 | `GET /experimental/tool/ids` | 200 | Empty array; experimental tool inventory is unavailable. |
 | `GET /provider/auth` | 200 | Empty object; provider authentication state is unavailable. |
-| `GET /mcp` | 200 | `{name: McpStatus}` from RPC `get_loaded_surfaces` on the most recently used live session in the directory, else on the most recently used live session in any directory; empty object when no session has a running agent or OmO has no such RPC. |
+| `GET /mcp` | 200 | `{name: McpStatus}` from RPC `get_loaded_surfaces` on the most recently used live session in the directory, else on the most recently used live session in any directory, else on a short-lived `--no-session` agent started for the read (cached 30 s); empty object only when that agent cannot start or OmO has no such RPC. |
 | `GET /command` | 200 | Agent slash-command descriptors. |
 | `GET /path` | 200 | Home, state, config, worktree, and directory paths. |
 | `GET /vcs` | 200 | `{branch, default_branch}` for the selected directory. |
@@ -70,13 +70,13 @@ invented resource IDs.
 | `DELETE /api/debug/location` | 204 | Empty, as OpenCode answers. OpenChamber evicts a location after git worktree changes; antechamber keeps no per-location instance, so there is nothing to evict. |
 | `GET /api/credential` | 200 | `{location, data: []}`; no credentials are retained. |
 | `POST /api/credential` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| `GET /api/integration` | 200 | `{location, data: IntegrationInfo[]}`: one `mcp_{name}` integration (`metadata.source: "mcp"`, one `oauth` method) per OAuth-capable OmO MCP server in the newest live session of the directory, else of any directory; empty without one. Providers are not integrations here. |
+| `GET /api/integration` | 200 | `{location, data: IntegrationInfo[]}`: one `mcp_{name}` integration (`metadata.source: "mcp"`, one `oauth` method) per OAuth-capable OmO MCP server, read like `GET /api/mcp`. Providers are not integrations here. |
 | `GET /api/plugin` | 200 | `{location, data: []}`; no OpenCode plugins are loaded by OmO. |
 | `POST /api/plugin/check` | 200 | Read-only update query returning `{location, data: []}`; there are no plugins to check. |
 | `POST /api/plugin/update` | 400 | `UnsupportedError`; plugin updates are unavailable with OmO. Unsupported. |
 | `POST /api/experimental/generate` | 503 | `{_tag: "ServiceUnavailableError", message: "No generation model is available through antechamber/OmO", service: "opencode"}`. |
 | `GET /api/experimental/session/stats` | 400 | `UnsupportedError`; session statistics are unavailable with OmO. Unsupported. |
-| `GET /api/mcp` | 200 | `{location, data: McpServer[]}` (`name`, v2 `status`, `integrationID` for OAuth-capable servers) from RPC `get_loaded_surfaces` on the newest live session in the directory, else in any directory; empty without one. |
+| `GET /api/mcp` | 200 | `{location, data: McpServer[]}` (`name`, v2 `status`, `integrationID` for OAuth-capable servers) from RPC `get_loaded_surfaces` on the newest live session in the directory, else in any directory, else on a short-lived `--no-session` agent started for the read (cached 30 s). A new chat, a dormant project and a just-started adapter therefore list the servers too. |
 | `POST /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `DELETE /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file"}]}`. |
@@ -347,10 +347,11 @@ fix; this adapter does not invent a reply target absent from native state.
 | `command.list` | RPC `get_commands` |
 | `app.agents` | static pi agent descriptors: `build` plus pi's own agent name |
 | `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
-| `mcp.status` | RPC `get_loaded_surfaces` on the newest live session in the directory |
+| `mcp.status` | RPC `get_loaded_surfaces` on the newest live session in the directory, else any live session, else a short-lived `--no-session` agent |
 | `mcp.auth.start`, `mcp.auth.authenticate` | RPC `prompt` `/mcp auth {name}` sent outside the conversation queue, to the live session or a `--no-session` agent for the flow |
 | `mcp.auth.callback` | loopback redirect to OmO's waiting listener, or RPC `prompt` `/mcp auth-complete {name} {redirect}` |
 | v2 `mcp.list`, `integration.*` for `mcp_*` | `get_loaded_surfaces`; `/mcp auth-start` + `/mcp auth-complete`; `/mcp reconnect {name}` in the other live sessions and `mcp.status.changed` after a sign-in |
+| `mcp.status.changed` (no server name) | an agent started, stopped or announced `loaded_surfaces_changed`; sent to every directory whose MCP status a client has read |
 | `auth.set`, `provider.oauth`, `mcp.connect/disconnect`, `mcp.auth.remove` | unsupported with OmO; configure providers and MCP in OmO |
 
 ## SSE event contract
