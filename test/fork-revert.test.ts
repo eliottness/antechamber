@@ -273,6 +273,7 @@ test("an unresolved dispatched admission does not duplicate replies read mid-tur
     message.parts.some((part) => part.type === "text" && part.text === "completed followup"),
   );
   assert.equal(replies.length, 1, "the reply must not also appear under a restored id");
+  assert.doesNotMatch(replies[0]?.info.id ?? "", /_r\d+$/, "the live reply keeps its live id");
   assert.deepEqual(
     messages.slice(-2).map((message) => message.info.id),
     ["msg_followup", replies[0]?.info.id],
