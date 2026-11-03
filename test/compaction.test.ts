@@ -40,6 +40,27 @@ test("manual compaction shows progress and its summary live and after restart", 
   );
 });
 
+test("reverting the /compact turn restores the conversation before the compaction", { timeout: 15000 }, async (t) => {
+  const h = bugHarness(t);
+  const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal");
+  assert.deepEqual(await compactSession(h.manager, session.id), { kind: "compacted" });
+  const compact = (h.manager.messages(session.id) ?? []).find((m) => m.parts[0]?.type === "compaction");
+  assert.ok(compact);
+  const pi = h.manager.get(session.id)?.pi;
+  assert.ok(pi);
+  const entry = (await getEntries(pi)).entries.find((e) => e.type === "compaction");
+  assert.ok(entry);
+
+  const info = await h.manager.revert(session.id, compact.info.id);
+  assert.deepEqual(info.revert, { messageID: compact.info.id });
+  assert.equal((await getEntries(pi)).leafId, entry.parentId);
+
+  await h.restart();
+  assert.deepEqual(h.manager.get(session.id)?.info.revert, { messageID: compact.info.id });
+  assert.equal(h.manager.get(session.id)?.tree.leafId, entry.parentId);
+});
+
 function withEnv(t: { after: (fn: () => void) => void }, key: string, value: string): void {
   const saved = process.env[key];
   process.env[key] = value;

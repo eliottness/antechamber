@@ -391,7 +391,11 @@ export function bindMessageEntries(s: ManagedSession, tree: Entries): void {
 }
 
 function entryForMessage(s: ManagedSession, tree: Entries, messageID: string): TreeEntry {
-  const entryId = s.tree.messageEntries[messageID];
+  // A compaction's `/compact` row is never bound; its ID carries the native compaction entry ID.
+  const compaction = /^msg_compaction_(.+)$/.exec(messageID)?.[1];
+  const entryId =
+    s.tree.messageEntries[messageID] ??
+    (compaction !== undefined && !compaction.endsWith("_summary") ? compaction : undefined);
   const entry = tree.entries.find((candidate) => candidate.id === entryId);
   if (!entry || !s.messages?.some((message) => message.info.id === messageID)) {
     throw new SessionTreeError(`Unknown messageID: ${messageID}`);
