@@ -1,15 +1,21 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { closeSync, constants, openSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { findPidfdPython } from "./pidfd.js";
+import { listDarwinProcesses, runPs, type PsRunner } from "./proc-table-darwin.js";
+
+/** How long a darwin teardown waits after SIGTERM before escalating, and how often it re-reads the table. */
+const HOST_TERM_GRACE_MS = 5_000;
+const HOST_POLL_MS = 100;
 
 /** Capability and warning state are captured once, before any shutdown work. */
 export function createSessionHostStopper(
   platform: NodeJS.Platform = process.platform,
   probe: () => string | undefined = findPidfdPython,
 ): (created: ReadonlyMap<string, string>) => Promise<void> {
+  if (platform === "darwin") return createDarwinHostStopper();
   const python = platform === "linux" ? probe() : undefined;
   let warned = false;
   return async (created) => {
@@ -28,6 +34,129 @@ export function createSessionHostStopper(
 }
 
 export const stopSessionHosts = createSessionHostStopper();
+
+/** Injected so the darwin path can be tested without running ps, lsof or a signal. */
+export interface DarwinHostDependencies {
+  readonly run: PsRunner;
+  readonly cwdOf: (pid: number) => string | undefined;
+  readonly realpath: (path: string) => string;
+  readonly signal: (pid: number, signal: NodeJS.Signals) => void;
+  readonly delay: (ms: number) => Promise<void>;
+  readonly graceMs: number;
+  readonly pollMs: number;
+}
+
+/** macOS has no `/proc/<pid>/cwd`; lsof prints `p<pid>`, `fcwd`, `n<path>`. */
+function cwdOfHost(pid: number): string | undefined {
+  try {
+    const output = execFileSync("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+      encoding: "utf8",
+      timeout: 2_000,
+      maxBuffer: 1024 * 1024,
+    });
+    for (const line of output.split("\n")) if (line.startsWith("n")) return line.slice(1);
+    return undefined;
+  } catch {
+    // No permission, no process, or no lsof: the directory is unconfirmed and nothing is signalled.
+    return undefined;
+  }
+}
+
+function signalHost(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    // Gone since the last scan, or not ours to signal: either way nothing was sent.
+    if (code === "ESRCH" || code === "EPERM") return;
+    throw error;
+  }
+}
+
+function socketName(sessionId: string): string {
+  return `p-${createHash("sha256").update(`p:${sessionId}`).digest("hex").slice(0, 16)}.sock`;
+}
+
+/**
+ * The value of `--socket`, as Linux reads it from argv. `ps` joins argv with spaces, so the value runs
+ * to the next ` --` flag (a socket directory may contain spaces). Anything else after it makes the
+ * basename miss every shard, which fails closed.
+ */
+function socketArgument(args: string): string | undefined {
+  const match = /(?:^|\s)--socket\s+(.+?)(?=\s--|$)/.exec(args);
+  return match?.[1] === undefined ? undefined : basename(match[1].trimEnd());
+}
+
+function isSupervisor(args: string): boolean {
+  const tokens = args.split(/\s+/);
+  return (
+    tokens.includes("--internal-rpc-host-supervisor") || tokens.some((token) => token.endsWith("/host-lifecycle.js"))
+  );
+}
+
+/**
+ * macOS teardown without pidfd. Ownership is the Linux rule: a live group leader whose argv names the
+ * supervisor entry point and, as its `--socket` value, the shard of a session this connector created,
+ * and whose working directory is that session's directory. Every member of an owned group is recorded
+ * with its start time in the same scan, and each later signal goes to one PID only after a fresh scan
+ * still shows the same group and start time. Members are tracked individually, so a child that outlives
+ * its supervisor is still stopped. A PID can be recycled between that scan and the signal; the window
+ * is the same one `PiRpcClient.dispose()` accepts.
+ */
+export function createDarwinHostStopper(
+  overrides: Partial<DarwinHostDependencies> = {},
+): (created: ReadonlyMap<string, string>) => Promise<void> {
+  const deps: DarwinHostDependencies = {
+    run: overrides.run ?? runPs,
+    cwdOf: overrides.cwdOf ?? cwdOfHost,
+    realpath: overrides.realpath ?? realpathSync,
+    signal: overrides.signal ?? signalHost,
+    delay: overrides.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    graceMs: overrides.graceMs ?? HOST_TERM_GRACE_MS,
+    pollMs: overrides.pollMs ?? HOST_POLL_MS,
+  };
+  return async (created) => {
+    if (created.size === 0) return;
+    const sockets = new Map([...created].map(([id, directory]) => [socketName(id), directory]));
+    const processes = listDarwinProcesses(deps.run);
+    const groups = new Set<number>();
+    for (const row of processes) {
+      if (row.group !== row.pid || !isSupervisor(row.args)) continue;
+      const socket = socketArgument(row.args);
+      const directory = socket === undefined ? undefined : sockets.get(socket);
+      if (directory === undefined) continue;
+      const cwd = deps.cwdOf(row.pid);
+      if (cwd === undefined) continue;
+      let expected: string;
+      try {
+        expected = deps.realpath(directory);
+      } catch {
+        continue;
+      }
+      if (cwd === expected) groups.add(row.group);
+    }
+    const members = processes.filter((row) => groups.has(row.group));
+    if (members.length === 0) return;
+
+    const survivors = (): number[] => {
+      const now = new Map(listDarwinProcesses(deps.run).map((row) => [row.pid, row]));
+      return members
+        .filter((member) => {
+          const row = now.get(member.pid);
+          return row !== undefined && row.group === member.group && row.start === member.start;
+        })
+        .map((member) => member.pid);
+    };
+    for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+      for (const pid of survivors()) deps.signal(pid, signal);
+      for (let waited = 0; waited < deps.graceMs; waited += deps.pollMs) {
+        await deps.delay(deps.pollMs);
+        if (survivors().length === 0) return;
+      }
+    }
+    throw new Error(`private OmO hosts survived shutdown: ${survivors().join(", ")}`);
+  };
+}
 
 interface HostProcess {
   readonly fd: number;
