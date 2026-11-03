@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reverting a `/compact` message works again. The revert was rejected as an unknown message and OpenChamber 2.x
+  dropped the error silently. It now returns the conversation to where it was before the compaction.
+
 ## [1.0.37] - 2026-11-03
 
 - feat(session-hosts): tear down private OmO hosts on macOS (#85)
