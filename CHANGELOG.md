@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.37] - 2026-11-03
+
+- feat(session-hosts): tear down private OmO hosts on macOS (#85)
+
 ## [1.0.36] - 2026-11-03
 
 ### Added
