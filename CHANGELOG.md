@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.38] - 2026-11-03
+
 ### Fixed
 
 - Reverting a `/compact` message works again. The revert was rejected as an unknown message and OpenChamber 2.x
