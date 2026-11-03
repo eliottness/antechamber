@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.36] - 2026-11-03
+
 ### Added
 
 - Clean up after the agent on macOS. Disposal now records the agent's process group and re-identifies each member
