@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.39] - 2026-11-04
+
+- fix(v2): give each task batch card its own tool id (#90)
+
 ## [1.0.38] - 2026-11-03
 
 ### Fixed
