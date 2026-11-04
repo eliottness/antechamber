@@ -11,6 +11,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - Reverting a `/compact` message works again. The revert was rejected as an unknown message and OpenChamber 2.x
   dropped the error silently. It now returns the conversation to where it was before the compaction.
+- Batched `task` calls (`tasks: [...]`) no longer show as interrupted in OpenChamber 2.x. Every card went out under
+  the same tool id, so OpenChamber merged them into one, showed the wrong titles, and marked the leftovers
+  "Interrupted" when the message completed. Each card now has its own id.
 
 ## [1.0.37] - 2026-11-03
 

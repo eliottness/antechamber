@@ -20,6 +20,7 @@ import { ocIdFor, piSessionDir, SessionStore } from "../src/session-store.js";
 import { type ManagedSession, SessionManager } from "../src/sessions.js";
 import { evalAgentSession, findTask, findTaskBySession, JsonlTail, stripTaskSuffix } from "../src/subagents.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
+import { toV2Message, V2EventTranslator } from "../src/v2.js";
 import { bugHarness } from "./bug-harness.js";
 
 const fixture = JSON.parse(readFileSync("test/fixtures/omo-tools/task.json", "utf8"));
@@ -508,6 +509,27 @@ test("real tasks array yields stable parts and separately fetchable children", (
     assert.ok(manager.list(directory).some((session) => session.id === childID));
     assert.ok(manager.messages(childID));
   });
+});
+
+test("each task batch card gets its own v2 tool id, live and in history", (t) => {
+  // OpenChamber 2.x keys a tool part by the v2 tool id alone and marks a part still running when its message
+  // completes as "Interrupted": batch cards sharing the parent call id merged into one and showed as failed.
+  const { manager, parent, events } = setup(t);
+  const batch = fixture.samples[1];
+  start(manager, parent, batch.arguments, "batch");
+  manager["onPiEvent"](parent, { type: "tool_execution_end", toolCallId: "batch", result: batch });
+  const translator = new V2EventTranslator();
+  const frames = events.flatMap((event) => translator.translate("/tmp", event));
+  const started = frames.filter((frame) => frame.type === "session.tool.input.started").map((frame) => frame.data.id);
+  assert.equal(started.length, batch.arguments.tasks.length);
+  assert.equal(new Set(started).size, started.length);
+  assert.equal(started[0], "batch");
+  for (const id of started)
+    assert.ok(frames.some((frame) => frame.type === "session.tool.called" && frame.data.id === id));
+  const history = toV2Message(parent.messages![0]!);
+  assert.ok(history.type === "assistant");
+  const ids = (history.content ?? []).filter((item) => item.type === "tool").map((item) => item.id);
+  assert.deepEqual(ids, started);
 });
 
 test("rediscovery replaces one logical task card while keeping batch cards distinct", (t) => {
