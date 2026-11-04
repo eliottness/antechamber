@@ -14,6 +14,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - A `!` shell command shows one card in OpenChamber 2.5, not two. The adapter no longer sends `session.shell.started`
   and `session.shell.ended`, which OpenChamber draws as a second shell row; the remaining `bash` card is the one that
   shows output while the command runs.
+- Show a `!` shell command as its own turn at the end of the conversation in OpenChamber 2.x, instead of inside the
+  agent's previous turn. antechamber announced the command's user turn with `session.prompted`, which OpenChamber 2.5
+  does not handle, so the shell card joined the last turn it knew; it now uses the inbox events OpenChamber reads.
 
 ## [2.0.3] - 2026-11-17
 
