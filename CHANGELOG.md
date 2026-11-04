@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Show a `!` shell command as its own turn at the end of the conversation in OpenChamber 2.x, instead of inside the
+  agent's previous turn. antechamber announced the command's user turn with `session.prompted`, which OpenChamber 2.5
+  does not handle, so the shell card joined the last turn it knew; it now uses the inbox events OpenChamber reads.
+
 ## [1.0.39] - 2026-11-04
 
 - fix(v2): give each task batch card its own tool id (#90)

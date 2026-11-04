@@ -15,7 +15,12 @@ import { modelRefFromBody, numberParam } from "../src/route-services.js";
 const fakeRpc = resolve("test/fixtures/fake-omo-endpoints.mjs");
 const unsupportedShare = { name: "UnsupportedError", data: { message: "Sharing is not available with OmO" } };
 
-type TestEvent = { type: string; properties?: Record<string, unknown>; data?: Record<string, unknown> };
+type TestEvent = {
+  type: string;
+  created?: number;
+  properties?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
@@ -46,6 +51,7 @@ function startEvents(url: string, path = "/event") {
           if (!isRecord(parsed) || typeof parsed.type !== "string") continue;
           const event: TestEvent = {
             type: parsed.type,
+            ...(typeof parsed.created === "number" ? { created: parsed.created } : {}),
             ...(isRecord(parsed.properties) ? { properties: parsed.properties } : {}),
             ...(isRecord(parsed.data) ? { data: parsed.data } : {}),
           };
@@ -477,22 +483,29 @@ test("shell synthetic users arrive over v2 SSE without an optimistic prompt", { 
   const stream = startEvents(url, "/api/event");
   t.after(stream.close);
   await stream.ready;
-  const prompted = stream.waitFor("session.prompted", (event) => event.data?.sessionID === sessionId);
+  // OpenChamber 2.5 builds a server-created user turn from the inbox events; it has no `session.prompted` handler.
+  const enqueued = stream.waitFor("session.inbox.enqueued", (event) => event.data?.sessionID === sessionId);
+  const delivered = stream.waitFor("session.inbox.delivered", (event) => event.data?.sessionID === sessionId);
+  const step = stream.waitFor("session.step.started", (event) => event.data?.sessionID === sessionId);
   const shell = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ command: "echo paired" }),
   });
   assert.equal(shell.status, 204);
-  const event = await prompted;
+  const [event, delivery, card] = await Promise.all([enqueued, delivered, step]);
   const history: unknown = await (await fetch(`${url}/api/session/${sessionId}/message?order=asc`)).json();
   assert.ok(isRecord(history) && Array.isArray(history.data));
   const user: unknown = history.data.find((message: unknown) => isRecord(message) && message.type === "user");
-  assert.ok(isRecord(user));
-  assert.equal(user.type, "user");
-  assert.equal(event.data?.messageID, user.id);
-  assert.ok(isRecord(event.data?.prompt));
-  assert.equal(event.data.prompt.text, user.text);
+  assert.ok(isRecord(user) && isRecord(user.time) && typeof user.time.created === "number");
+  assert.equal(event.data?.inboxID, user.id);
+  assert.equal(delivery.data?.inboxID, user.id);
+  assert.ok(isRecord(event.data?.item) && isRecord(event.data.item.payload));
+  assert.equal(event.data.item.type, "user");
+  assert.equal(event.data.item.payload.text, user.text);
+  // OpenChamber orders by envelope time: the turn must not sort after the card it opens.
+  assert.equal(event.created, user.time.created);
+  assert.ok(typeof card.created === "number" && card.created >= user.time.created);
 });
 
 test("slash command refreshes entries persisted without agent events", { timeout: 30_000 }, async (t) => {
