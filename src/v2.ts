@@ -307,17 +307,29 @@ function backgroundShell(
   return { output: typeof output === "string" ? output : "", metadata: { ...metadata, status: "running", shellID } };
 }
 
+/**
+ * OpenChamber 2.x keys a tool part by this id alone, but one `task` call with `tasks` expands into a card per item
+ * (`taskParts`), all sharing the call id. Items after the first get their own id, or the cards merge into one and
+ * the leftovers are marked "Interrupted" when the message completes.
+ */
+function v2ToolId(part: Extract<OCPart, { type: "tool" }>): string {
+  const prefix = `prt_task_${part.callID}_`;
+  const index = part.id.startsWith(prefix) ? part.id.slice(prefix.length) : "0";
+  return index === "0" ? part.callID : `${part.callID}#${index}`;
+}
+
 function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, unknown> {
   const st = part.state;
   const name = v2ToolName(part.tool);
   const start = st.status === "pending" ? undefined : st.time.start;
   const end = st.status === "pending" || st.status === "running" ? undefined : st.time.end;
+  const id = v2ToolId(part);
   const base: Record<string, unknown> = {
     type: "tool",
-    id: part.callID,
+    id,
     name,
     // keep the SDK v1 spellings too — harmless and tolerates older readers
-    callID: part.callID,
+    callID: id,
     tool: name,
     executed: false,
     time: {
@@ -778,7 +790,7 @@ export class V2EventTranslator {
     }
     ts.callID = part.callID;
     const frames: V2Envelope[] = [];
-    const base = { sessionID: part.sessionID, assistantMessageID: part.messageID, id: part.callID };
+    const base = { sessionID: part.sessionID, assistantMessageID: part.messageID, id: v2ToolId(part) };
     const state = part.state;
 
     if (state.status === "pending") {
