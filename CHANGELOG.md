@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the conversation in order after a `!` shell command. The history refresh that follows a shell command sent
+  every earlier reply to OpenChamber again with the current time as its creation time, so OpenChamber moved those
+  replies after the prompts they answered and placed the shell card among them. Replies now keep their own times.
+
 ## [1.0.39] - 2026-11-04
 
 - fix(v2): give each task batch card its own tool id (#90)

@@ -645,13 +645,16 @@ export class V2EventTranslator {
         step.error = info.error ?? { name: "UnknownError", data: { message: "Provider error" } };
       }
       st.step = step;
+      // OpenChamber 2.x takes the message's creation time from this frame (events.ts `session.step.started`) and
+      // reorders by it. A history refresh re-announces every reply, so `Date.now()` would move them all after the
+      // prompts they answer.
       frames.push(
-        this.frame(directory, "session.step.started", {
-          sessionID: info.sessionID,
-          assistantMessageID: info.id,
-          agent: step.agent,
-          model: step.model,
-        }),
+        this.frame(
+          directory,
+          "session.step.started",
+          { sessionID: info.sessionID, assistantMessageID: info.id, agent: step.agent, model: step.model },
+          info.time.created,
+        ),
       );
     } else if (st.step) {
       st.step.cost = info.cost;
@@ -669,31 +672,41 @@ export class V2EventTranslator {
     }
     if (st.step && !st.step.ended && info.time.completed !== undefined) {
       if (info.finish !== undefined) st.step.finish = info.finish;
-      frames.push(...this.finalizeStep(directory, st.step));
+      frames.push(...this.finalizeStep(directory, st.step, info.time.completed));
     }
     return frames;
   }
 
-  private finalizeStep(directory: string, st: StepState): V2Envelope[] {
+  private finalizeStep(directory: string, st: StepState, completed?: number): V2Envelope[] {
     if (st.ended) return [];
     st.ended = true;
     return [
       st.finish === "error"
-        ? this.frame(directory, "session.step.failed", {
-            sessionID: st.sessionID,
-            assistantMessageID: st.messageID,
-            rawFinish: st.finish,
-            error: st.error ?? { name: "UnknownError", data: { message: "Provider error" } },
-            cost: st.cost,
-            tokens: st.tokens,
-          })
-        : this.frame(directory, "session.step.ended", {
-            sessionID: st.sessionID,
-            assistantMessageID: st.messageID,
-            ...(st.finish !== undefined ? { finish: st.finish } : {}),
-            cost: st.cost,
-            tokens: st.tokens,
-          }),
+        ? this.frame(
+            directory,
+            "session.step.failed",
+            {
+              sessionID: st.sessionID,
+              assistantMessageID: st.messageID,
+              rawFinish: st.finish,
+              error: st.error ?? { name: "UnknownError", data: { message: "Provider error" } },
+              cost: st.cost,
+              tokens: st.tokens,
+            },
+            completed,
+          )
+        : this.frame(
+            directory,
+            "session.step.ended",
+            {
+              sessionID: st.sessionID,
+              assistantMessageID: st.messageID,
+              ...(st.finish !== undefined ? { finish: st.finish } : {}),
+              cost: st.cost,
+              tokens: st.tokens,
+            },
+            completed,
+          ),
     ];
   }
 
@@ -885,13 +898,13 @@ export class V2EventTranslator {
     return st;
   }
 
-  private frame(directory: string, type: string, data: Record<string, unknown>): V2Envelope {
+  private frame(directory: string, type: string, data: Record<string, unknown>, created = Date.now()): V2Envelope {
     const aggregateID = typeof data.sessionID === "string" ? data.sessionID : undefined;
     const seq = aggregateID === undefined ? undefined : (this.sequences.get(aggregateID) ?? 0) + 1;
     if (aggregateID !== undefined && seq !== undefined) this.sequences.set(aggregateID, seq);
     return {
       id: genId("evt"),
-      created: Date.now(),
+      created,
       type,
       location: { directory },
       data,
