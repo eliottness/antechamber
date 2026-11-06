@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.40] - 2026-11-06
+
 ### Fixed
 
 - Keep the conversation in order after a `!` shell command. The history refresh that follows a shell command sent
