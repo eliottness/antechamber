@@ -402,7 +402,7 @@ export async function handleV2(
         services.sessions
           .permissions()
           .filter((permission) => services.sessions.get(permission.sessionID)?.info.directory === directory)
-          .map((permission) => ({ ...toV2Permission(permission), ...permission })),
+          .map(toV2Permission),
       ),
     );
     return;
@@ -420,7 +420,16 @@ export async function handleV2(
     return;
   }
   if (path === "/api/form" && method === "GET") {
-    json(res, 200, withLocation(services.sessions.questions().map(toQuestionForm)));
+    json(
+      res,
+      200,
+      withLocation(
+        services.sessions
+          .questions()
+          .filter((question) => services.sessions.get(question.sessionID)?.info.directory === directory)
+          .map(toQuestionForm),
+      ),
+    );
     return;
   }
   if (path === "/api/vcs/init" && method === "POST") {

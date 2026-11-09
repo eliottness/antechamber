@@ -72,7 +72,8 @@ test("classifies fixture permission request without auto-cancelling", () => {
     permission: "read",
     patterns: ["/tmp/antechamber-qa/t4/work/seed.txt"],
     metadata: { title: line.title },
-    always: [],
+    // OmO's read parser saves the displayed path on "Allow always" (permission-system/read-permission.js).
+    always: ["/tmp/antechamber-qa/t4/work/seed.txt"],
     tool: { messageID: "msg_test", callID: line.toolCallId },
   });
 });

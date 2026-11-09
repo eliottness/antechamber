@@ -140,7 +140,12 @@ export function parsePermissionTitle(title: string): { permission: string; patte
   return { permission, patterns };
 }
 
-export function toV2Permission(card: PermissionRequest): PermissionV2Request {
+/** OpenCode 2.2.5 names the tool source `{type, messageID, id}` (packages/schema/src/permission.ts); the SDK types predate it. */
+type V2PermissionCard = Omit<PermissionV2Request, "source"> & {
+  source?: { type: "tool"; messageID: string; id: string };
+};
+
+export function toV2Permission(card: PermissionRequest): V2PermissionCard {
   return {
     id: card.id,
     sessionID: card.sessionID,
@@ -148,7 +153,7 @@ export function toV2Permission(card: PermissionRequest): PermissionV2Request {
     resources: card.patterns,
     save: card.always,
     metadata: card.metadata,
-    ...(card.tool ? { source: { type: "tool", ...card.tool } } : {}),
+    ...(card.tool ? { source: { type: "tool", messageID: card.tool.messageID, id: card.tool.callID } } : {}),
   };
 }
 
@@ -409,7 +414,15 @@ export class ApprovalBridge {
         id: request.id,
         sessionID: context.sessionID,
         ...parsed,
-        always: [],
+        // The UI request carries display patterns, not the native `always` array. Only advertise
+        // scopes whose native parser saves exactly these patterns (or a known blanket scope).
+        always: request.options.includes("Allow always")
+          ? ["read", "edit", "list", "glob"].includes(parsed.permission)
+            ? parsed.patterns
+            : ["grep", "eval"].includes(parsed.permission)
+              ? ["*"]
+              : []
+          : [],
         metadata: { title: request.title },
         ...(callID !== undefined ? { tool: { messageID: context.messageID, callID } } : {}),
       };

@@ -24,6 +24,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
+import { toV2Permission } from "./approvals.js";
 import { questionFormID, toQuestionForm } from "./question-forms.js";
 import { v2PromptAttachments } from "./prompt-parts.js";
 import type {
@@ -583,7 +584,7 @@ export class V2EventTranslator {
       }
       case "permission.asked": {
         const p = ev.properties;
-        return [this.frame(directory, "permission.asked", p)];
+        return [this.frame(directory, "permission.asked", toV2Permission(p))];
       }
       case "permission.replied":
         return [this.frame(directory, "permission.replied", ev.properties)];
