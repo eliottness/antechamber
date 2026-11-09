@@ -105,15 +105,7 @@ export interface ManagedSession extends ThinkingState {
   instructions?: Record<string, InstructionEntryState>;
   /** Suppress model-selection events until the session creation record has its final model. */
   initializing?: boolean;
-  tree: SessionTreeState & {
-    /** Execution boundaries observed over RPC, retained with the durable message identities. */
-    idleBoundaries?: Record<
-      string,
-      { at: number; outcome: NonNullable<OCSession["outcome"]>; error?: NonNullable<OCAssistantMessage["error"]> }
-    >;
-    lastIdle?: number;
-    compactionAdmissions?: Record<string, number>;
-  };
+  tree: SessionTreeState;
   info: OCSession;
   /** undefined while dormant (restored from disk, no pi process spawned yet). */
   pi: PiRpcClient | undefined;

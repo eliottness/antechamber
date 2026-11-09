@@ -32,7 +32,7 @@ function opened(t: TestContext, watches: ReturnType<typeof registryFor>["watches
 
 const closes = (lease: ReturnType<typeof opened>) => lease.map((close) => close.mock.callCount());
 
-test("B3 a repeated watch renews one lease for another 24 hours", (t) => {
+test("a repeated watch renews one lease for another 24 hours", (t) => {
   const { root, registry, watches } = registryFor(t);
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const file = join(root, "notes.txt");
@@ -54,7 +54,7 @@ test("B3 a repeated watch renews one lease for another 24 hours", (t) => {
   );
 });
 
-test("B3 an abandoned file lease expires and closes its native watcher", (t) => {
+test("an abandoned file lease expires and closes its native watcher", (t) => {
   const { root, registry, watches } = registryFor(t);
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const file = join(root, "notes.txt");
@@ -75,7 +75,7 @@ test("B3 an abandoned file lease expires and closes its native watcher", (t) => 
   );
 });
 
-test("B3 a full location evicts its soonest expiring lease without evicting another location", (t) => {
+test("a full location evicts its soonest expiring lease without evicting another location", (t) => {
   const { root, registry, watches } = registryFor(t);
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const other = join(root, "other");

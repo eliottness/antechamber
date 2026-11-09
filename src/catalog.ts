@@ -161,9 +161,14 @@ function withDefault(
     : { providers: sorted, defaults, default: resolvedDefault };
 }
 
-/** Provider/model inventory in a fixed order, so a reordering alone is not reported as a catalog change. */
+/**
+ * The configured default plus the provider/model inventory in a fixed order, so a reordering alone is not
+ * reported as a catalog change but a new default is.
+ */
 export function catalogFingerprint(catalog: Catalog): string {
-  return JSON.stringify(
+  return JSON.stringify([
+    catalog.default ?? null,
+    catalog.defaultThinkingLevel ?? null,
     [...catalog.providers]
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((p) => [
@@ -172,7 +177,7 @@ export function catalogFingerprint(catalog: Catalog): string {
           .sort()
           .map((id) => [id, p.models[id]]),
       ]),
-  );
+  ]);
 }
 
 /**

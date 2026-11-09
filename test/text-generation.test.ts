@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { generateText } from "../src/text-generation.js";
+import { GENERATION_DEADLINE_MS, generateText } from "../src/text-generation.js";
 import { serverFor } from "./catalog-harness.js";
 import { bounded, generationHarness } from "./generation-harness.js";
 
@@ -50,13 +50,13 @@ for (const phase of ["startup", "admission", "running", "read"] as const) {
     await ready;
     if (phase === "read") {
       // Spend all but one millisecond generating, then enter the result read.
-      h.timer.advance(119_999);
+      h.timer.advance(GENERATION_DEADLINE_MS - 1);
       const reading = h.wait("read");
       h.release();
       await reading;
       h.timer.advance(1);
     } else {
-      h.timer.advance(120_000);
+      h.timer.advance(GENERATION_DEADLINE_MS);
     }
 
     const outcome = await bounded(result);

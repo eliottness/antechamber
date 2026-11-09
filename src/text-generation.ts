@@ -3,6 +3,13 @@ import { PiRpcClient } from "./pi-rpc.js";
 type Entry = { type: string; message?: { role?: string; content?: string | Array<{ type?: string; text?: string }> } };
 type Model = { providerID: string; id: string };
 
+/**
+ * A hang guard, not a budget: OpenChamber sizes its own small-model deadline by prompt length up to 900 s
+ * (server/lib/small-model/index.js generationBudgetMs) and its disconnect cancels the run here, and OpenCode's
+ * generate.text has no server deadline. This only has to outlast the longest budget a caller may give.
+ */
+export const GENERATION_DEADLINE_MS = 15 * 60 * 1000;
+
 /** Own the auxiliary agents separately from user sessions, with no admission queue. */
 export class TextGeneration {
   private readonly active = new Map<AbortController, Promise<string>>();
@@ -50,7 +57,7 @@ export async function generateText(
   const cancellation = new AbortController();
   const signal = caller ? AbortSignal.any([caller, cancellation.signal]) : cancellation.signal;
   // This budget covers startup/model resolution, admission, the turn, and the result read.
-  const timer = setTimeout(() => cancellation.abort(new Error("Text generation timed out")), 120_000);
+  const timer = setTimeout(() => cancellation.abort(new Error("Text generation timed out")), GENERATION_DEADLINE_MS);
   try {
     const finished = new Promise<void>((resolve, reject) => {
       const cleanup = () => {

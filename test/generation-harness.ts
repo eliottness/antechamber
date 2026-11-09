@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import type { TestContext } from "node:test";
 import { AdapterServer } from "../src/server.js";
+import { GENERATION_DEADLINE_MS } from "../src/text-generation.js";
 
 export async function bounded<T>(promise: Promise<T>): Promise<T> {
   // Every wait resolves on a real signal; the bound only caps how long a genuine failure takes to report,
@@ -32,7 +33,7 @@ export function generationTimer(t: TestContext) {
   const timers = new Map<ReturnType<typeof setTimeout>, { remaining: number; fire: () => void }>();
   t.mock.method(globalThis, "setTimeout", (callback: () => void, ms?: number) => {
     const timer = set(callback, ms);
-    if (ms === 120_000) timers.set(timer, { remaining: ms, fire: callback });
+    if (ms === GENERATION_DEADLINE_MS) timers.set(timer, { remaining: ms, fire: callback });
     return timer;
   });
   t.mock.method(globalThis, "clearTimeout", (timer: Parameters<typeof clearTimeout>[0]) => {
@@ -76,7 +77,7 @@ export async function generationHarness(t: TestContext) {
   await server.start();
   t.after(async () => {
     // Only our own children, and only after the assertions; red tests must leave no agents either.
-    timer.advance(120_000);
+    timer.advance(GENERATION_DEADLINE_MS);
     for (const child of children.keys())
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     await bounded(Promise.all(children.values()));

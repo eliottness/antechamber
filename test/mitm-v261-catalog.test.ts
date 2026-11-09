@@ -127,7 +127,7 @@ test("watching a missing file answers 404", async (t) => {
   assert.equal(record(await response.json()).name, "FileNotFoundError");
 });
 
-test("B3 one DELETE removes a file lease after repeated POST renewals", async (t) => {
+test("one DELETE removes a file lease after repeated POST renewals", async (t) => {
   const { root, url } = await serverFor(t);
   const watchers = trackWatchers(t);
   writeFileSync(join(root, "notes.txt"), "before");
@@ -173,7 +173,7 @@ for (const scenario of [
   { name: "a removed symlink target", path: "link.txt", remove: "real.txt" },
   { name: "a removed file", path: "real.txt", remove: "real.txt" },
 ]) {
-  test(`B6 DELETE releases the native watcher for ${scenario.name}`, async (t) => {
+  test(`DELETE releases the native watcher for ${scenario.name}`, async (t) => {
     const { root, url } = await serverFor(t);
     const { open } = trackWatchers(t);
     writeFileSync(join(root, "real.txt"), "before");

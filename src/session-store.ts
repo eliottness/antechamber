@@ -497,6 +497,25 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
   )
     return false;
   if (value.shellDispatch !== undefined && !booleanRecord(value.shellDispatch)) return false;
+  const finite = (item: unknown) => typeof item === "number" && Number.isFinite(item);
+  if (value.lastIdle !== undefined && !finite(value.lastIdle)) return false;
+  if (
+    value.compactionAdmissions !== undefined &&
+    (!record(value.compactionAdmissions) || !Object.values(value.compactionAdmissions).every(finite))
+  )
+    return false;
+  if (
+    value.idleBoundaries !== undefined &&
+    (!record(value.idleBoundaries) ||
+      !Object.values(value.idleBoundaries).every(
+        (boundary) =>
+          record(boundary) &&
+          finite(boundary.at) &&
+          ["succeeded", "failed", "interrupted"].includes(boundary.outcome as string) &&
+          (boundary.error === undefined || record(boundary.error)),
+      ))
+  )
+    return false;
   if (value.leafId !== undefined && value.leafId !== null && typeof value.leafId !== "string") return false;
   if (value.fileSize !== undefined && (typeof value.fileSize !== "number" || !Number.isFinite(value.fileSize)))
     return false;

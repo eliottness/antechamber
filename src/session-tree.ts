@@ -1,7 +1,7 @@
 import { RPC_COMMAND_TIMEOUT_MS, type PiRpcClient } from "./pi-rpc.js";
 import { readFileSync, statSync } from "node:fs";
 import type { ManagedSession } from "./sessions.js";
-import type { OCMessageWithParts } from "./types.js";
+import type { OCAssistantMessage, OCMessageWithParts, OCSession } from "./types.js";
 import type { OCPromptPart } from "./types.js";
 import { contextMessageID, nativePromptInput } from "./prompt-parts.js";
 import { backgroundResult } from "./background-results.js";
@@ -26,6 +26,15 @@ export interface SessionTreeState {
   /** Session file size when this connector last saved a live runtime; growth past it came from another client. */
   fileSize?: number;
   revert?: { messageID: string; previousLeafId: string | null; targetId: string | null };
+  /** Execution boundaries observed over RPC, retained with the durable message identities. */
+  idleBoundaries?: Record<
+    string,
+    { at: number; outcome: NonNullable<OCSession["outcome"]>; error?: NonNullable<OCAssistantMessage["error"]> }
+  >;
+  /** The last idle time, restored as time.idle so /view accepts a watermark seen before a restart. */
+  lastIdle?: number;
+  /** When each compaction was admitted, keyed by its admitted message ID. */
+  compactionAdmissions?: Record<string, number>;
 }
 
 export interface TreeEntry {

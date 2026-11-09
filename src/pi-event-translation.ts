@@ -299,6 +299,13 @@ export class PiEventTranslator {
     });
     if (status.type === "idle") {
       s.info.time.idle = Date.now();
+      // Restored as time.idle after a restart, so /view can still accept the watermark a client saw.
+      s.tree.lastIdle = s.info.time.idle;
+      try {
+        this.services.persistMeta(s);
+      } catch (error) {
+        console.error(`[session] could not save the idle time of ${s.info.id}:`, error);
+      }
       const last = s.messages?.findLast(
         (message) => message.info.role === "assistant" && !message.info.id.startsWith("msg_background_"),
       );

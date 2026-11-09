@@ -45,7 +45,7 @@ async function branchServer(t: TestContext) {
   };
 }
 
-test("B9 shutdown leaves no Git HEAD watcher from a queued branch read", { timeout: 5_000 }, async (t) => {
+test("shutdown leaves no Git HEAD watcher from a queued branch read", { timeout: 5_000 }, async (t) => {
   const { root, server, watches, release, stop } = await branchServer(t);
   assert.equal((await fetch(`${server.url}/api/vcs`)).status, 200);
   const watcher = watches.mock.calls[0]?.result;
@@ -69,7 +69,7 @@ test("B9 shutdown leaves no Git HEAD watcher from a queued branch read", { timeo
   assert.equal(watches.mock.callCount(), 1, "the queued read must not allocate a watcher while stopping");
 });
 
-test("B9 a pending Git HEAD lookup cannot allocate a watcher after stopping", { timeout: 5_000 }, async (t) => {
+test("a pending Git HEAD lookup cannot allocate a watcher after stopping", { timeout: 5_000 }, async (t) => {
   const { root, server, watches, stop } = await branchServer(t);
   const lookup = server["watchBranch"](root);
 
