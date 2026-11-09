@@ -2009,7 +2009,6 @@ export class SessionManager {
     this.events.onPiEvent(s, ev);
     if (ev.type === "agent_idle" && s.info.time.idle !== undefined) {
       recordTurn(s);
-      s.tree.lastIdle = s.info.time.idle;
       const last = s.messages?.findLast(
         (message) =>
           message.info.role === "assistant" &&

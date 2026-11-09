@@ -277,14 +277,16 @@ export class PiEventTranslator {
     // success for work that will never happen.
     if (s.compactionID !== undefined) {
       const inputID = s.compactionID;
+      const reason = s.compactionReason ?? "manual";
       delete s.compactionID;
+      delete s.compactionReason;
       delete s.heldCompactionEnd;
       this.services.emit(s.info.directory, {
         type: "session.compaction.failed",
         properties: {
           sessionID: s.info.id,
           inputID,
-          reason: s.compactionReason ?? "manual",
+          reason,
           error: { name: "CompactionError", data: { message: error.data.message } },
         },
       });
@@ -797,6 +799,7 @@ export class PiEventTranslator {
         const result = ev.result as { summary?: unknown; firstKeptEntryId?: unknown } | undefined;
         const inputID = s.compactionID ?? id("msg");
         delete s.compactionID;
+        delete s.compactionReason;
         this.services.emit(
           s.info.directory,
           ev.aborted === true || typeof result?.summary !== "string"

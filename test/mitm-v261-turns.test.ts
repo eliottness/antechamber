@@ -416,3 +416,29 @@ test("an agent that dies during a compaction fails it, and the next compact star
     false,
   );
 });
+
+test("an agent that dies during a manual compaction fails it", { timeout: 20_000 }, async (t) => {
+  const { request, sessionID, server, native } = await startServer(t, true);
+  const stream = await openEvents(`${server.url}/api/event`);
+  t.after(() => stream.close());
+  const idle = stream.wait((event) => event.type === "session.idle");
+  await request(`/api/session/${sessionID}/prompt`, { text: "normal" });
+  await idle;
+  const started = stream.wait((event) => event.type === "session.compaction.started");
+  assert.equal((await request(`/api/session/${sessionID}/compact`, { id: "msg_manual" })).status, 200);
+  await started;
+  const failed = stream.wait(
+    (event) =>
+      event.type === "session.compaction.failed" && (event.data as { inputID?: string }).inputID === "msg_manual",
+  );
+  // Straight to the agent: sessionRpc would queue the exit behind the running compaction.
+  const pi = native().get(sessionID)?.pi;
+  assert.ok(pi);
+  void pi.command({ type: "exit" } as unknown as Parameters<typeof pi.command>[0]).catch(() => undefined);
+  await failed;
+  const history = await messages(request, sessionID);
+  assert.equal(
+    history.some((message) => message.id === "msg_manual" && message.status === "running"),
+    false,
+  );
+});

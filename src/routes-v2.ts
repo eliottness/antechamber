@@ -866,18 +866,36 @@ export async function handleV2(
           json(res, 200, { data: admission.item });
           return;
         }
+        // The agent can stop before compaction_end: if the compaction is still this request's, no event closed it,
+        // so the client's card would stay "running" unless it is failed here.
+        const fail = (message: string) => {
+          if (managed.compactionID !== inputID) return;
+          delete managed.compactionID;
+          delete managed.compactionReason;
+          services.broadcast(managed.info.directory, {
+            type: "session.compaction.failed",
+            properties: {
+              sessionID: sessionId,
+              inputID,
+              reason: "manual",
+              error: { name: "CompactionError", data: { message } },
+            },
+          });
+        };
         void compactSession(services.sessions, sessionId)
           .then((result) => {
-            if (result.kind === "error")
+            if (result.kind === "error") {
+              fail(result.message);
               announceSessionError(
                 { sessions: services.sessions, session: managed, emit: services.broadcast },
                 "BadRequestError",
                 result.message,
               );
+            }
             if (managed.compactionID === inputID) delete managed.compactionID;
           })
           .catch((error: unknown) => {
-            if (managed.compactionID === inputID) delete managed.compactionID;
+            fail(error instanceof Error ? error.message : String(error));
             announceSessionError(
               { sessions: services.sessions, session: managed, emit: services.broadcast },
               error instanceof Error ? error.name : "UnknownError",
