@@ -7,6 +7,23 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+OpenChamber 2.6.1 against OpenCode 2.2.5 was captured and replayed against antechamber; these close the differences
+that OpenChamber relies on.
+
+- Permission cards on `/api/event` now use OpenCode 2.x's fields (`action`, `resources`, `save`, `source`), and
+  "Allow always" advertises the scope OmO saves for reads, edits, lists, globs, greps and eval. The pending-form list
+  only shows questions from the current project.
+- Session lists honor `parentID=null` and `archived`, so message search indexes existing conversations. A metadata
+  update no longer sends a rename and an agent switch; renames, agent switches, archive and unarchive are announced
+  once, when they really happen, and a new session announces its model.
+- OpenChamber's per-session guidance, checkout info, memory, pinned messages and response style now reach the agent:
+  instruction entries are stored and sent to OmO before the next prompt, removals are announced, and compaction
+  re-sends them. Unread state is kept (`/view` no longer fails), and the inbox lists inputs still waiting for the agent.
+- A reloaded transcript keeps the turn boundaries and compaction records the live one had. `/compact` answers as soon
+  as the compaction starts instead of waiting for it, and slash commands keep their attachments and delivery mode.
+
 ## [1.0.40] - 2026-11-06
 
 ### Fixed

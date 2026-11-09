@@ -81,17 +81,17 @@ invented resource IDs.
 | `DELETE /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file"}]}`. |
 | `GET /api/project` | 200 | Project records for the default directory and directories with restorable sessions. |
-| `GET /api/permission/request` | 200 | `{location, data: Permission[]}` for the selected directory. |
+| `GET /api/permission/request` | 200 | `{location, data: Permission[]}` for the selected directory, in OpenCode 2.2.5's v2 shape: `action`, `resources`, `save`, `metadata` and, for a tool request, `source: {type: "tool", messageID, id}`. `save` lists only the scope OmO stores on "Allow always" (the displayed patterns for read, edit, list and glob; `*` for grep and eval) and is empty for scopes OmO's UI frame does not expose. |
 | `GET /api/question/request` | 200 | `{location, data: Question[]}`. |
 | `GET /api/permission/saved` | 200 | `{data: []}`; saved permissions are unavailable. |
-| `GET /api/form` | 200 | `{location, data: FormInfo[]}` for pending questions. |
+| `GET /api/form` | 200 | `{location, data: FormInfo[]}` for pending questions owned by sessions in the selected directory. |
 | `POST /api/vcs/init` | 204 | Initializes a Git repository in the selected directory. |
 | `GET /api/vcs` | 200 | `{location, data: {provider: "git", branch}}`. |
 | `GET /api/vcs/base` | 200 | OpenCode 2.0.28 `VcsBaseOutput`: `{location, data: {name, ref, source: "reflog" \| "default"} \| null}`. Resolves the checkout source branch from HEAD's reflog, then origin's default branch, then main/master; `ref` is its commit ID. Null outside Git, before the first commit, or when no base can be found. |
 | `GET /api/vcs/status` | 200 | OpenCode 2.0.28 `VcsStatusOutput`: `{location, data: [{file, additions, deletions, status: "added" \| "deleted" \| "modified"}]}`. Git index/worktree and untracked files, with net HEAD line counts (binary counts are zero); cancelled staged/unstaged changes remain listed. Empty outside Git. All four VCS read routes use the same directory selectors as `/api/vcs`, run read-only Git with optional locks disabled, and cap each command at 5 seconds / 16 MiB (combined patches also at 16 MiB); invalid queries or Git failures return 400 `{name: "BadRequestError", data: {message}}`, not empty success. |
 | `GET /api/vcs/branch` | 200 | OpenCode 2.0.28 `VcsBranchListOutput`: `{location, data: string[]}` of sorted local branch names; optional substring `search` and non-negative integer `limit` (default 100). Empty outside Git. |
 | `GET /api/vcs/diff` | 200 | OpenCode 2.0.28 `VcsDiffOutput`: `{location, data: [{file, patch, additions, deletions, status: "added" \| "deleted" \| "modified"}]}`. Required `mode=working` compares HEAD to the worktree; `branch` compares the merge-base to the worktree (both include untracked files); `committed` compares the merge-base to HEAD. Optional `base` selects a commit for branch/committed (otherwise the detected base); `context` is a non-negative integer (default 3). Empty outside Git. |
-| `GET /api/session` | 200 | `{data: Session[], cursor: {previous, next}}`; supports location, search, parent, order, cursor, and limit. |
+| `GET /api/session` | 200 | `{data: Session[], cursor: {previous, next}}`; supports location, search, parent (`parentID=null` selects root sessions), `archived` (`false` live only, `true` archived only), order, cursor, and limit. |
 | `POST /api/session` | 200 | `{data: Session}`; validates the requested location, model, agent, ID, and metadata. |
 | `GET /api/session/active` | 200 | `{data: Record<sessionID, {type: "running"}>}`. |
 
@@ -151,17 +151,17 @@ invented resource IDs.
 | DELETE | `/api/integration/{integrationID}/connect/command/{attemptID}` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
 | DELETE | `/api/permission/saved/{permissionID}` | 204 | No saved-permission state is retained. |
 | GET | `/api/session/{sessionID}` | 200 | `{data: Session}`; 404 if unknown. |
-| PATCH | `/api/session/{sessionID}` | 204 | Updates title, archive state, or metadata. Archive accepts OpenCode 2.1's `archived: boolean` (repeating the current state keeps the original time) and the older `time.archived` timestamp (0 unarchives). |
+| PATCH | `/api/session/{sessionID}` | 204 | Updates title, archive state, or metadata. Archive accepts OpenCode 2.1's `archived: boolean` (repeating the current state keeps the original time) and the older `time.archived` timestamp (0 unarchives). Only real transitions emit events: `session.renamed` on a title change, `session.archived` / `session.unarchived` once per archive change; a metadata-only update emits only `session.metadata.updated`. |
 | DELETE | `/api/session/{sessionID}` | 204 | Removes the session. |
-| GET | `/api/session/{sessionID}/message` | 200 | `{data: Message[], cursor}`; supports order, cursor, and limit. |
+| GET | `/api/session/{sessionID}/message` | 200 | `{data: Message[], cursor}`; supports order, cursor, and limit. Like OpenCode 2.2.5, the list carries an `idle` record (`outcome` succeeded, failed or interrupted) after each finished assistant turn and a completed `compaction` record with its summary and reason; both survive an adapter restart, and synthetic messages keep their `description`. |
 | GET | `/api/session/{sessionID}/message/{messageID}` | 200 | `{data: Message}`; 404 if unknown. |
 | GET | `/api/session/{sessionID}/todo` | 200 | `{data: Todo[]}`. |
-| POST | `/api/session/{sessionID}/compact`, `/api/session/{sessionID}/summarize` | 200 | `{data: true}` after compaction. |
+| POST | `/api/session/{sessionID}/compact`, `/api/session/{sessionID}/summarize` | 200 | `{data: {id, type: "compaction", time, status: "running", reason: "manual", summary: ""}}` as soon as the compaction is admitted; completion or failure arrives on `/api/event`. 409 while a compaction is already running; 400 for an invalid `id` or `delivery`. |
 | POST | `/api/session/{sessionID}/shell` | 204 | Runs a shell command; 400 for invalid input and 409 if busy. |
 | GET | `/api/shell/{shellID}` | 200 | `{location, data: Shell.Info}` for a running shell or one of the 25 most recently ended; 404 if unknown. |
 | GET | `/api/shell/{shellID}/output` | 200 | `{location, data: {output, cursor, size, truncated}}` from byte `cursor`, at most `limit` bytes, ending on a character boundary: a monitor's command, filter and matched lines; an eval cell's output (`eval_cells.peek`); a notice for a background terminal session, whose output OmO does not expose. 404 if unknown. |
 | DELETE | `/api/shell/{shellID}` | 204 | Stops an eval cell (`eval_cells.stop`). 400 `UnsupportedError` for a monitor or a background terminal session, which OmO cannot stop over RPC; 404 if unknown. |
-| POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command; 400 if missing. |
+| POST | `/api/session/{sessionID}/command` | 204 | Runs the named slash command with the same `parts`, `files` and `agents` inputs as the prompt route and forwards `delivery: "steer" \| "queue"`; 400 if the name is missing or `delivery` is invalid. |
 | POST or DELETE | `/api/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/api/session/{sessionID}/generate` | 400 | `UnsupportedError`; session generation is unavailable with OmO. Unknown sessions return 404. Unsupported. |
 | POST | `/api/session/{sessionID}/background` | 400 | `UnsupportedError`; background session control is unavailable with OmO. Unknown sessions return 404. Unsupported. |
@@ -173,7 +173,7 @@ invented resource IDs.
 | POST | `/api/session/{sessionID}/revert`, `/api/session/{sessionID}/revert/stage` | 200 | `{data: revert}`; requires a valid user-message boundary. |
 | DELETE | `/api/session/{sessionID}/revert` | 204 | Clears a staged revert. |
 | POST | `/api/session/{sessionID}/revert/commit` | 204 | Commits the staged conversation change; does not change files. |
-| POST | `/api/session/{sessionID}/agent` | 204 | Selects a supported agent alias; unknown aliases return 400. |
+| POST | `/api/session/{sessionID}/agent` | 204 | Selects a supported agent alias; a real change emits `session.agent.selected` with `previous`, repeating the current agent emits nothing. Unknown aliases return 400. |
 | POST | `/api/session/{sessionID}/model` | 204 | Selects the requested model; invalid selection returns 400. |
 | GET | `/api/session/{sessionID}/form` | 200 | `{data: FormInfo[]}`. |
 | GET | `/api/session/{sessionID}/form/{formID}` | 200 | `{data: FormInfo & {state: {status: "pending"}}}`; 404 if unknown/settled. |
@@ -186,7 +186,10 @@ invented resource IDs.
 | GET | `/api/session/{sessionID}/permission` | 200 | `{data: Permission[]}`. |
 | GET | `/api/session/{sessionID}/permission/{requestID}` | 200 | `{data: Permission}`; 404 if unknown. |
 | POST | `/api/session/{sessionID}/permission/{requestID}/reply` | 204 | Replies using `decision` (or legacy `reply`); 404 if unknown or invalid. |
-| GET | `/api/session/{sessionID}/inbox` | 200 | `{data: []}`; inbox listing is unavailable. |
+| GET | `/api/session/{sessionID}/inbox` | 200 | `{data: SessionInbox.Info[]}`: accepted user inputs not yet delivered to OmO, in enqueue order, with delivery, text, attachments and metadata. |
+| POST | `/api/session/{sessionID}/view` | 204 | `{idle: number}` advances a persisted viewed watermark (never backwards), emits `session.viewed {sessionID, idle}` on an advance and is returned as `time.viewed` on session reads. 400 for a missing `idle`. |
+| PUT | `/api/experimental/session/{sessionID}/instructions/entries/{key}` | 204 | Stores `{value}` for the session (OpenChamber's guidance, checkout, memory, pins and response style). Changed entries reach OmO as one hidden custom message before the next prompt, rendered like OpenCode's `api/<key>` instructions (`<context key="...">`); an unchanged value is not sent again, and compaction re-sends the active entries. A rejected delivery is logged and retried on the next prompt. 404 for an unknown session. |
+| DELETE | `/api/experimental/session/{sessionID}/instructions/entries/{key}` | 204 | Marks the entry removed (idempotent). If OmO had received it, the next prompt carries OpenCode's "no longer applies" notice. 404 for an unknown session. |
 | GET | `/api/session/{sessionID}/diff` | 200 | `{data: Diff[]}`; supports `from`, `to`, and `context`. |
 | GET | `/api/session/{sessionID}/context` | 501 | `NotImplemented`. |
 | Any | `/api/mcp/{...}`, `/api/experimental/mcp/{...}` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
@@ -197,7 +200,7 @@ invented resource IDs.
 |---|---|---:|---|
 | GET | `/event` | 200 | Directory-scoped v1 SSE; events keep their raw v1 shape. |
 | GET | `/global/event` | 200 | Global v1 SSE; broadcast event frames wrap events as `{directory, project, payload}`. |
-| GET | `/api/event` | 200 | v2 SSE envelopes with `location` and `data`. Without a directory selector the stream is global (OpenChamber 2.3.2 opens it that way), live and on `Last-Event-ID` replay; `?directory=` or `x-opencode-directory` scopes it. |
+| GET | `/api/event` | 200 | v2 SSE envelopes with `location` and `data`. Without a directory selector the stream is global (OpenChamber 2.3.2 opens it that way), live and on `Last-Event-ID` replay; `?directory=` or `x-opencode-directory` scopes it. `permission.asked` carries the same v2 card as `GET /api/permission/request`; `session.created` includes the session's `model` and precedes any model-selection event; OmO's `compaction_progress` fragments arrive as `session.compaction.delta {sessionID, text}` (none when OmO sends no partial text). |
 | WebSocket | `/api/global/event/ws` | 101 | Global event stream; sends `ready`, then event frames with directory and payload; `lastEventId` replays retained events. |
 
 The v1 local `/event` stream is not wrapped and remains data-only. The global
