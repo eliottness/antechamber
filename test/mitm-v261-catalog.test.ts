@@ -188,7 +188,7 @@ for (const scenario of [
     const removed = await fetch(`${url}/api/experimental/fs/watch`, { method: "DELETE", headers, body });
 
     assert.equal(removed.status, 204, await removed.text());
-    // A removal may swap the file watch for a directory watch first; DELETE must close whichever is current.
+    // A removal may have closed the file watch already (the lease then waits for the file); DELETE must leave none open.
     assert.equal(open(), 0, "DELETE must close the watcher registered by the same path");
     writeFileSync(join(root, "real.txt"), "restored");
     if (scenario.remove === "link.txt") symlinkSync("real.txt", join(root, "link.txt"));

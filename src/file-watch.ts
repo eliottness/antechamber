@@ -1,4 +1,4 @@
-import { existsSync, type FSWatcher, type StatsListener, unwatchFile, watch, watchFile } from "node:fs";
+import { existsSync, type FSWatcher, watch } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { OCEvent } from "./types.js";
@@ -16,17 +16,15 @@ export class FileWatchError extends Error {
 const LEASE_MS = 24 * 60 * 60 * 1000;
 const MAX_PER_DIRECTORY = 256;
 
-/** While the file exists `watcher` is a native watch on it; while it is missing `missing` is a stat watch. */
+/** While the file exists `watcher` is a native watch on it; while it is missing `missing` checks for it. */
 type FileWatchLease = {
-  /** The native path being watched (a symlink's target), which unwatchFile needs. */
-  path: string;
   watcher: FSWatcher | null;
-  missing: StatsListener | null;
+  missing: ReturnType<typeof setInterval> | null;
   expires: number;
   timer: ReturnType<typeof setTimeout>;
 };
 
-/** How often a missing watched file is checked for (a stat, nothing spawned). */
+/** How often a missing watched file is checked for (existsSync, nothing spawned). */
 const MISSING_POLL_MS = 1000;
 
 export class FileWatchRegistry {
@@ -73,7 +71,7 @@ export class FileWatchRegistry {
     }
     const timer = setTimeout(() => this.unwatch(directory, reportedFile), LEASE_MS);
     timer.unref();
-    const lease: FileWatchLease = { path: file, watcher: null, missing: null, expires: Date.now() + LEASE_MS, timer };
+    const lease: FileWatchLease = { watcher: null, missing: null, expires: Date.now() + LEASE_MS, timer };
     files.set(reportedFile, lease);
     this.watches.set(directory, files);
     lease.watcher = this.armFile(directory, file, reportedFile);
@@ -95,7 +93,9 @@ export class FileWatchRegistry {
         properties: { file: reportedFile, event: exists ? "change" : "unlink" },
       });
       const lease = this.watches.get(directory)?.get(reportedFile);
-      if (event !== "rename" || lease?.watcher !== watcher) return;
+      // A rename replaced the inode; an absent file ended the watch, whatever the event (macOS reports a write and
+      // a delete arriving together as one "change").
+      if (lease?.watcher !== watcher || (exists && event !== "rename")) return;
       watcher.close();
       lease.watcher = null;
       if (exists) this.rearm(directory, file, reportedFile, lease);
@@ -108,16 +108,21 @@ export class FileWatchRegistry {
     return watcher;
   }
 
+  /**
+   * Check for the missing file on a timer. Not fs.watchFile: it takes its baseline stat asynchronously and never
+   * reports a file that came back before that stat finished.
+   */
   private awaitFile(directory: string, file: string, reportedFile: string, lease: FileWatchLease): void {
-    const listener: StatsListener = (current) => {
-      if (current.nlink === 0 || lease.missing !== listener) return;
-      unwatchFile(file, listener);
+    const check = () => {
+      if (!existsSync(file) || this.watches.get(directory)?.get(reportedFile) !== lease) return;
+      if (lease.missing !== null) clearInterval(lease.missing);
       lease.missing = null;
       this.emit(directory, { type: "filesystem.changed", properties: { file: reportedFile, event: "change" } });
       this.rearm(directory, file, reportedFile, lease);
     };
-    lease.missing = listener;
-    watchFile(file, { persistent: false, interval: MISSING_POLL_MS }, listener);
+    lease.missing = setInterval(check, MISSING_POLL_MS);
+    lease.missing.unref();
+    check();
   }
 
   /**
@@ -128,6 +133,11 @@ export class FileWatchRegistry {
     try {
       lease.watcher = this.armFile(directory, file, reportedFile);
     } catch (error) {
+      // Gone again between the check and the watch: keep the lease and wait for it once more.
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        this.awaitFile(directory, file, reportedFile, lease);
+        return;
+      }
       console.error(`[file-watch] stopped watching ${reportedFile}:`, error);
       this.unwatch(directory, reportedFile);
     }
@@ -136,7 +146,7 @@ export class FileWatchRegistry {
   private release(lease: FileWatchLease): void {
     clearTimeout(lease.timer);
     lease.watcher?.close();
-    if (lease.missing !== null) unwatchFile(lease.path, lease.missing);
+    if (lease.missing !== null) clearInterval(lease.missing);
   }
 
   unwatch(directory: string, file: string): void {

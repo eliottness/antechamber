@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import fs, { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,4 +130,39 @@ test("a re-arm that fs.watch refuses releases the lease instead of throwing", (t
     "the refused lease must be released",
   );
   assert.ok(opened(t, watches, () => registry.watch(root, file, file)).length > 0, "a new POST starts a fresh lease");
+});
+
+test("a file deleted under a coalesced change event keeps its lease and is reported when it returns", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "antechamber-watch-"));
+  const events: Array<{ file: string; event: string }> = [];
+  const registry = new FileWatchRegistry((_directory, event) => {
+    if (event.type === "filesystem.changed") events.push(event.properties as { file: string; event: string });
+  });
+  const watches = t.mock.method(fs, "watch");
+  syncBuiltinESMExports();
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.after(() => {
+    registry.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const file = join(root, "notes.txt");
+  writeFileSync(file, "before");
+  registry.watch(root, file, file);
+  const watcher = watches.mock.calls[0]?.result;
+  assert.ok(watcher);
+  const close = t.mock.method(watcher, "close");
+
+  // macOS can report a write and a delete arriving together as a single "change".
+  unlinkSync(file);
+  watcher.emit("change", "change", "notes.txt");
+  assert.deepEqual(events.at(-1), { file, event: "unlink" });
+  assert.equal(close.mock.callCount(), 1, "the dead native watch is closed");
+
+  writeFileSync(file, "recreated");
+  t.mock.timers.tick(1000);
+
+  assert.deepEqual(events.at(-1), { file, event: "change" });
+  assert.equal(watches.mock.callCount(), 2, "the recreated file is watched again");
 });
