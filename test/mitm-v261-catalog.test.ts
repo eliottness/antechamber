@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs, { mkdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { events, record, serverFor, spawnCount } from "./catalog-harness.js";
 
 async function createSession(url: string, directory: string): Promise<string> {
@@ -94,6 +94,28 @@ test("an atomic save keeps the file watched", async (t) => {
   assert.equal((await edited).data.event, "change");
 });
 
+test("a watched file that is deleted and recreated keeps its lease", async (t) => {
+  const { root, url } = await serverFor(t);
+  const file = join(root, "notes.txt");
+  writeFileSync(file, "before");
+  const stream = await events(t, url);
+  const response = await fetch(`${url}/api/experimental/fs/watch`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: "notes.txt" }),
+  });
+  assert.equal(response.status, 204);
+  const unlinked = stream.wait("filesystem.changed");
+  unlinkSync(file);
+  assert.equal((await unlinked).data.event, "unlink");
+  const recreated = stream.wait("filesystem.changed", undefined, stream.count("filesystem.changed"));
+  writeFileSync(file, "recreated");
+  assert.equal((await recreated).data.event, "change");
+  const edited = stream.wait("filesystem.changed", undefined, stream.count("filesystem.changed"));
+  writeFileSync(file, "edited");
+  assert.equal((await edited).data.event, "change");
+});
+
 test("watching a missing file answers 404", async (t) => {
   const { url } = await serverFor(t);
   const response = await fetch(`${url}/api/experimental/fs/watch`, {
@@ -107,26 +129,43 @@ test("watching a missing file answers 404", async (t) => {
 
 test("B3 one DELETE removes a file lease after repeated POST renewals", async (t) => {
   const { root, url } = await serverFor(t);
-  const watches = t.mock.method(fs, "watch");
+  const watchers = trackWatchers(t);
+  writeFileSync(join(root, "notes.txt"), "before");
+  const body = JSON.stringify({ path: "notes.txt" });
+  const headers = { "content-type": "application/json" };
+  assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
+  const leased = watchers.created();
+  assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
+
+  assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "DELETE", headers, body })).status, 204);
+
+  assert.equal(watchers.created(), leased, "POST renewals must reuse the lease's native watchers");
+  assert.equal(watchers.open(), 0, "one DELETE must release the renewed registration");
+});
+
+/** Wrap fs.watch so a test can count the native watchers that are still open. */
+function trackWatchers(t: TestContext): { open: () => number; created: () => number } {
+  const real = fs.watch;
+  const live = new Set<fs.FSWatcher>();
+  let created = 0;
+  t.mock.method(fs, "watch", (...args: Parameters<typeof fs.watch>) => {
+    const watcher = real(...args);
+    const close = watcher.close.bind(watcher);
+    live.add(watcher);
+    created++;
+    watcher.close = () => {
+      live.delete(watcher);
+      close();
+    };
+    return watcher;
+  });
   syncBuiltinESMExports();
   t.after(() => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
   });
-  writeFileSync(join(root, "notes.txt"), "before");
-  const body = JSON.stringify({ path: "notes.txt" });
-  const headers = { "content-type": "application/json" };
-  for (let i = 0; i < 2; i++)
-    assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
-  const watcher = watches.mock.calls[0]?.result;
-  assert.ok(watcher);
-  const close = t.mock.method(watcher, "close");
-
-  assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "DELETE", headers, body })).status, 204);
-
-  assert.equal(watches.mock.callCount(), 1, "POST renewals must share one native watcher");
-  assert.equal(close.mock.callCount(), 1, "one DELETE must release the renewed registration");
-});
+  return { open: () => live.size, created: () => created };
+}
 
 for (const scenario of [
   { name: "a symlink", path: "link.txt", remove: undefined },
@@ -136,30 +175,25 @@ for (const scenario of [
 ]) {
   test(`B6 DELETE releases the native watcher for ${scenario.name}`, async (t) => {
     const { root, url } = await serverFor(t);
-    const watches = t.mock.method(fs, "watch");
-    syncBuiltinESMExports();
-    t.after(() => {
-      t.mock.restoreAll();
-      syncBuiltinESMExports();
-    });
+    const { open } = trackWatchers(t);
     writeFileSync(join(root, "real.txt"), "before");
     symlinkSync("real.txt", join(root, "link.txt"));
     const body = JSON.stringify({ path: scenario.path });
     const headers = { "content-type": "application/json" };
     assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
-    const watcher = watches.mock.calls[0]?.result;
-    assert.ok(watcher);
-    const close = t.mock.method(watcher, "close");
+    const leased = open();
+    assert.ok(leased > 0);
     if (scenario.remove !== undefined) unlinkSync(join(root, scenario.remove));
 
     const removed = await fetch(`${url}/api/experimental/fs/watch`, { method: "DELETE", headers, body });
 
     assert.equal(removed.status, 204, await removed.text());
-    assert.equal(close.mock.callCount(), 1, "DELETE must close the watcher registered by the same path");
+    // A removal may swap the file watch for a directory watch first; DELETE must close whichever is current.
+    assert.equal(open(), 0, "DELETE must close the watcher registered by the same path");
     writeFileSync(join(root, "real.txt"), "restored");
     if (scenario.remove === "link.txt") symlinkSync("real.txt", join(root, "link.txt"));
     assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
-    assert.equal(watches.mock.callCount(), 2, "DELETE must forget the old registration");
+    assert.equal(open(), leased, "DELETE must forget the old registration");
   });
 }
 

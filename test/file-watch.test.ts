@@ -20,23 +20,38 @@ function registryFor(t: TestContext) {
   return { root, registry, watches };
 }
 
+/** The native watchers one registry call opened, each with its close() counted. */
+function opened(t: TestContext, watches: ReturnType<typeof registryFor>["watches"], call: () => void) {
+  const before = watches.mock.callCount();
+  call();
+  return watches.mock.calls.slice(before).map((entry) => {
+    assert.ok(entry.result);
+    return t.mock.method(entry.result, "close");
+  });
+}
+
+const closes = (lease: ReturnType<typeof opened>) => lease.map((close) => close.mock.callCount());
+
 test("B3 a repeated watch renews one lease for another 24 hours", (t) => {
   const { root, registry, watches } = registryFor(t);
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const file = join(root, "notes.txt");
   writeFileSync(file, "before");
-  registry.watch(root, file, file);
-  const watcher = watches.mock.calls[0]?.result;
-  assert.ok(watcher);
-  const close = t.mock.method(watcher, "close");
+  const lease = opened(t, watches, () => registry.watch(root, file, file));
+  assert.ok(lease.length > 0);
 
   t.mock.timers.tick(12 * 60 * 60 * 1000);
-  registry.watch(root, file, file);
+  assert.equal(opened(t, watches, () => registry.watch(root, file, file)).length, 0, "renewal must reuse the lease");
   t.mock.timers.tick(12 * 60 * 60 * 1000);
-  assert.equal(watches.mock.callCount(), 1, "renewal must reuse the native watcher");
-  assert.equal(close.mock.callCount(), 0, "the original expiry must not close a renewed lease");
+  assert.ok(
+    closes(lease).every((count) => count === 0),
+    "the original expiry must not close a renewed lease",
+  );
   t.mock.timers.tick(12 * 60 * 60 * 1000);
-  assert.equal(close.mock.callCount(), 1, "the renewed lease must expire 24 hours after renewal");
+  assert.ok(
+    closes(lease).every((count) => count === 1),
+    "the renewed lease must expire 24 hours after renewal",
+  );
 });
 
 test("B3 an abandoned file lease expires and closes its native watcher", (t) => {
@@ -44,17 +59,20 @@ test("B3 an abandoned file lease expires and closes its native watcher", (t) => 
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const file = join(root, "notes.txt");
   writeFileSync(file, "before");
-  registry.watch(root, file, file);
-  const watcher = watches.mock.calls[0]?.result;
-  assert.ok(watcher);
-  const close = t.mock.method(watcher, "close");
+  const lease = opened(t, watches, () => registry.watch(root, file, file));
 
   t.mock.timers.tick(24 * 60 * 60 * 1000 - 1);
-  assert.equal(close.mock.callCount(), 0);
+  assert.ok(closes(lease).every((count) => count === 0));
   t.mock.timers.tick(1);
-  assert.equal(close.mock.callCount(), 1, "expiry must close the watcher without any further access");
-  registry.watch(root, file, file);
-  assert.equal(watches.mock.callCount(), 2, "expiry must also forget the registration");
+  assert.ok(
+    closes(lease).every((count) => count === 1),
+    "expiry must close the watchers without further access",
+  );
+  assert.equal(
+    opened(t, watches, () => registry.watch(root, file, file)).length,
+    lease.length,
+    "expiry must also forget the registration",
+  );
 });
 
 test("B3 a full location evicts its soonest expiring lease without evicting another location", (t) => {
@@ -64,21 +82,13 @@ test("B3 a full location evicts its soonest expiring lease without evicting anot
   mkdirSync(other);
   const otherFile = join(other, "notes.txt");
   writeFileSync(otherFile, "");
-  registry.watch(other, otherFile, otherFile);
-  const otherWatcher = watches.mock.calls[0]?.result;
-  assert.ok(otherWatcher);
-  const closeOther = t.mock.method(otherWatcher, "close");
+  const otherLease = opened(t, watches, () => registry.watch(other, otherFile, otherFile));
+  const leases: Array<ReturnType<typeof opened>> = [];
   for (let i = 0; i < 256; i++) {
     const file = join(root, `${i}.txt`);
     writeFileSync(file, "");
-    registry.watch(root, file, file);
+    leases.push(opened(t, watches, () => registry.watch(root, file, file)));
   }
-  const first = watches.mock.calls[1]?.result;
-  const second = watches.mock.calls[2]?.result;
-  assert.ok(first);
-  assert.ok(second);
-  const closeFirst = t.mock.method(first, "close");
-  const closeSecond = t.mock.method(second, "close");
   t.mock.timers.tick(1);
   registry.watch(root, join(root, "0.txt"), join(root, "0.txt"));
   const extra = join(root, "256.txt");
@@ -86,7 +96,16 @@ test("B3 a full location evicts its soonest expiring lease without evicting anot
 
   registry.watch(root, extra, extra);
 
-  assert.equal(closeSecond.mock.callCount(), 1, "the soonest expiring lease must make room at 256");
-  assert.equal(closeFirst.mock.callCount(), 0, "a renewed lease must survive capacity eviction");
-  assert.equal(closeOther.mock.callCount(), 0, "each location has its own capacity");
+  assert.ok(
+    closes(leases[1] ?? []).every((count) => count === 1),
+    "the soonest expiring lease must make room at 256",
+  );
+  assert.ok(
+    closes(leases[0] ?? []).every((count) => count === 0),
+    "a renewed lease must survive capacity eviction",
+  );
+  assert.ok(
+    closes(otherLease).every((count) => count === 0),
+    "each location has its own capacity",
+  );
 });
