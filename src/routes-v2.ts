@@ -460,6 +460,7 @@ export async function handleV2(
     const dir = url.searchParams.get("directory") ?? url.searchParams.get("location");
     const search = url.searchParams.get("search");
     const parentID = url.searchParams.get("parentID");
+    const archived = url.searchParams.get("archived");
     const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
     const limit = numberParam(url.searchParams.get("limit"));
     let infos = (dir !== null && dir !== "" ? services.sessions.list(dir) : services.sessions.listAll()).filter(
@@ -467,7 +468,10 @@ export async function handleV2(
       (session) => !services.sessions.monitors.owns(session.id),
     );
     if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
-    if (parentID !== null) infos = infos.filter((session) => session.parentID === parentID);
+    if (parentID !== null)
+      infos = infos.filter((session) => session.parentID === (parentID === "null" ? undefined : parentID));
+    if (archived === "true" || archived === "false")
+      infos = infos.filter((session) => (session.time.archived !== undefined) === (archived === "true"));
     let sessions = infos.map((info) => v2Session(services, info));
     sessions.sort((left, right) => compareSessions(left, right, order));
     const cursor = decodeSessionCursor(url.searchParams.get("cursor"));
@@ -521,6 +525,36 @@ export async function handleV2(
       if (status.type !== "idle" && !services.sessions.monitors.owns(id)) data[id] = { type: "running" };
     }
     json(res, 200, { data });
+    return;
+  }
+
+  const instructionEntry = path.match(/^\/api\/experimental\/session\/([^/]+)\/instructions\/entries\/([^/]+)$/);
+  if (instructionEntry && (method === "PUT" || method === "DELETE")) {
+    const sessionId = decodeURIComponent(instructionEntry[1]!);
+    const key = decodeURIComponent(instructionEntry[2]!);
+    if (services.sessions.get(sessionId) === undefined) {
+      json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(key)) {
+      json(res, 400, errorBody("InvalidRequestError", "instruction entry key is invalid"));
+      return;
+    }
+    if (method === "PUT") {
+      const body: unknown = await services.body(req);
+      if (typeof body !== "object" || body === null || Array.isArray(body) || !("value" in body)) {
+        json(res, 400, errorBody("InvalidRequestError", "instruction entry requires a JSON value"));
+        return;
+      }
+      if (Buffer.byteLength(JSON.stringify(body.value), "utf8") > 256 * 1024) {
+        json(res, 413, errorBody("InstructionEntryValueTooLargeError", "instruction entry exceeds 256 KiB"));
+        return;
+      }
+      services.sessions.putInstruction(sessionId, key, body.value);
+    } else {
+      services.sessions.removeInstruction(sessionId, key);
+    }
+    res.writeHead(204).end();
     return;
   }
 
@@ -650,6 +684,16 @@ export async function handleV2(
         return;
       case "GET ": {
         json(res, 200, { data: v2Session(services, managed.info) });
+        return;
+      }
+      case "POST /view": {
+        const body = (await services.body(req)) as { idle?: unknown };
+        if (typeof body.idle !== "number" || !Number.isFinite(body.idle)) {
+          json(res, 400, errorBody("InvalidRequestError", "idle must be a finite epoch-millisecond number"));
+          return;
+        }
+        services.sessions.view(sessionId, body.idle);
+        res.writeHead(204).end();
         return;
       }
       case "PATCH ": {
@@ -1087,7 +1131,31 @@ export async function handleV2(
         return;
       }
       case "GET /inbox": {
-        json(res, 200, { data: [] });
+        const messages = services.sessions.messages(sessionId) ?? [];
+        json(res, 200, {
+          data: [...(managed.inputs ?? [])].flatMap(([id, input]) => {
+            if (!input.accepted || input.delivered) return [];
+            const message = messages.find((item) => item.info.id === id);
+            if (message?.info.role !== "user") return [];
+            return [
+              {
+                id,
+                sessionID: sessionId,
+                time: { created: message.info.time.created },
+                type: "user",
+                delivery: input.delivery,
+                payload: {
+                  text: message.parts
+                    .filter((part) => part.type === "text")
+                    .map((part) => part.text)
+                    .join("\n"),
+                  ...v2PromptAttachments(message.parts.filter((part) => part.type === "file" || part.type === "agent")),
+                  ...(message.info.metadata !== undefined ? { metadata: message.info.metadata } : {}),
+                },
+              },
+            ];
+          }),
+        });
         return;
       }
       case "GET /diff":

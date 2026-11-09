@@ -32,6 +32,7 @@ export interface OCSession {
     created: number;
     updated: number;
     idle?: number;
+    viewed?: number;
     compacting?: number;
     /** Epoch ms — presence marks the session archived (SDK v2 session.update). */
     archived?: number;
@@ -221,6 +222,10 @@ export type OCEvent =
   | { type: "mcp.tools.changed"; properties: { server: string } }
   | { type: "session.created"; properties: { info: OCSession } }
   | { type: "session.updated"; properties: { info: OCSession } }
+  | { type: "session.renamed"; properties: { sessionID: string; title: string } }
+  | { type: "session.agent.selected"; properties: { sessionID: string; agent: string; previous?: string } }
+  | { type: "session.archived" | "session.unarchived"; properties: { sessionID: string } }
+  | { type: "session.viewed"; properties: { sessionID: string; idle: number } }
   | {
       type: "session.revert.staged";
       properties: { sessionID: string; revert: { messageID: string } };

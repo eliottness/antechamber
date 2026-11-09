@@ -8,6 +8,7 @@ const sessionId = randomUUID();
 const sessionFile = join(process.cwd(), `fake-endpoints-${sessionId}.jsonl`);
 const noSession = process.argv.includes("--no-session");
 let leaf;
+let rejectedInstructions = false;
 let timestamp = Date.now();
 let hasPrompt = false;
 let pendingBash;
@@ -104,6 +105,29 @@ input.on("line", (line) => {
     case "prompt": {
       const text = command.message;
       hasPrompt = true;
+      // OmO can acknowledge a follow-up admission before its queued turn begins
+      // (installed omo-task.js:2, rpc_client_message_admission).
+      if (text === "fixture-hold-input") {
+        const entry = {
+          type: "custom",
+          id: randomUUID(),
+          parentId: leaf,
+          timestamp: timestamp++,
+          customType: "rpc_client_message_admission",
+          data: {
+            durableSessionId: sessionId,
+            clientMessageId: command.clientMessageId,
+            state: "queued",
+            disposition: "queued",
+            prepared: { text, mode: command.streamingBehavior, enqueueOrder: 1 },
+          },
+        };
+        entries.push(entry);
+        leaf = entry.id;
+        appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+        reply(command, true, { disposition: "queued" });
+        return;
+      }
       if (text === "/notify-fixture") {
         send({
           type: "extension_ui_request",
@@ -158,6 +182,18 @@ input.on("line", (line) => {
         return;
       }
       recordMessage("assistant", `Compacted summary ${compactions}`);
+      if (entries.some((entry) => entry.customType === "antechamber.instructions")) {
+        send({ type: "compaction_start", reason: "manual" });
+        send({
+          type: "compaction_end",
+          reason: "manual",
+          aborted: false,
+          result: {
+            summary: `Compacted summary ${compactions}`,
+            firstKeptEntryId: entries.find((entry) => entry.type === "message")?.id,
+          },
+        });
+      }
       reply(command, true, true);
       return;
     case "bash": {
@@ -229,6 +265,15 @@ input.on("line", (line) => {
       // Idle OmO with triggerTurn:false appends the message to the conversation without a turn.
       if (command.triggerTurn !== false) {
         reply(command, false, undefined, "fixture only admits context without a turn");
+        return;
+      }
+      if (
+        command.customType === "antechamber.instructions" &&
+        process.env.FAKE_OMO_REJECT_INSTRUCTIONS === "once" &&
+        !rejectedInstructions
+      ) {
+        rejectedInstructions = true;
+        reply(command, false, undefined, "fixture rejects instruction context");
         return;
       }
       const entry = {

@@ -164,7 +164,7 @@ export interface V2Session {
   model?: { id: string; providerID: string; variant?: string };
   cost: number;
   tokens: V2Tokens;
-  time: { created: number; updated: number; archived?: number };
+  time: { created: number; updated: number; idle?: number; viewed?: number; archived?: number };
   title: string;
   subpath: string;
   location: { directory: string };
@@ -188,6 +188,7 @@ export function toV2Session(
       created: info.time.created,
       updated: info.time.updated,
       ...(info.time.idle !== undefined ? { idle: info.time.idle } : {}),
+      ...(info.time.viewed !== undefined ? { viewed: info.time.viewed } : {}),
       ...(info.time.archived !== undefined ? { archived: info.time.archived } : {}),
     },
     title: info.title,
@@ -460,6 +461,11 @@ export class V2EventTranslator {
     switch (ev.type) {
       case "session.inbox.enqueued":
       case "session.inbox.delivered":
+      case "session.renamed":
+      case "session.agent.selected":
+      case "session.archived":
+      case "session.unarchived":
+      case "session.viewed":
       case "session.revert.staged":
       case "session.revert.cleared":
       case "session.revert.committed":
@@ -489,6 +495,7 @@ export class V2EventTranslator {
             subpath: subpathOf(info.directory),
             title: info.title,
             agent: info.agent ?? getAgentName(),
+            ...(info.model !== undefined ? { model: info.model } : {}),
             ...(info.parentID !== undefined ? { parentID: info.parentID } : {}),
             ...(info.parentMessageID !== undefined ? { parentMessageID: info.parentMessageID } : {}),
             ...(info.metadata !== undefined ? { metadata: info.metadata } : {}),
@@ -498,11 +505,9 @@ export class V2EventTranslator {
       case "session.updated": {
         const info = ev.properties.info;
         return [
-          this.frame(directory, "session.renamed", { sessionID: info.id, title: info.title }),
           ...(info.metadata !== undefined
             ? [this.frame(directory, "session.metadata.updated", { sessionID: info.id, metadata: info.metadata })]
             : []),
-          this.frame(directory, "session.agent.selected", { sessionID: info.id, agent: info.agent ?? getAgentName() }),
           ...(info.cost !== undefined
             ? [
                 this.frame(directory, "session.usage.updated", {

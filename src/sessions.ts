@@ -55,6 +55,7 @@ import {
   scanPiSessions,
   SessionStore,
   type ScannedSession,
+  type InstructionEntryState,
   readSessionFileMeta,
   type SessionSelection,
   type TitleSource,
@@ -100,6 +101,9 @@ export interface ManagedSession extends ThinkingState {
   activeUserMessageID?: string;
   deliveredInputCompactions?: Map<string, string>;
   inputs?: Map<string, { text: string; delivery: "steer" | "queue"; accepted: boolean; delivered: boolean }>;
+  instructions?: Record<string, InstructionEntryState>;
+  /** Suppress model-selection events until the session creation record has its final model. */
+  initializing?: boolean;
   tree: SessionTreeState;
   info: OCSession;
   /** undefined while dormant (restored from disk, no pi process spawned yet). */
@@ -227,7 +231,21 @@ export class SessionManager {
     this.workStatus = new WorkStatusBridge(this.monitors);
     this.shells = new OmoShells(this.sessions, this.monitors, this.workStatus, this.emit);
     this.events = new PiEventTranslator({
-      emit: this.emit,
+      emit: (directory, event) => {
+        if (event.type === "session.compaction.ended") {
+          const session = this.sessions.get(event.properties.sessionID);
+          if (session?.instructions !== undefined) {
+            let changed = false;
+            for (const entry of Object.values(session.instructions)) {
+              if (entry.removed || entry.deliveredValue === undefined) continue;
+              delete entry.deliveredValue;
+              changed = true;
+            }
+            if (changed) this.persistMeta(session);
+          }
+        }
+        this.emit(directory, event);
+      },
       subagents: this.subagents,
       monitors: this.monitors,
       workStatus: this.workStatus,
@@ -314,6 +332,7 @@ export class SessionManager {
       messages: [],
       status: { type: "idle" },
       model: undefined,
+      initializing: true,
       streaming: undefined,
       toolByCallId: new Map(),
       hasPendingInteraction: () => false,
@@ -333,11 +352,10 @@ export class SessionManager {
       this.lifecycle.touch(managed);
       this.wirePi(managed, pi);
 
+      this.applyPiModel(managed, state.data.model?.provider, state.data.model?.id);
       if (options.model !== undefined) await this.setModel(info.id, options.model);
       this.emit(directory, { type: "session.created", properties: { info } });
-      // Announce pi's real model *after* session.created, so the client already
-      // knows the session when the switch marker lands in its transcript.
-      if (options.model === undefined) this.applyPiModel(managed, state.data.model?.provider, state.data.model?.id);
+      delete managed.initializing;
 
       // Bind pi's session file so the session survives adapter restarts. pi
       // reports the path directly; fall back to a background scan for older pi
@@ -393,6 +411,7 @@ export class SessionManager {
     s.info.time.updated = Date.now();
     this.persistMeta(s);
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+    this.emit(s.info.directory, { type: "session.renamed", properties: { sessionID: s.info.id, title } });
   }
 
   private refreshNativeTitles(): void {
@@ -600,6 +619,9 @@ export class SessionManager {
     if (!s) return undefined;
     if (patch.agent !== undefined && !getExposedAgentNames().includes(patch.agent))
       throw new RequestBodyError(400, `unknown agent: ${patch.agent}`);
+    const previousTitle = s.info.title;
+    const previousAgent = s.info.agent ?? getAgentName();
+    const wasArchived = s.info.time.archived !== undefined;
     if (typeof patch.title === "string" && patch.title.trim() !== "") {
       const title = patch.title.trim().replace(/\s+/g, " ");
       if (s.pi !== undefined) {
@@ -619,7 +641,62 @@ export class SessionManager {
     // Child sessions have no pi path of their own, so persistMeta would skip them.
     if (!this.subagents.save(s.info.id)) this.persistMeta(s);
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+    if (s.info.title !== previousTitle)
+      this.emit(s.info.directory, {
+        type: "session.renamed",
+        properties: { sessionID: sessionId, title: s.info.title },
+      });
+    if ((s.info.agent ?? getAgentName()) !== previousAgent)
+      this.emit(s.info.directory, {
+        type: "session.agent.selected",
+        properties: { sessionID: sessionId, agent: s.info.agent ?? getAgentName(), previous: previousAgent },
+      });
+    if ((s.info.time.archived !== undefined) !== wasArchived)
+      this.emit(s.info.directory, {
+        type: s.info.time.archived !== undefined ? "session.archived" : "session.unarchived",
+        properties: { sessionID: sessionId },
+      });
     return s.info;
+  }
+
+  /** Mark only the idle boundary that the caller actually observed. */
+  view(sessionId: string, idle: number): void {
+    const s = this.get(sessionId);
+    if (s === undefined || (s.info.time.viewed !== undefined && s.info.time.viewed >= idle)) return;
+    s.info.time.viewed = idle;
+    this.persistMeta(s);
+    this.emit(s.info.directory, { type: "session.viewed", properties: { sessionID: sessionId, idle } });
+  }
+
+  putInstruction(sessionId: string, key: string, value: unknown): void {
+    const s = this.get(sessionId);
+    if (s === undefined) throw new Error(`unknown session: ${sessionId}`);
+    const previous = s.instructions?.[key];
+    if (
+      previous?.removed !== true &&
+      previous !== undefined &&
+      JSON.stringify(previous.value) === JSON.stringify(value)
+    )
+      return;
+    (s.instructions ??= {})[key] = {
+      value,
+      ...(previous?.deliveredValue !== undefined ? { deliveredValue: previous.deliveredValue } : {}),
+    };
+    this.persistMeta(s);
+  }
+
+  removeInstruction(sessionId: string, key: string): void {
+    const s = this.get(sessionId);
+    if (s === undefined) throw new Error(`unknown session: ${sessionId}`);
+    const instructions = s.instructions;
+    const previous = instructions?.[key];
+    if (instructions === undefined || previous === undefined || previous.removed) return;
+    instructions[key] = {
+      value: null,
+      removed: true,
+      ...(previous.deliveredValue !== undefined ? { deliveredValue: previous.deliveredValue } : {}),
+    };
+    this.persistMeta(s);
   }
 
   messages(sessionId: string): OCMessageWithParts[] | undefined {
@@ -1134,10 +1211,11 @@ export class SessionManager {
     s.model = model;
     s.info.model = { id: modelId, providerID: provider, variant: s.thinkingLevel ?? "default" };
     this.persistMeta(s);
-    this.emit(s.info.directory, {
-      type: "model.changed",
-      properties: { sessionID: s.info.id, model, ...(previous !== undefined ? { previous } : {}) },
-    });
+    if (!s.initializing)
+      this.emit(s.info.directory, {
+        type: "model.changed",
+        properties: { sessionID: s.info.id, model, ...(previous !== undefined ? { previous } : {}) },
+      });
     return true;
   }
 
@@ -1225,12 +1303,18 @@ export class SessionManager {
     if (inputParts?.some((part) => part.type !== "text")) (s.tree.promptParts ??= {})[userMsg.id] = [...inputParts];
     s.messages?.push({ info: userMsg, parts });
     s.info.time.updated = Date.now();
+    const previousTitle = s.info.title;
     if (!context && s.info.title === "New session" && s.titleSource !== "user" && s.titleSource !== "native") {
       s.info.title = text.trim().replace(/\s+/g, " ").slice(0, SESSION_TITLE_MAX_CHARS) || "New session";
       s.titleSource = "fallback";
     }
     this.persistMeta(s);
     this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+    if (s.info.title !== previousTitle)
+      this.emit(s.info.directory, {
+        type: "session.renamed",
+        properties: { sessionID: s.info.id, title: s.info.title },
+      });
     this.emit(s.info.directory, { type: "message.updated", properties: { info: userMsg } });
     // Echo the user text part: the reducer replaces the client's sessionID-less
     // optimistic part (same type, new id) in place — without this echo a page
@@ -1251,6 +1335,12 @@ export class SessionManager {
   ): Promise<void> {
     const pi = await this.preparePrompt(s, model);
     const native = nativePromptInput(text, parts ?? []);
+    // OpenChamber treats instruction writes as best effort, so a rejected delivery must not fail the prompt;
+    // the entries stay undelivered and are offered again before the next prompt.
+    if (!noReply)
+      await this.deliverInstructions(s, pi).catch((error: unknown) =>
+        console.error(`[instructions] delivery to ${s.info.id} failed:`, error),
+      );
     const userMsg = this.publishPrompt(s, text, model, messageID, parts, metadata, noReply);
 
     if (noReply) {
@@ -1260,6 +1350,42 @@ export class SessionManager {
 
     if (!(await this.dispatchPrompt(s, pi, userMsg, text, delivery, native, parts ?? []))) return;
     await this.bindPromptState(s);
+  }
+
+  private async deliverInstructions(s: ManagedSession, pi: PiRpcClient): Promise<void> {
+    const pending = Object.entries(s.instructions ?? {})
+      .filter(([, entry]) =>
+        entry.removed
+          ? entry.deliveredValue !== undefined
+          : entry.deliveredValue === undefined || JSON.stringify(entry.value) !== JSON.stringify(entry.deliveredValue),
+      )
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (pending.length === 0) return;
+    const text = pending
+      .map(([key, entry]) => {
+        if (entry.removed) return `The context under "${key}" no longer applies. Disregard it.`;
+        const block = `<context key="${key}">\n${typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value, null, 2)}\n</context>`;
+        return entry.deliveredValue === undefined
+          ? block
+          : `The context under "${key}" changed and supersedes the previous value:\n${block}`;
+      })
+      .join("\n\n");
+    const result = await pi.command({
+      type: "send_custom_message",
+      customType: "antechamber.instructions",
+      content: [{ type: "text", text }],
+      display: false,
+      triggerTurn: false,
+    });
+    if (!result.success) throw new Error(result.error ?? "instruction delivery rejected");
+    await this.bindPromptState(s);
+    for (const [key, entry] of pending) {
+      if (s.instructions?.[key] !== entry) continue;
+      s.instructions[key] = entry.removed
+        ? { value: null, removed: true }
+        : { value: entry.value, deliveredValue: entry.value };
+    }
+    this.persistMeta(s);
   }
 
   /**
@@ -1697,6 +1823,7 @@ export class SessionManager {
         created: sc.created,
         updated: Math.max(sc.updated, reg?.updated ?? 0),
         ...(reg?.archived ? { archived: reg.archived } : {}),
+        ...(reg?.viewed !== undefined ? { viewed: reg.viewed } : {}),
       },
     };
     const managed: ManagedSession = {
@@ -1713,6 +1840,7 @@ export class SessionManager {
       hasPendingInteraction: () => false,
       hasRunningChildren: () => false,
       ...(reg?.lastStop !== undefined ? { lastStop: reg.lastStop } : {}),
+      ...(reg?.instructions !== undefined ? { instructions: structuredClone(reg.instructions) } : {}),
     };
     this.sessions.set(ocId, managed);
     if (reg?.connectorOwned === true) this.createdSessions.set(sc.piSessionId, sc.directory);
@@ -1783,7 +1911,9 @@ export class SessionManager {
       ...(s.info.title !== "New session" ? { title: s.info.title } : {}),
       ...(s.titleSource !== undefined ? { titleSource: s.titleSource } : {}),
       ...(s.info.time.archived !== undefined ? { archived: s.info.time.archived } : {}),
+      ...(s.info.time.viewed !== undefined ? { viewed: s.info.time.viewed } : {}),
       ...(s.info.metadata !== undefined ? { metadata: s.info.metadata } : {}),
+      ...(s.instructions !== undefined ? { instructions: s.instructions } : {}),
       ...(s.info.agent !== undefined ? { agent: s.info.agent } : {}),
       ...(s.info.parentID !== undefined ? { parentID: s.info.parentID } : {}),
       ...(s.info.parentMessageID !== undefined ? { parentMessageID: s.info.parentMessageID } : {}),
