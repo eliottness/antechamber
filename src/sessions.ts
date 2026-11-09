@@ -39,6 +39,7 @@ import {
   SessionTreeError,
   unrevertConversation,
   type SessionTreeState,
+  type TreeEntry,
 } from "./session-tree.js";
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
@@ -232,18 +233,6 @@ export class SessionManager {
     this.shells = new OmoShells(this.sessions, this.monitors, this.workStatus, this.emit);
     this.events = new PiEventTranslator({
       emit: (directory, event) => {
-        if (event.type === "session.compaction.ended") {
-          const session = this.sessions.get(event.properties.sessionID);
-          if (session?.instructions !== undefined) {
-            let changed = false;
-            for (const entry of Object.values(session.instructions)) {
-              if (entry.removed || entry.deliveredValue === undefined) continue;
-              delete entry.deliveredValue;
-              changed = true;
-            }
-            if (changed) this.persistMeta(session);
-          }
-        }
         this.emit(directory, event);
       },
       subagents: this.subagents,
@@ -686,10 +675,7 @@ export class SessionManager {
       JSON.stringify(previous.value) === JSON.stringify(value)
     )
       return;
-    (s.instructions ??= {})[key] = {
-      value,
-      ...(previous?.deliveredValue !== undefined ? { deliveredValue: previous.deliveredValue } : {}),
-    };
+    (s.instructions ??= {})[key] = { value };
     this.persistMeta(s);
   }
 
@@ -699,11 +685,7 @@ export class SessionManager {
     const instructions = s.instructions;
     const previous = instructions?.[key];
     if (instructions === undefined || previous === undefined || previous.removed) return;
-    instructions[key] = {
-      value: null,
-      removed: true,
-      ...(previous.deliveredValue !== undefined ? { deliveredValue: previous.deliveredValue } : {}),
-    };
+    instructions[key] = { value: null, removed: true };
     this.persistMeta(s);
   }
 
@@ -1360,12 +1342,21 @@ export class SessionManager {
     await this.bindPromptState(s);
   }
 
+  /**
+   * What the model has is read from the active native branch, not stored beside it: each delivery carries the
+   * full delivered map in `details`, so after a revert, unrevert, fork or compaction the last delivery still in
+   * context says exactly what to send again. Deliveries before a compaction's kept range are no longer in context
+   * (OpenCode rewinds its instruction state the same way, core/session/projector.ts).
+   */
   private async deliverInstructions(s: ManagedSession, pi: PiRpcClient): Promise<void> {
-    const pending = Object.entries(s.instructions ?? {})
-      .filter(([, entry]) =>
+    const instructions = Object.entries(s.instructions ?? {});
+    if (instructions.length === 0) return;
+    const delivered = deliveredInstructions(branchEntries(await getEntries(pi)));
+    const pending = instructions
+      .filter(([key, entry]) =>
         entry.removed
-          ? entry.deliveredValue !== undefined
-          : entry.deliveredValue === undefined || JSON.stringify(entry.value) !== JSON.stringify(entry.deliveredValue),
+          ? key in delivered
+          : !(key in delivered) || JSON.stringify(entry.value) !== JSON.stringify(delivered[key]),
       )
       .sort(([left], [right]) => left.localeCompare(right));
     if (pending.length === 0) return;
@@ -1373,27 +1364,26 @@ export class SessionManager {
       .map(([key, entry]) => {
         if (entry.removed) return `The context under "${key}" no longer applies. Disregard it.`;
         const block = `<context key="${key}">\n${typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value, null, 2)}\n</context>`;
-        return entry.deliveredValue === undefined
-          ? block
-          : `The context under "${key}" changed and supersedes the previous value:\n${block}`;
+        return key in delivered
+          ? `The context under "${key}" changed and supersedes the previous value:\n${block}`
+          : block;
       })
       .join("\n\n");
+    const snapshot = { ...delivered };
+    for (const [key, entry] of pending) {
+      if (entry.removed) delete snapshot[key];
+      else snapshot[key] = entry.value;
+    }
     const result = await pi.command({
       type: "send_custom_message",
-      customType: "antechamber.instructions",
+      customType: INSTRUCTIONS_CUSTOM_TYPE,
       content: [{ type: "text", text }],
       display: false,
+      details: { instructions: snapshot },
       triggerTurn: false,
     });
     if (!result.success) throw new Error(result.error ?? "instruction delivery rejected");
     await this.bindPromptState(s);
-    for (const [key, entry] of pending) {
-      if (s.instructions?.[key] !== entry) continue;
-      s.instructions[key] = entry.removed
-        ? { value: null, removed: true }
-        : { value: entry.value, deliveredValue: entry.value };
-    }
-    this.persistMeta(s);
   }
 
   /**
@@ -1946,4 +1936,26 @@ export class SessionManager {
   private onPiEvent(s: ManagedSession, ev: Record<string, unknown>): void {
     this.events.onPiEvent(s, ev);
   }
+}
+
+const INSTRUCTIONS_CUSTOM_TYPE = "antechamber.instructions";
+
+/** The instruction map the model holds on this branch: the last delivery inside the newest compaction's kept range. */
+function deliveredInstructions(branch: TreeEntry[]): Record<string, unknown> {
+  let start = 0;
+  for (let index = branch.length - 1; index >= 0; index--) {
+    const entry = branch[index] as TreeEntry & { firstKeptEntryId?: unknown };
+    if (entry.type !== "compaction") continue;
+    const kept = branch.findIndex((candidate) => candidate.id === entry.firstKeptEntryId);
+    start = kept >= 0 ? kept : index + 1;
+    break;
+  }
+  for (let index = branch.length - 1; index >= start; index--) {
+    const entry = branch[index];
+    if (entry?.type !== "custom_message" || entry.customType !== INSTRUCTIONS_CUSTOM_TYPE) continue;
+    const details = entry.details as { instructions?: unknown } | undefined;
+    if (details?.instructions !== null && typeof details?.instructions === "object")
+      return { ...(details.instructions as Record<string, unknown>) };
+  }
+  return {};
 }

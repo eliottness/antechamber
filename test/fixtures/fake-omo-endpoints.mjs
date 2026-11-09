@@ -191,6 +191,19 @@ input.on("line", (line) => {
       }
       recordMessage("assistant", `Compacted summary ${compactions}`);
       if (entries.some((entry) => entry.customType === "antechamber.instructions")) {
+        // OmO appends a compaction entry that keeps the newest turn (from its last user message) after the summary.
+        const kept = entries.findLast((entry) => entry.type === "message" && entry.message?.role === "user")?.id;
+        const compaction = {
+          type: "compaction",
+          id: randomUUID(),
+          parentId: leaf,
+          timestamp: timestamp++,
+          summary: `Compacted summary ${compactions}`,
+          firstKeptEntryId: kept,
+        };
+        leaf = compaction.id;
+        entries.push(compaction);
+        appendFileSync(sessionFile, `${JSON.stringify(compaction)}\n`);
         send({ type: "compaction_start", reason: "manual" });
         send({
           type: "compaction_end",

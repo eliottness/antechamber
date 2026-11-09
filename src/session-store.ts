@@ -70,7 +70,6 @@ export type TitleSource = "user" | "native" | "fallback" | "generated";
 
 export interface InstructionEntryState {
   value: unknown;
-  deliveredValue?: unknown;
   removed?: true;
 }
 
