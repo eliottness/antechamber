@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -16,6 +16,11 @@ let holdEntries = false;
 let pendingEntries;
 let compactions = 0;
 const entries = [];
+if (process.env.FAKE_OMO_SPAWN_LOG) appendFileSync(process.env.FAKE_OMO_SPAWN_LOG, `${process.pid}\n`);
+const catalogState = () => {
+  const file = join(process.cwd(), ".catalog-state.json");
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+};
 
 if (!noSession) {
   writeFileSync(
@@ -61,7 +66,7 @@ function recordMessage(role, text, plain = false) {
   };
   leaf = entry.id;
   entries.push(entry);
-  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+  if (!noSession) appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
   return entry.message;
 }
 
@@ -87,7 +92,7 @@ input.on("line", (line) => {
       });
       return;
     case "get_available_models":
-      reply(command, true, { models: [] });
+      reply(command, true, { models: catalogState().models ?? [] });
       return;
     case "get_entries":
       if (holdEntries) {
@@ -99,7 +104,9 @@ input.on("line", (line) => {
       return;
     case "get_commands":
       reply(command, true, {
-        commands: [{ name: "fixture", description: "Fixture command", template: "Original template" }],
+        commands: catalogState().commands ?? [
+          { name: "fixture", description: "Fixture command", template: "Original template" },
+        ],
       });
       return;
     case "prompt": {

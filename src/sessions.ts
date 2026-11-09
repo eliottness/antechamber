@@ -550,6 +550,14 @@ export class SessionManager {
     });
   }
 
+  /** Reuse an already-running agent for directory-scoped catalog reads. Never revives a dormant session. */
+  liveClient(directory: string): PiRpcClient | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.info.directory === directory && session.pi !== undefined) return session.pi;
+    }
+    return undefined;
+  }
+
   private sessionInfo(s: ManagedSession): OCSession {
     if (s.restored !== undefined) this.ensureMessages(s);
     return s.info;

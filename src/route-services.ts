@@ -20,15 +20,20 @@ import {
 import { envSetting } from "./config.js";
 import { PiStoppedError } from "./pi-rpc.js";
 import type { SelfUpdateResult } from "./self-update.js";
+import type { FileWatchRegistry } from "./file-watch.js";
+import type { getCommands } from "./session-commands.js";
 
 export interface RouteServices {
   readonly sessions: SessionManager;
   readonly defaultDirectory: string;
   readonly url: string;
   readonly body: (req: IncomingMessage) => Promise<unknown>;
-  readonly catalog: () => Promise<Catalog>;
+  readonly catalog: (directory?: string, refresh?: boolean) => Promise<Catalog>;
   readonly broadcast: (directory: string, event: OCEvent | TodoUpdated) => void;
   readonly selfUpdate: () => Promise<SelfUpdateResult>;
+  readonly fileWatches: FileWatchRegistry;
+  readonly commands: (directory: string) => ReturnType<typeof getCommands>;
+  readonly vcsBranch: (directory: string) => Promise<string | undefined>;
 }
 
 // This connector is not opencode — it only implements an OpenCode API subset.

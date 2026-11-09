@@ -477,6 +477,12 @@ export class V2EventTranslator {
       case "session.shell.ended":
       case "shell.created":
       case "shell.exited":
+      case "filesystem.changed":
+      case "project.updated":
+      case "provider.updated":
+      case "model.updated":
+      case "command.updated":
+      case "vcs.branch.updated":
         return [this.frame(directory, ev.type, ev.properties)];
       case "message.removed":
         return [

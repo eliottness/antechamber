@@ -1,7 +1,7 @@
 /**
  * Model/provider catalog: obtained from a throwaway `pi --mode rpc` process
  * (`get_available_models` + `get_state`), translated into OpenCode v2
- * Provider/Model shapes, cached for the adapter lifetime.
+ * Provider/Model shapes, refreshed from live agents or bounded cold reads.
  */
 
 import { PiRpcClient } from "./pi-rpc.js";
@@ -103,8 +103,8 @@ function toOCModel(m: PiModelInfo): OCv2Model {
   };
 }
 
-export async function loadCatalog(directory: string): Promise<Catalog> {
-  const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+export async function loadCatalog(directory: string, client?: PiRpcClient): Promise<Catalog> {
+  const pi = client ?? new PiRpcClient({ cwd: directory, args: ["--no-session"] });
   try {
     const [modelsRes, firstState] = await Promise.all([
       pi.command<{ models: PiModelInfo[] }>({ type: "get_available_models" }),
@@ -175,6 +175,6 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
       ? { providers: sorted, defaults, default: resolvedDefault, defaultThinkingLevel: thinkingLevel }
       : { providers: sorted, defaults, default: resolvedDefault };
   } finally {
-    await pi.dispose();
+    if (client === undefined) await pi.dispose();
   }
 }

@@ -220,6 +220,19 @@ export type OCEvent =
   | { type: "session.diff"; properties: { sessionID: string; diff: import("./session-diff.js").SessionFileDiff[] } }
   | { type: "server.connected"; properties: Record<string, unknown> }
   | { type: "mcp.tools.changed"; properties: { server: string } }
+  | { type: "filesystem.changed"; properties: { file: string; event: "change" | "unlink" } }
+  | {
+      type: "project.updated";
+      properties: {
+        id: string;
+        canonical: string;
+        time: { created: number; updated: number; active: number };
+        sandboxes: string[];
+        vcs: string;
+      };
+    }
+  | { type: "provider.updated" | "model.updated" | "command.updated"; properties: Record<string, never> }
+  | { type: "vcs.branch.updated"; properties: { branch?: string } }
   | { type: "session.created"; properties: { info: OCSession } }
   | { type: "session.updated"; properties: { info: OCSession } }
   | { type: "session.renamed"; properties: { sessionID: string; title: string } }

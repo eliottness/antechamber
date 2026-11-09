@@ -145,31 +145,31 @@ function mapCommands(data: unknown): CommandDescriptor[] {
 const COMMAND_CACHE_TTL_MS = 5_000;
 const commandCache = new Map<string, { expiresAt: number; promise: Promise<CommandDescriptor[]> }>();
 
-export function getCommands(directory: string): Promise<CommandDescriptor[]> {
+export function getCommands(directory: string, client?: PiRpcClient, refresh = false): Promise<CommandDescriptor[]> {
   const now = Date.now();
   for (const [key, entry] of commandCache) {
     if (entry.expiresAt <= now) commandCache.delete(key);
   }
   const existing = commandCache.get(directory);
-  if (existing) return existing.promise;
+  if (existing && (!refresh || existing.expiresAt === Infinity)) return existing.promise;
   const entry = {
     expiresAt: Infinity,
     promise: (async () => {
-      const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+      const pi = client ?? new PiRpcClient({ cwd: directory, args: ["--no-session"] });
       try {
         const response = await pi.command<unknown>({ type: "get_commands" });
         if (!response.success) throw new Error(response.error ?? "OmO get_commands failed");
         return mapCommands(response.data);
       } finally {
-        await pi.dispose();
+        if (client === undefined) await pi.dispose();
       }
     })().then(
       (commands) => {
-        entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
+        if (commandCache.get(directory) === entry) entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
         return commands;
       },
       (error: unknown) => {
-        commandCache.delete(directory);
+        if (commandCache.get(directory) === entry) commandCache.delete(directory);
         throw error;
       },
     ),

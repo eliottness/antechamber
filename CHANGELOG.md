@@ -23,6 +23,11 @@ that OpenChamber relies on.
   re-sends them. Unread state is kept (`/view` no longer fails), and the inbox lists inputs still waiting for the agent.
 - A reloaded transcript keeps the turn boundaries and compaction records the live one had. `/compact` answers as soon
   as the compaction starts instead of waiting for it, and slash commands keep their attachments and delivery mode.
+- Rename with AI and other small-model actions work: `/api/experimental/generate/text` runs a one-off OmO turn with
+  no tools and no session. The image-model picker only lists image models, directory search finds folders, open
+  files reload when they change on disk, and project, provider, model, command and Git branch changes reach an open
+  OpenChamber without a reload. Nothing polls: refreshes ride on finished turns, client reads and a watch on Git's
+  HEAD. Usage limits and the debug location list answer like OpenCode instead of 404.
 
 ## [1.0.40] - 2026-11-06
 

@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { errorBody, json, RequestBodyError } from "./http.js";
 import { nativePromptInput, parsePromptParts, v2PromptAttachments, v2PromptParts } from "./prompt-parts.js";
@@ -14,11 +15,13 @@ import { toV2Permission } from "./approvals.js";
 import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-forms.js";
 import { getAgentName } from "./agent-name.js";
 import { vcsRead, VcsError } from "./vcs.js";
-import { announceSessionError, compactSession, getCommands, unsupportedShare } from "./session-commands.js";
+import { announceSessionError, compactSession, unsupportedShare } from "./session-commands.js";
 import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Session } from "./v2.js";
 import type { OCSession } from "./types.js";
 import { SHELL_CANCELLATION_KEY } from "./omo-shells.js";
 import { WorkStatusError } from "./work-status.js";
+import { generateText } from "./text-generation.js";
+import { FileWatchError } from "./file-watch.js";
 import {
   agentDescriptors,
   modelRefFromBody,
@@ -105,18 +108,6 @@ function followsCursor(session: V2Session, cursor: V2SessionCursor, order: "asc"
   return order === "asc" ? comparison > 0 : comparison < 0;
 }
 
-async function currentGitBranch(directory: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execFileAsync("git", ["symbolic-ref", "--short", "HEAD"], {
-      cwd: directory,
-      timeout: 3000,
-    });
-    return stdout.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function initializeGit(directory: string): Promise<boolean> {
   try {
     await execFileAsync("git", ["init", "-q"], { cwd: directory, timeout: 3000 });
@@ -144,6 +135,7 @@ function v2Projects(services: RouteServices): Array<Record<string, unknown>> {
 async function handleV2Bootstrap(
   services: RouteServices,
   res: ServerResponse,
+  url: URL,
   path: string,
   method: string,
   directory: string,
@@ -168,17 +160,27 @@ async function handleV2Bootstrap(
     return true;
   }
   if (path === "/api/provider" && method === "GET") {
-    const cat = await services.catalog();
+    const cat = await services.catalog(directory, true);
     json(res, 200, withLocation(cat.providers.map((p) => ({ ...p, activation: "enabled" }))));
     return true;
   }
   if (path === "/api/model" && method === "GET") {
-    const cat = await services.catalog();
-    json(res, 200, withLocation(flattenModels(cat)));
+    const cat = await services.catalog(directory, true);
+    const requested = url.searchParams.getAll("types");
+    const types = requested.length === 0 ? ["chat"] : requested;
+    json(
+      res,
+      200,
+      withLocation(
+        flattenModels(cat).filter((model) =>
+          types.some((type) => model.capabilities.output.includes(type === "chat" ? "text" : type)),
+        ),
+      ),
+    );
     return true;
   }
   if (path === "/api/model/default" && method === "GET") {
-    const cat = await services.catalog();
+    const cat = await services.catalog(directory);
     json(res, 200, withLocation(defaultV2Model(cat) ?? null));
     return true;
   }
@@ -199,7 +201,7 @@ async function handleV2Bootstrap(
       res,
       200,
       withLocation(
-        (await getCommands(directory)).map((command) => ({
+        (await services.commands(directory)).map((command) => ({
           ...command,
           source: "command",
           hints: [],
@@ -268,7 +270,11 @@ export async function handleV2(
   const withLocation = (data: unknown) => ({ location, data });
 
   // --- bootstrap ---
-  if (await handleV2Bootstrap(services, res, path, method, directory)) return;
+  if (await handleV2Bootstrap(services, res, url, path, method, directory)) return;
+  if (path === "/api/debug/location" && method === "GET") {
+    json(res, 200, []);
+    return;
+  }
   if (path === "/api/debug/location" && method === "DELETE") {
     // OpenChamber evicts a location after git worktree changes so OpenCode re-reads it. antechamber
     // keeps no per-location instance (project and VCS reads are fresh per request): nothing to evict.
@@ -335,6 +341,50 @@ export async function handleV2(
     });
     return;
   }
+  if (path === "/api/experimental/generate/text" && method === "POST") {
+    const body = await services.body(req);
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("prompt" in body) ||
+      typeof body.prompt !== "string" ||
+      body.prompt.trim() === ""
+    ) {
+      json(res, 400, errorBody("InvalidRequestError", "prompt must be a nonempty string"));
+      return;
+    }
+    const model: unknown = "model" in body ? body.model : undefined;
+    if (
+      model !== undefined &&
+      (typeof model !== "object" ||
+        model === null ||
+        !("providerID" in model) ||
+        typeof model.providerID !== "string" ||
+        !("id" in model) ||
+        typeof model.id !== "string")
+    ) {
+      json(res, 400, errorBody("InvalidRequestError", "model must include providerID and id"));
+      return;
+    }
+    const selected =
+      model !== undefined && typeof model === "object" && model !== null && "providerID" in model && "id" in model
+        ? { providerID: String(model.providerID), id: String(model.id) }
+        : undefined;
+    try {
+      json(res, 200, {
+        data: {
+          text: await generateText(services.defaultDirectory, body.prompt, selected),
+        },
+      });
+    } catch (error) {
+      json(res, 503, {
+        _tag: "ServiceUnavailableError",
+        message: error instanceof Error ? error.message : "Text generation is unavailable",
+        service: "opencode",
+      });
+    }
+    return;
+  }
   // OmO's background work (monitors, background terminal sessions, detached eval cells) as OpenCode shells.
   if (path === "/api/shell" && method === "GET") {
     json(res, 200, withLocation(services.sessions.shells.list(directory)));
@@ -362,8 +412,29 @@ export async function handleV2(
     json(res, 400, errorBody("UnsupportedError", "Session statistics are not available with OmO"));
     return;
   }
+  if (path === "/api/experimental/usage/limits" && method === "GET") {
+    json(res, 200, withLocation(null));
+    return;
+  }
   if (path === "/api/mcp" || path.startsWith("/api/mcp/") || path.startsWith("/api/experimental/mcp/")) {
     json(res, 400, errorBody("UnsupportedError", "MCP is not available with OmO"));
+    return;
+  }
+  if (path === "/api/experimental/fs/watch" && (method === "POST" || method === "DELETE")) {
+    const body = await services.body(req);
+    if (typeof body !== "object" || body === null || !("path" in body) || typeof body.path !== "string") {
+      json(res, 400, errorBody("InvalidRequestError", "path must be a string"));
+      return;
+    }
+    try {
+      const file = await services.fileWatches.file(directory, body.path, method === "POST");
+      if (method === "POST") services.fileWatches.watch(directory, file, resolve(directory, body.path));
+      else services.fileWatches.unwatch(directory, file);
+      res.writeHead(204).end();
+    } catch (error) {
+      if (!(error instanceof FileWatchError)) throw error;
+      json(res, error.status, errorBody(error.kind, error.message));
+    }
     return;
   }
   if (path === "/api/fs/find" && method === "GET") {
@@ -379,7 +450,7 @@ export async function handleV2(
     const files = Array.isArray(result.body)
       ? result.body
           .filter((entry): entry is string => typeof entry === "string")
-          .map((path) => ({ path, type: "file" }))
+          .map((path) => ({ path, type: path.endsWith("/") ? "directory" : "file" }))
       : [];
     json(res, 200, withLocation(files));
     return;
@@ -441,7 +512,7 @@ export async function handleV2(
     return;
   }
   if (path === "/api/vcs" && method === "GET") {
-    const current = await currentGitBranch(directory);
+    const current = await services.vcsBranch(directory);
     json(res, 200, withLocation({ provider: "git", branch: current === undefined ? {} : { current } }));
     return;
   }

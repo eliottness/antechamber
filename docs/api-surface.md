@@ -62,7 +62,12 @@ invented resource IDs.
 | `GET /api/shell` | 200 | `{location, data: Shell.Info[]}`: OmO's running background work in the directory (terminal monitors, background terminal sessions, detached eval cells) as OpenCode shells, `metadata.sessionID` naming the session. See [OmO background work as shells](architecture.md#omo-background-work-as-opencode-shells). |
 | `GET /api/websearch/provider` | 200 | `{location, data: []}`; no web-search providers are configured through antechamber. |
 | `GET /api/provider` | 200 | `{location, data: Provider[]}` from the agent catalog. |
-| `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog; `variants` lists thinking levels as `{id, settings}[]`. |
+| `GET /api/model` | 200 | `{location, data: Model[]}` from the agent catalog; repeated `types` (`chat`, `image`) filter by output capability, so an image-only request returns `[]` unless OmO exposes an image-output model. |
+| `GET /api/debug/location` | 200 | Bare `[]`: antechamber keeps no persistent per-location service instances. |
+| `GET /api/experimental/usage/limits` | 200 | `{location, data: null}`, as OpenCode answers without a Console login; antechamber has no Console budget. |
+| `POST /api/experimental/fs/watch` | 204 | Watches an existing file inside the selected directory; 404 `FileNotFoundError` if it is missing, 400 outside the directory. Edits and removals emit `filesystem.changed {file, event: "change" \| "unlink"}`, and an atomic save keeps the watch. |
+| `DELETE /api/experimental/fs/watch` | 204 | Releases one subscription; other subscriptions to the same file keep receiving changes. |
+| `POST /api/experimental/generate/text` | 200 | `{data: {text}}` from a one-off `--no-session --no-tools` OmO turn (optionally on the requested model), never in a user session. 400 for an invalid request, 503 `ServiceUnavailableError` if OmO cannot generate. |
 | `GET /api/model/default` | 200 | `{location, data: Model \| null}` for the active model, same `variants` shape. |
 | `GET /api/agent` | 200 | `{location, data: Agent[]}`; the default model and thinking level are `model: {id, providerID, variant?}`. |
 | `GET /api/command` | 200 | `{location, data: Command[]}`. |
@@ -79,7 +84,7 @@ invented resource IDs.
 | `GET /api/mcp` | 200 | `{location, data: McpServer[]}` (`name`, v2 `status`, `integrationID` for OAuth-capable servers) from RPC `get_loaded_surfaces` on the newest live session in the directory, else in any directory, else on a short-lived `--no-session` agent started for the read (cached 30 s). A new chat, a dormant project and a just-started adapter therefore list the servers too. |
 | `POST /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
 | `DELETE /api/mcp` | 400 | `UnsupportedError`; MCP is unavailable with OmO. Unsupported. |
-| `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file"}]}`. |
+| `GET /api/fs/find` | 200 | `{location, data: [{path, type: "file" \| "directory"}]}`; `type=directory` returns matching directories, including ancestors of matching files, with a trailing slash. |
 | `GET /api/project` | 200 | Project records for the default directory and directories with restorable sessions. |
 | `GET /api/permission/request` | 200 | `{location, data: Permission[]}` for the selected directory, in OpenCode 2.2.5's v2 shape: `action`, `resources`, `save`, `metadata` and, for a tool request, `source: {type: "tool", messageID, id}`. `save` lists only the scope OmO stores on "Allow always" (the displayed patterns for read, edit, list and glob; `*` for grep and eval) and is empty for scopes OmO's UI frame does not expose. |
 | `GET /api/question/request` | 200 | `{location, data: Question[]}`. |
@@ -200,7 +205,7 @@ invented resource IDs.
 |---|---|---:|---|
 | GET | `/event` | 200 | Directory-scoped v1 SSE; events keep their raw v1 shape. |
 | GET | `/global/event` | 200 | Global v1 SSE; broadcast event frames wrap events as `{directory, project, payload}`. |
-| GET | `/api/event` | 200 | v2 SSE envelopes with `location` and `data`. Without a directory selector the stream is global (OpenChamber 2.3.2 opens it that way), live and on `Last-Event-ID` replay; `?directory=` or `x-opencode-directory` scopes it. `permission.asked` carries the same v2 card as `GET /api/permission/request`; `session.created` includes the session's `model` and precedes any model-selection event; OmO's `compaction_progress` fragments arrive as `session.compaction.delta {sessionID, text}` (none when OmO sends no partial text). |
+| GET | `/api/event` | 200 | v2 SSE envelopes with `location` and `data`. Without a directory selector the stream is global (OpenChamber 2.3.2 opens it that way), live and on `Last-Event-ID` replay; `?directory=` or `x-opencode-directory` scopes it. `permission.asked` carries the same v2 card as `GET /api/permission/request`; `session.created` includes the session's `model` and precedes any model-selection event; OmO's `compaction_progress` fragments arrive as `session.compaction.delta {sessionID, text}` (none when OmO sends no partial text). Catalog changes are pushed when they really happen: `project.updated` when a session opens in a new directory; `provider.updated` and `model.updated` when the catalog changes; `command.updated` when a directory's OmO commands change; `vcs.branch.updated {branch?}` when a read directory's Git HEAD moves (watched, no polling). A finished turn re-reads providers, models and commands through that session's running agent; with no live agent only reads of `/api/provider`, `/api/model` or `/api/command` refresh, at most once a minute, so no OmO process is started on a timer. |
 | WebSocket | `/api/global/event/ws` | 101 | Global event stream; sends `ready`, then event frames with directory and payload; `lastEventId` replays retained events. |
 
 The v1 local `/event` stream is not wrapped and remains data-only. The global
