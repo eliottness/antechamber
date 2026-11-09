@@ -142,6 +142,7 @@ export class AdapterServer {
   }
 
   private watchBranch(directory: string): Promise<FSWatcher | undefined> {
+    if (this.stopping) return Promise.resolve(undefined);
     const existing = this.branchWatchers.get(directory);
     if (existing !== undefined) return existing;
     const pending = promisify(execFile)("git", ["rev-parse", "--git-path", "HEAD"], {
@@ -149,6 +150,7 @@ export class AdapterServer {
       timeout: 3000,
     })
       .then(({ stdout }) => {
+        if (this.stopping) return undefined;
         const head = resolve(directory, stdout.trim());
         const watcher = watch(dirname(head), (_event, name) => {
           if (this.stopping || (name !== null && name.toString() !== basename(head))) return;
@@ -180,6 +182,7 @@ export class AdapterServer {
   }
 
   private async readBranch(directory: string): Promise<string | undefined> {
+    if (this.stopping) return this.branchSnapshots.get(directory);
     await this.watchBranch(directory);
     let branch: string | undefined;
     try {
@@ -222,9 +225,11 @@ export class AdapterServer {
     this.stopping = true;
     await this.textGeneration.dispose();
     await Promise.all([...this.pendingRefreshes]);
-    for (const watcher of await Promise.all(this.branchWatchers.values())) watcher?.close();
+    const branchWatchers = [...this.branchWatchers.values()];
     this.branchWatchers.clear();
     await Promise.all(this.branchChecks.values());
+    for (const watcher of await Promise.all([...branchWatchers, ...this.branchWatchers.values()])) watcher?.close();
+    this.branchWatchers.clear();
     // Stop admission before ending SSE: its clients can reconnect while the
     // session RPC groups and private task hosts are still being disposed.
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));

@@ -8,7 +8,9 @@ import type { TestContext } from "node:test";
 import { AdapterServer } from "../src/server.js";
 
 export async function bounded<T>(promise: Promise<T>): Promise<T> {
-  const deadline = AbortSignal.timeout(3_000);
+  // Every wait resolves on a real signal; the bound only caps how long a genuine failure takes to report,
+  // and spawning fake agents under a loaded full suite exceeded 3 s once.
+  const deadline = AbortSignal.timeout(15_000);
   let onAbort = () => {};
   try {
     return await Promise.race([

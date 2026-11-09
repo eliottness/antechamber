@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import fs, { mkdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import test from "node:test";
 import { events, record, serverFor, spawnCount } from "./catalog-harness.js";
@@ -104,19 +105,63 @@ test("watching a missing file answers 404", async (t) => {
   assert.equal(record(await response.json()).name, "FileNotFoundError");
 });
 
-test("one unwatch keeps a second file subscription active", async (t) => {
+test("B3 one DELETE removes a file lease after repeated POST renewals", async (t) => {
   const { root, url } = await serverFor(t);
+  const watches = t.mock.method(fs, "watch");
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
   writeFileSync(join(root, "notes.txt"), "before");
   const body = JSON.stringify({ path: "notes.txt" });
   const headers = { "content-type": "application/json" };
-  const stream = await events(t, url);
   for (let i = 0; i < 2; i++)
     assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
+  const watcher = watches.mock.calls[0]?.result;
+  assert.ok(watcher);
+  const close = t.mock.method(watcher, "close");
+
   assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "DELETE", headers, body })).status, 204);
-  const changed = stream.wait("filesystem.changed");
-  writeFileSync(join(root, "notes.txt"), "after");
-  assert.equal((await changed).data.event, "change");
+
+  assert.equal(watches.mock.callCount(), 1, "POST renewals must share one native watcher");
+  assert.equal(close.mock.callCount(), 1, "one DELETE must release the renewed registration");
 });
+
+for (const scenario of [
+  { name: "a symlink", path: "link.txt", remove: undefined },
+  { name: "a removed symlink", path: "link.txt", remove: "link.txt" },
+  { name: "a removed symlink target", path: "link.txt", remove: "real.txt" },
+  { name: "a removed file", path: "real.txt", remove: "real.txt" },
+]) {
+  test(`B6 DELETE releases the native watcher for ${scenario.name}`, async (t) => {
+    const { root, url } = await serverFor(t);
+    const watches = t.mock.method(fs, "watch");
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    writeFileSync(join(root, "real.txt"), "before");
+    symlinkSync("real.txt", join(root, "link.txt"));
+    const body = JSON.stringify({ path: scenario.path });
+    const headers = { "content-type": "application/json" };
+    assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
+    const watcher = watches.mock.calls[0]?.result;
+    assert.ok(watcher);
+    const close = t.mock.method(watcher, "close");
+    if (scenario.remove !== undefined) unlinkSync(join(root, scenario.remove));
+
+    const removed = await fetch(`${url}/api/experimental/fs/watch`, { method: "DELETE", headers, body });
+
+    assert.equal(removed.status, 204, await removed.text());
+    assert.equal(close.mock.callCount(), 1, "DELETE must close the watcher registered by the same path");
+    writeFileSync(join(root, "real.txt"), "restored");
+    if (scenario.remove === "link.txt") symlinkSync("real.txt", join(root, "link.txt"));
+    assert.equal((await fetch(`${url}/api/experimental/fs/watch`, { method: "POST", headers, body })).status, 204);
+    assert.equal(watches.mock.callCount(), 2, "DELETE must forget the old registration");
+  });
+}
 
 test("creating a session in a new directory publishes project.updated", async (t) => {
   const { root, url } = await serverFor(t);

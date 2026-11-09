@@ -1,13 +1,84 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs, { mkdtempSync, rmSync } from "node:fs";
 import { get, type IncomingMessage } from "node:http";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { AdapterServer } from "../src/server.js";
 import { SessionManager } from "../src/sessions.js";
+
+async function branchServer(t: TestContext) {
+  const root = mkdtempSync(join(tmpdir(), "antechamber-branch-stop-"));
+  const keys = ["ANTECHAMBER_STATE_DIR", "OMO_CODING_AGENT_DIR", "SENPI_CODING_AGENT_DIR", "PI_CODING_AGENT_DIR"];
+  const saved = new Map(keys.map((key) => [key, process.env[key]]));
+  process.env.ANTECHAMBER_STATE_DIR = join(root, "state");
+  for (const key of keys.slice(1)) process.env[key] = join(root, "agent");
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  const watches = t.mock.method(fs, "watch");
+  syncBuiltinESMExports();
+  const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: root });
+  await server.start();
+  const release = Promise.withResolvers<void>();
+  let stopping: Promise<void> | undefined;
+  t.after(async () => {
+    release.resolve();
+    await (stopping ?? server.stop());
+    // Close a leaked real watcher even when the regression fails.
+    for (const call of watches.mock.calls) call.result?.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+  return {
+    root,
+    server,
+    watches,
+    release,
+    stop: () => (stopping ??= server.stop()),
+  };
+}
+
+test("B9 shutdown leaves no Git HEAD watcher from a queued branch read", { timeout: 5_000 }, async (t) => {
+  const { root, server, watches, release, stop } = await branchServer(t);
+  assert.equal((await fetch(`${server.url}/api/vcs`)).status, 200);
+  const watcher = watches.mock.calls[0]?.result;
+  assert.ok(watcher);
+  const close = t.mock.method(watcher, "close");
+  // Gate the existing queue at the review probe's actual shutdown clear boundary.
+  server["branchChecks"].set(root, release.promise);
+  const queued = server["vcsBranch"](root);
+  const watchers = server["branchWatchers"];
+  const clear = watchers.clear.bind(watchers);
+  t.mock.method(watchers, "clear", () => {
+    clear();
+    release.resolve();
+  });
+
+  await stop();
+  await queued;
+
+  assert.equal(watchers.size, 0, "stop leaked a branch watcher created by an already-queued read");
+  assert.equal(close.mock.callCount(), 1, "stop must close the existing native watcher");
+  assert.equal(watches.mock.callCount(), 1, "the queued read must not allocate a watcher while stopping");
+});
+
+test("B9 a pending Git HEAD lookup cannot allocate a watcher after stopping", { timeout: 5_000 }, async (t) => {
+  const { root, server, watches, stop } = await branchServer(t);
+  const lookup = server["watchBranch"](root);
+
+  await stop();
+  await lookup;
+
+  assert.equal(watches.mock.callCount(), 0, "a Git lookup started before stop must not allocate after it");
+  assert.equal(server["branchWatchers"].size, 0);
+});
 
 test("busy shutdown completes while the SSE client tries to reconnect during disposal", {
   timeout: 15_000,

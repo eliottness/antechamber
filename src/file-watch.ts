@@ -13,8 +13,13 @@ export class FileWatchError extends Error {
   }
 }
 
+const LEASE_MS = 24 * 60 * 60 * 1000;
+const MAX_PER_DIRECTORY = 256;
+
+type FileWatchLease = { watcher: FSWatcher; expires: number; timer: ReturnType<typeof setTimeout> };
+
 export class FileWatchRegistry {
-  private watches = new Map<string, { watcher: FSWatcher; users: number }>();
+  private watches = new Map<string, Map<string, FileWatchLease>>();
 
   constructor(private emit: (directory: string, event: OCEvent) => void) {}
 
@@ -24,13 +29,14 @@ export class FileWatchRegistry {
     const inside = relative(root, target);
     if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
       throw new FileWatchError(400, "BadRequestError", "Path must remain inside the selected directory");
+    // Removal uses the registered path even when the file or symlink no longer exists.
+    if (!required) return resolve(directory, path);
     try {
-      const actual = await realpath(required ? target : dirname(target));
-      const canonical = required ? actual : resolve(actual, basename(target));
+      const canonical = await realpath(target);
       const rel = relative(root, canonical);
       if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
         throw new FileWatchError(400, "BadRequestError", "Path must remain inside the selected directory");
-      if (required && !(await stat(canonical)).isFile())
+      if (!(await stat(canonical)).isFile())
         throw new FileWatchError(404, "FileNotFoundError", `File not found: ${path}`);
       return canonical;
     } catch (error) {
@@ -41,36 +47,77 @@ export class FileWatchRegistry {
   }
 
   watch(directory: string, file: string, reportedFile: string): void {
-    const key = JSON.stringify([directory, file]);
-    const existing = this.watches.get(key);
+    const files = this.watches.get(directory) ?? new Map<string, FileWatchLease>();
+    const existing = files.get(reportedFile);
     if (existing !== undefined) {
-      existing.users++;
+      existing.expires = Date.now() + LEASE_MS;
+      clearTimeout(existing.timer);
+      existing.timer = setTimeout(() => this.unwatch(directory, reportedFile), LEASE_MS);
+      existing.timer.unref();
       return;
     }
-    const watcher = watch(dirname(file), (_event, changed) => {
-      if (changed !== null && changed.toString() !== basename(file)) return;
+    if (files.size >= MAX_PER_DIRECTORY) {
+      const [soonest] = [...files].reduce((a, b) => (b[1].expires < a[1].expires ? b : a));
+      this.unwatch(directory, soonest);
+    }
+    const timer = setTimeout(() => this.unwatch(directory, reportedFile), LEASE_MS);
+    timer.unref();
+    const lease: FileWatchLease = {
+      watcher: this.arm(directory, file, reportedFile),
+      expires: Date.now() + LEASE_MS,
+      timer,
+    };
+    files.set(reportedFile, lease);
+    this.watches.set(directory, files);
+  }
+
+  /**
+   * Watch the file itself, not its directory. On macOS a directory watch goes through FSEvents, whose stream
+   * starts asynchronously and under load missed a write made right after the 204 (reproduced: every run failed
+   * with eight test processes in parallel); a file watch (kqueue there, inotify on Linux) is registered before
+   * fs.watch returns. An editor's atomic save replaces the inode and ends the watch with "rename", so a
+   * replacement file is watched again; a removed file releases its lease.
+   */
+  private arm(directory: string, file: string, reportedFile: string): FSWatcher {
+    const watcher = watch(file, (event) => {
+      const exists = existsSync(file);
       this.emit(directory, {
         type: "filesystem.changed",
-        properties: { file: reportedFile, event: existsSync(file) ? "change" : "unlink" },
+        properties: { file: reportedFile, event: exists ? "change" : "unlink" },
       });
+      const lease = this.watches.get(directory)?.get(reportedFile);
+      if (event !== "rename" || lease?.watcher !== watcher) return;
+      if (!exists) {
+        this.unwatch(directory, reportedFile);
+        return;
+      }
+      watcher.close();
+      lease.watcher = this.arm(directory, file, reportedFile);
     });
     watcher.on("error", () => {
-      watcher.close();
-      this.watches.delete(key);
+      if (this.watches.get(directory)?.get(reportedFile)?.watcher === watcher) this.unwatch(directory, reportedFile);
+      else watcher.close();
     });
-    this.watches.set(key, { watcher, users: 1 });
+    return watcher;
   }
 
   unwatch(directory: string, file: string): void {
-    const key = JSON.stringify([directory, file]);
-    const entry = this.watches.get(key);
-    if (entry === undefined || --entry.users > 0) return;
+    const files = this.watches.get(directory);
+    const entry = files?.get(file);
+    if (entry === undefined) return;
+    clearTimeout(entry.timer);
     entry.watcher.close();
-    this.watches.delete(key);
+    files?.delete(file);
+    if (files?.size === 0) this.watches.delete(directory);
   }
 
   close(): void {
-    for (const entry of this.watches.values()) entry.watcher.close();
+    for (const files of this.watches.values()) {
+      for (const entry of files.values()) {
+        clearTimeout(entry.timer);
+        entry.watcher.close();
+      }
+    }
     this.watches.clear();
   }
 }
