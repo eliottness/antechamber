@@ -28,6 +28,11 @@ that OpenChamber relies on.
   files reload when they change on disk, and project, provider, model, command and Git branch changes reach an open
   OpenChamber without a reload. Nothing polls: refreshes ride on finished turns, client reads and a watch on Git's
   HEAD. Usage limits and the debug location list answer like OpenCode instead of 404.
+- Text generation picks its model at agent start, so Rename with AI never changes OmO's saved default model; it is
+  bounded by one deadline and two concurrent runs, and stops when the caller disconnects or the server stops.
+- File watches are 24-hour leases that OpenChamber's renewals extend, so closed editors no longer leave watchers
+  behind; a reverted, forked or compacted conversation gets back the instruction entries it lost; and a turn still
+  running tools no longer shows as finished in a reloaded transcript.
 
 ## [1.0.40] - 2026-11-06
 
