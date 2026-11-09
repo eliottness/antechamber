@@ -292,7 +292,11 @@ for (const owner of ["user", "assistant", "synthetic"] as const) {
     await request(`/api/session/${sessionID}/prompt`, { text: "normal", id: "msg_existing_user" });
     await idle;
     if (owner === "synthetic") {
-      const delivered = stream.wait((event) => event.type === "session.inbox.delivered");
+      // The first prompt's own delivery can still arrive after its idle, so wait for this message's delivery.
+      const delivered = stream.wait(
+        (event) =>
+          event.type === "session.inbox.delivered" && (event.data as { inboxID?: string }).inboxID === "msg_context",
+      );
       await request(`/api/session/${sessionID}/synthetic`, { text: "context", id: "msg_context" });
       await delivered;
     }
