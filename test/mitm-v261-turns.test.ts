@@ -381,3 +381,34 @@ test("native compaction refusal is reported after admission as a failure event",
   const event = await failed;
   assert.equal((event.data as { inputID: string }).inputID, item.id);
 });
+
+test("an agent that dies during a compaction fails it, and the next compact starts a new one", {
+  timeout: 20_000,
+}, async (t) => {
+  const { request, sessionID, server, native } = await startServer(t);
+  const stream = await openEvents(`${server.url}/api/event`);
+  t.after(() => stream.close());
+  const idle = stream.wait((event) => event.type === "session.idle");
+  await request(`/api/session/${sessionID}/prompt`, { text: "normal" });
+  await idle;
+  const started = stream.wait((event) => event.type === "session.compaction.started");
+  await native().sessionRpc(sessionID, { type: "emit", frame: { type: "compaction_start", reason: "threshold" } });
+  const deadID = ((await started).data as { inputID: string }).inputID;
+  const failed = stream.wait(
+    (event) => event.type === "session.compaction.failed" && (event.data as { inputID?: string }).inputID === deadID,
+  );
+  void native()
+    .sessionRpc(sessionID, { type: "exit" })
+    .catch(() => undefined);
+  assert.equal(((await failed).data as { reason: string }).reason, "threshold");
+
+  const compacted = await request(`/api/session/${sessionID}/compact`, {});
+  assert.equal(compacted.status, 200);
+  const item = ((await compacted.json()) as { data: { id: string } }).data;
+  assert.notEqual(item.id, deadID, "a new compaction, not the dead one");
+  const history = await messages(request, sessionID);
+  assert.equal(
+    history.some((message) => message.id === deadID && message.status === "running"),
+    false,
+  );
+});

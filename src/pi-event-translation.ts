@@ -273,6 +273,22 @@ export class PiEventTranslator {
     }
     delete s.compactingFromIdle;
     delete s.info.time.compacting;
+    // A compaction the run never finished must not stay "running": a later Compact would join it and report
+    // success for work that will never happen.
+    if (s.compactionID !== undefined) {
+      const inputID = s.compactionID;
+      delete s.compactionID;
+      delete s.heldCompactionEnd;
+      this.services.emit(s.info.directory, {
+        type: "session.compaction.failed",
+        properties: {
+          sessionID: s.info.id,
+          inputID,
+          reason: s.compactionReason ?? "manual",
+          error: { name: "CompactionError", data: { message: error.data.message } },
+        },
+      });
+    }
   }
 
   setStatus(s: ManagedSession, status: OCSessionStatus): void {
@@ -738,6 +754,7 @@ export class PiEventTranslator {
         // An auto-compaction can fall between steps; its summary is a new step.
         this.completeAwaitingTools(s);
         s.compactionID ??= id("msg");
+        s.compactionReason = typeof ev.reason === "string" ? ev.reason : "manual";
         this.services.emit(s.info.directory, {
           type: "session.compaction.started",
           properties: {

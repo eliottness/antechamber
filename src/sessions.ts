@@ -131,6 +131,8 @@ export interface ManagedSession extends ThinkingState {
   /** A manual compaction started while idle; its end returns the session to idle. */
   compactingFromIdle?: boolean;
   compactionID?: string;
+  /** The native reason of the running compaction, for its failure event. */
+  compactionReason?: string;
   /** Retries sessionRpc still owes a `compact` command that OmO cancels on its own. */
   compactRetry?: { left: number; aborts: number };
   /** A cancelled compaction_end held back while its retry may continue the same compaction. */
