@@ -810,7 +810,7 @@ export class PiEventTranslator {
             }
           }
           if (key !== undefined) {
-            s.tree.messageEntries[inputID] = key;
+            s.tree.messageEntries[inputID] ??= key;
             (s.tree.compactionReasons ??= {})[key] = ev.reason === "manual" ? "manual" : "auto";
           }
           for (const message of compactionMessages(

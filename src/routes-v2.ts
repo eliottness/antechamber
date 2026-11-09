@@ -16,7 +16,7 @@ import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-f
 import { getAgentName } from "./agent-name.js";
 import { vcsRead, VcsError } from "./vcs.js";
 import { announceSessionError, compactSession, unsupportedShare } from "./session-commands.js";
-import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Session } from "./v2.js";
+import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Message, type V2Session } from "./v2.js";
 import type { OCSession } from "./types.js";
 import { SHELL_CANCELLATION_KEY } from "./omo-shells.js";
 import { WorkStatusError } from "./work-status.js";
@@ -799,61 +799,30 @@ export async function handleV2(
         const order = url.searchParams.get("order");
         const limit = numberParam(url.searchParams.get("limit"));
         const history = services.sessions.messages(sessionId) ?? [];
-        const messagesWithTurns = history.flatMap((message, index) => {
+        const messagesWithTurns = history.flatMap<V2Message>((message) => {
           if (message.parts.some((part) => part.type === "compaction")) {
-            const summary = history[index + 1];
-            if (summary?.info.role !== "assistant" || summary.info.summary !== true) return [];
-            const entryID =
-              managed.tree.messageEntries[message.info.id] ?? message.info.id.replace(/^msg_compaction_/, "");
-            const admittedID =
-              Object.keys(managed.tree.messageEntries).find(
-                (key) => key !== message.info.id && managed.tree.messageEntries[key] === entryID,
-              ) ?? message.info.id;
-            const content = summary.parts.find((part) => part.type === "text");
-            return [
-              {
-                id: admittedID,
-                type: "compaction" as const,
-                time: { created: message.info.time.created },
-                status: "completed" as const,
-                reason: managed.tree.compactionReasons?.[entryID] ?? "manual",
-                summary: content?.type === "text" ? content.text : "",
-              },
-            ];
+            const item = services.sessions.compaction(sessionId, message.info.id);
+            return item === undefined ? [] : [item];
           }
           if (message.info.role === "assistant" && message.info.summary === true) return [];
           const item = toV2Message(message);
-          const next = history
-            .slice(index + 1)
-            .find((candidate) => candidate.info.role !== "user" || !candidate.info.synthetic);
-          if (message.info.role !== "assistant" || next?.info.role === "assistant" || message.info.finish === undefined)
-            return [item];
-          const error = message.info.error;
+          const boundary = managed.tree.idleBoundaries?.[message.info.id];
+          if (boundary === undefined) return [item];
           return [
             item,
             {
               id: `msg_idle_${message.info.id.replace(/^msg_/, "")}`,
               type: "idle" as const,
-              time: { created: message.info.time.completed ?? message.info.time.created },
-              outcome:
-                error?.name === "MessageAbortedError"
-                  ? ("interrupted" as const)
-                  : error
-                    ? ("failed" as const)
-                    : ("succeeded" as const),
-              ...(error !== undefined ? { error } : {}),
+              time: { created: boundary.at },
+              outcome: boundary.outcome,
+              ...(boundary.error !== undefined ? { error: boundary.error } : {}),
             },
           ];
         });
-        if (managed.compactionID && !messagesWithTurns.some((message) => message.id === managed.compactionID))
-          messagesWithTurns.push({
-            id: managed.compactionID,
-            type: "compaction",
-            time: { created: managed.info.time.compacting ?? Date.now() },
-            status: "running",
-            reason: "manual",
-            summary: "",
-          });
+        if (managed.compactionID && !messagesWithTurns.some((message) => message.id === managed.compactionID)) {
+          const item = services.sessions.compaction(sessionId, managed.compactionID);
+          if (item !== undefined) messagesWithTurns.push(item);
+        }
         let messages = messagesWithTurns;
         if (order !== "asc") messages = messages.reverse(); // v2 default is newest-first
         const cursor = url.searchParams.get("cursor");
@@ -876,20 +845,16 @@ export async function handleV2(
           throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
         if (body.id !== undefined && (typeof body.id !== "string" || !body.id.startsWith("msg_")))
           throw new RequestBodyError(400, "id must be a message ID");
-        if (managed.compactionID !== undefined) {
-          json(res, 409, errorBody("ConflictError", "Compaction already running"));
+        const inputID = body.id ?? `msg_${randomUUID().replaceAll("-", "")}`;
+        const admission = services.sessions.admitCompaction(sessionId, inputID);
+        if (admission.kind === "conflict") {
+          json(res, 409, errorBody("ConflictError", "Message ID already in use"));
           return;
         }
-        const inputID = body.id ?? `msg_${randomUUID().replaceAll("-", "")}`;
-        managed.compactionID = inputID;
-        const item = {
-          id: inputID,
-          type: "compaction",
-          time: { created: Date.now() },
-          status: "running",
-          reason: "manual",
-          summary: "",
-        };
+        if (admission.kind === "existing") {
+          json(res, 200, { data: admission.item });
+          return;
+        }
         void compactSession(services.sessions, sessionId)
           .then((result) => {
             if (result.kind === "error")
@@ -908,7 +873,7 @@ export async function handleV2(
               error instanceof Error ? error.message : String(error),
             );
           });
-        json(res, 200, { data: item });
+        json(res, 200, { data: admission.item });
         return;
       }
       case "POST /shell": {

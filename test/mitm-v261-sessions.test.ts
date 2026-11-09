@@ -248,14 +248,60 @@ test("view advances a durable watermark without regressing on an older idle", as
   const api = await server(t);
   const id = await api.create();
   const stream = await events(t, api.url);
+  const idle = stream.wait("session.idle");
+  assert.equal((await api.request(`/api/session/${id}/prompt`, "POST", { text: "normal" })).status, 200);
+  await idle;
+  const session = record(record(await (await api.request(`/api/session/${id}`)).json()).data);
+  const watermark = record(session.time).idle;
+  assert.equal(typeof watermark, "number");
+  if (typeof watermark !== "number") throw new Error("missing idle boundary");
   const viewed = stream.wait("session.viewed");
   void viewed.catch(() => undefined);
-  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: 1234 })).status, 204);
-  assert.equal((await viewed).data.idle, 1234);
-  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: 1233 })).status, 204);
+  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: watermark })).status, 204);
+  assert.equal((await viewed).data.idle, watermark);
+  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: watermark - 1 })).status, 204);
   await api.restart();
   const response = await api.request(`/api/session/${id}`);
-  assert.equal(record(record(record(await response.json()).data).time).viewed, 1234);
+  const time = record(record(record(await response.json()).data).time);
+  assert.equal(time.viewed, watermark);
+  assert.equal(time.idle, watermark);
+});
+
+test("view ignores a watermark when the session has no idle boundary", async (t) => {
+  const api = await server(t);
+  const id = await api.create();
+  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: 1234 })).status, 204);
+  const response = await api.request(`/api/session/${id}`);
+  assert.equal(record(record(record(await response.json()).data).time).viewed, undefined);
+});
+
+test("view ignores a watermark newer than its durable idle boundary", async (t) => {
+  const api = await server(t);
+  const id = await api.create();
+  const stream = await events(t, api.url);
+  const idle = stream.wait("session.idle");
+  await api.request(`/api/session/${id}/prompt`, "POST", { text: "normal" });
+  await idle;
+  const session = record(record(await (await api.request(`/api/session/${id}`)).json()).data);
+  const watermark = record(session.time).idle;
+  assert.equal(typeof watermark, "number");
+  if (typeof watermark !== "number") throw new Error("missing idle boundary");
+  await api.restart();
+  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: watermark + 1 })).status, 204);
+  const response = await api.request(`/api/session/${id}`);
+  assert.equal(record(record(record(await response.json()).data).time).viewed, undefined);
+  // An earlier real watermark may be acknowledged even when it is not the latest idle.
+  assert.equal((await api.request(`/api/session/${id}/view`, "POST", { idle: watermark - 1 })).status, 204);
+  const accepted = await api.request(`/api/session/${id}`);
+  assert.equal(record(record(record(await accepted.json()).data).time).viewed, watermark - 1);
+});
+
+test("view requires a finite idle watermark in the request", async (t) => {
+  const api = await server(t);
+  const id = await api.create();
+  for (const body of [{}, { idle: "1234" }, { idle: null }]) {
+    assert.equal((await api.request(`/api/session/${id}/view`, "POST", body)).status, 400);
+  }
 });
 
 test("instruction PUT delivers a hidden context block before the next user prompt after restart", async (t) => {

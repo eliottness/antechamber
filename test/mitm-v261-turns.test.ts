@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
 import { AdapterServer } from "../src/server.js";
+import { SessionManager } from "../src/sessions.js";
 import { openEvents } from "./bug-harness.js";
 
 async function startServer(t: TestContext, holdCompact = false, progress = false) {
@@ -48,6 +49,11 @@ async function startServer(t: TestContext, holdCompact = false, progress = false
     },
     request,
     sessionID: data.id,
+    native() {
+      const manager: unknown = Reflect.get(server, "sessions");
+      assert.ok(manager instanceof SessionManager);
+      return manager;
+    },
     async restart() {
       await server.stop();
       server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: root });
@@ -79,6 +85,56 @@ test("completed native turn has a durable idle outcome after history reload", { 
   const restored = second.find((message) => message.type === "idle");
   assert.equal(restored?.id, idle.id);
   assert.equal(restored?.outcome, idle.outcome);
+});
+
+test("a held tool turn has no idle record until native execution ends", { timeout: 15_000 }, async (t) => {
+  const { request, sessionID, server, restart, native } = await startServer(t);
+  const stream = await openEvents(`${server.url}/api/event`);
+  t.after(() => stream.close());
+  const admitted = stream.wait((event) => event.type === "session.inbox.enqueued");
+  assert.equal(
+    (await request(`/api/session/${sessionID}/prompt`, { text: "interrupted-work", id: "msg_held" })).status,
+    200,
+  );
+  await admitted;
+  assert.deepEqual(
+    (await messages(request, sessionID)).filter((message) => message.type === "idle"),
+    [],
+  );
+  const idleEvent = stream.wait((event) => event.type === "session.idle");
+  assert.equal((await native().sessionRpc(sessionID, { type: "release" })).success, true);
+  await idleEvent;
+  const before = (await messages(request, sessionID)).filter((message) => message.type === "idle");
+  assert.equal(before.length, 1);
+  assert.equal(before[0]?.outcome, "succeeded");
+  await restart();
+  assert.deepEqual(
+    (await messages(request, sessionID)).filter((message) => message.type === "idle"),
+    before,
+  );
+});
+
+test("interruption between tool steps has a durable interrupted boundary", { timeout: 15_000 }, async (t) => {
+  const { request, sessionID, server, restart, native } = await startServer(t);
+  const stream = await openEvents(`${server.url}/api/event`);
+  t.after(() => stream.close());
+  const admitted = stream.wait((event) => event.type === "session.inbox.enqueued");
+  await request(`/api/session/${sessionID}/prompt`, { text: "interrupted-work", id: "msg_interrupted" });
+  await admitted;
+  assert.equal((await request(`/api/session/${sessionID}/interrupt`, {})).status, 200);
+  const idleEvent = stream.wait((event) => event.type === "session.idle");
+  // OmO may end an aborted tool run without emitting another assistant message.
+  await native().sessionRpc(sessionID, { type: "emit", frame: { type: "agent_end" } });
+  await native().sessionRpc(sessionID, { type: "emit", frame: { type: "agent_idle" } });
+  await idleEvent;
+  const before = (await messages(request, sessionID)).filter((message) => message.type === "idle");
+  assert.equal(before.length, 1);
+  assert.equal(before[0]?.outcome, "interrupted");
+  await restart();
+  assert.deepEqual(
+    (await messages(request, sessionID)).filter((message) => message.type === "idle"),
+    before,
+  );
 });
 
 for (const [text, outcome] of [
@@ -225,6 +281,80 @@ test("compact returns its admitted item while native work is still running", { t
   assert.equal(item.type, "compaction");
   assert.equal(item.status, "running");
   await started;
+});
+
+for (const owner of ["user", "assistant", "synthetic"] as const) {
+  test(`compaction rejects an ID owned by a ${owner} message`, { timeout: 15_000 }, async (t) => {
+    const { server, request, sessionID, native } = await startServer(t);
+    const stream = await openEvents(`${server.url}/api/event`);
+    t.after(() => stream.close());
+    const idle = stream.wait((event) => event.type === "session.idle");
+    await request(`/api/session/${sessionID}/prompt`, { text: "normal", id: "msg_existing_user" });
+    await idle;
+    if (owner === "synthetic") {
+      const delivered = stream.wait((event) => event.type === "session.inbox.delivered");
+      await request(`/api/session/${sessionID}/synthetic`, { text: "context", id: "msg_context" });
+      await delivered;
+    }
+    const before = await messages(request, sessionID);
+    const owned = before.find((message) => message.type === owner);
+    assert.ok(owned);
+    const response = await request(`/api/session/${sessionID}/compact`, { id: owned.id });
+    assert.equal(response.status, 409);
+    assert.equal(((await response.json()) as { name: string }).name, "ConflictError");
+    const inspected = await native().sessionRpc<{ commands: Array<{ type: string }> }>(sessionID, { type: "inspect" });
+    assert.equal(
+      inspected.data?.commands.some((command) => command.type === "compact"),
+      false,
+    );
+    assert.deepEqual(await messages(request, sessionID), before);
+  });
+}
+
+test("pending compaction retries reuse the admission without native redispatch", { timeout: 15_000 }, async (t) => {
+  const { server, request, sessionID, native } = await startServer(t, true);
+  await request(`/api/session/${sessionID}/prompt`, { text: "normal" });
+  const stream = await openEvents(`${server.url}/api/event`);
+  t.after(() => stream.close());
+  const started = stream.wait((event) => event.type === "session.compaction.started");
+  const [first, retry] = await Promise.all([
+    request(`/api/session/${sessionID}/compact`, { id: "msg_pending" }),
+    request(`/api/session/${sessionID}/compact`, { id: "msg_pending" }),
+  ]);
+  assert.equal(first.status, 200);
+  assert.equal(retry.status, 200);
+  const item = (await first.json()) as { data: Record<string, unknown> };
+  assert.deepEqual(await retry.json(), item);
+  await started;
+  // Like OpenCode's pending inbox, a second request with a fresh ID joins the pending compaction.
+  const joined = await request(`/api/session/${sessionID}/compact`, { id: "msg_joined" });
+  assert.equal(joined.status, 200);
+  assert.deepEqual(await joined.json(), item);
+  const pi = native().get(sessionID)?.pi;
+  assert.ok(pi);
+  const inspected = await pi.command<{ commands: Array<{ type: string }> }>({ type: "inspect" });
+  assert.equal(inspected.data?.commands.filter((command) => command.type === "compact").length, 1);
+});
+
+test("completed compaction retries retain the admitted ID across restart", { timeout: 15_000 }, async (t) => {
+  const { server, request, sessionID, restart, native } = await startServer(t);
+  await request(`/api/session/${sessionID}/prompt`, { text: "normal" });
+  const stream = await openEvents(`${server.url}/api/event`);
+  t.after(() => stream.close());
+  const ended = stream.wait((event) => event.type === "session.compaction.ended");
+  await request(`/api/session/${sessionID}/compact`, { id: "msg_idempotent" });
+  await ended;
+  // Await the operation barrier so completion's history binding has finished.
+  await native().sessionRpc(sessionID, { type: "inspect" });
+  const compacted = (await messages(request, sessionID)).find((message) => message.id === "msg_idempotent");
+  assert.equal(compacted?.status, "completed");
+  const retry = await request(`/api/session/${sessionID}/compact`, { id: "msg_idempotent" });
+  assert.equal(retry.status, 200);
+  assert.deepEqual(((await retry.json()) as { data: unknown }).data, compacted);
+  await restart();
+  const restored = await request(`/api/session/${sessionID}/compact`, { id: "msg_idempotent" });
+  assert.equal(restored.status, 200);
+  assert.deepEqual(((await restored.json()) as { data: unknown }).data, compacted);
 });
 
 test("native compaction progress emits its actual summary fragment", { timeout: 15_000 }, async (t) => {

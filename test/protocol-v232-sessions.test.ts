@@ -539,8 +539,11 @@ test("V232-020: honors diff range filters", async (t) => {
     "session messages",
   );
   assert.equal(Array.isArray(messages.data), true);
-  const first = record((messages.data as unknown[])[0], "first message");
-  const last = record((messages.data as unknown[]).at(-1), "last message");
+  const transcript = (messages.data as unknown[])
+    .map((message) => record(message, "transcript message"))
+    .filter((message) => message.type === "user" || message.type === "assistant");
+  const first = record(transcript[0], "first message");
+  const last = record(transcript.at(-1), "last message");
   if (typeof first.id !== "string") assert.fail("first message id must be a string");
   if (typeof last.id !== "string") assert.fail("last message id must be a string");
   const response = await fetch(`${url}/api/session/${sessionID}/diff?from=${first.id}&to=${last.id}&context=0`);

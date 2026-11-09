@@ -105,7 +105,15 @@ export interface ManagedSession extends ThinkingState {
   instructions?: Record<string, InstructionEntryState>;
   /** Suppress model-selection events until the session creation record has its final model. */
   initializing?: boolean;
-  tree: SessionTreeState;
+  tree: SessionTreeState & {
+    /** Execution boundaries observed over RPC, retained with the durable message identities. */
+    idleBoundaries?: Record<
+      string,
+      { at: number; outcome: NonNullable<OCSession["outcome"]>; error?: NonNullable<OCAssistantMessage["error"]> }
+    >;
+    lastIdle?: number;
+    compactionAdmissions?: Record<string, number>;
+  };
   info: OCSession;
   /** undefined while dormant (restored from disk, no pi process spawned yet). */
   pi: PiRpcClient | undefined;
@@ -659,7 +667,13 @@ export class SessionManager {
   /** Mark only the idle boundary that the caller actually observed. */
   view(sessionId: string, idle: number): void {
     const s = this.get(sessionId);
-    if (s === undefined || (s.info.time.viewed !== undefined && s.info.time.viewed >= idle)) return;
+    if (
+      s === undefined ||
+      s.info.time.idle === undefined ||
+      idle > s.info.time.idle ||
+      (s.info.time.viewed !== undefined && s.info.time.viewed >= idle)
+    )
+      return;
     s.info.time.viewed = idle;
     this.persistMeta(s);
     this.emit(s.info.directory, { type: "session.viewed", properties: { sessionID: sessionId, idle } });
@@ -701,6 +715,66 @@ export class SessionManager {
       });
     }
     return messages;
+  }
+
+  compaction(sessionId: string, messageID: string) {
+    const s = this.get(sessionId);
+    if (s === undefined) return undefined;
+    const history = this.ensureMessages(s);
+    const index = history.findIndex(
+      (message) =>
+        message.parts.some((part) => part.type === "compaction") &&
+        (message.info.id === messageID ||
+          s.tree.messageEntries[messageID] === message.info.id.replace(/^msg_compaction_/, "")),
+    );
+    const message = history[index];
+    const summary = history[index + 1];
+    if (message !== undefined && summary?.info.role === "assistant" && summary.info.summary) {
+      const entryID = message.info.id.replace(/^msg_compaction_/, "");
+      const admittedID =
+        Object.keys(s.tree.messageEntries).find(
+          (key) => key !== message.info.id && s.tree.messageEntries[key] === entryID,
+        ) ?? message.info.id;
+      const content = summary.parts.find((part) => part.type === "text");
+      return {
+        id: admittedID,
+        type: "compaction" as const,
+        time: { created: s.tree.compactionAdmissions?.[admittedID] ?? message.info.time.created },
+        status: "completed" as const,
+        reason: s.tree.compactionReasons?.[entryID] ?? "manual",
+        summary: content?.type === "text" ? content.text : "",
+      };
+    }
+    if (s.compactionID !== messageID) return undefined;
+    return {
+      id: messageID,
+      type: "compaction" as const,
+      time: { created: s.tree.compactionAdmissions?.[messageID] ?? s.info.time.compacting ?? Date.now() },
+      status: "running" as const,
+      reason: "manual" as const,
+      summary: "",
+    };
+  }
+
+  /** Synchronous admission owns the ID before any native work can yield to another request. */
+  admitCompaction(sessionId: string, messageID: string) {
+    const s = this.get(sessionId);
+    if (s === undefined) throw new SessionTreeError(`unknown session: ${sessionId}`);
+    const history = this.ensureMessages(s);
+    const owner = history.find((message) => message.info.id === messageID);
+    if (
+      (owner !== undefined && !owner.parts.some((part) => part.type === "compaction")) ||
+      Object.keys(s.tree.idleBoundaries ?? {}).some((key) => `msg_idle_${key.replace(/^msg_/, "")}` === messageID)
+    )
+      return { kind: "conflict" as const };
+    const exact = this.compaction(sessionId, messageID);
+    if (exact !== undefined) return { kind: "existing" as const, item: exact };
+    if (s.tree.messageEntries[messageID] !== undefined) return { kind: "conflict" as const };
+    if (s.compactionID !== undefined)
+      return { kind: "existing" as const, item: this.compaction(sessionId, s.compactionID)! };
+    s.compactionID = messageID;
+    (s.tree.compactionAdmissions ??= {})[messageID] = Date.now();
+    return { kind: "admitted" as const, item: this.compaction(sessionId, messageID)! };
   }
 
   /** Append to canonical history, before the hidden redo branch while reverted. */
@@ -826,6 +900,7 @@ export class SessionManager {
         if (messageID !== undefined) child.info.parentMessageID = messageID;
         child.info.agent = s.info.agent ?? getAgentName();
         if (s.info.metadata !== undefined) child.info.metadata = structuredClone(s.info.metadata);
+        if (s.instructions !== undefined) child.instructions = structuredClone(s.instructions);
         const childTree = await getEntries(pi);
         child.tree.leafId = childTree.leafId;
         this.ensureMessages(child);
@@ -1797,6 +1872,7 @@ export class SessionManager {
       (reg?.title && reg.title !== "New session" && reg.title !== sc.fallbackTitle ? "user" : "fallback");
     const useRegistry = titleSource === "user" || (sc.titleSource !== "native" && titleSource === "generated");
     const resumed = dormantModel(sc, reg?.model);
+    const tree: ManagedSession["tree"] = durableShellTree(reg?.tree ?? { messageEntries: {} });
     const info: OCSession = {
       id: ocId,
       projectID: sc.directory,
@@ -1822,10 +1898,11 @@ export class SessionManager {
         updated: Math.max(sc.updated, reg?.updated ?? 0),
         ...(reg?.archived ? { archived: reg.archived } : {}),
         ...(reg?.viewed !== undefined ? { viewed: reg.viewed } : {}),
+        ...(tree.lastIdle !== undefined ? { idle: tree.lastIdle } : {}),
       },
     };
     const managed: ManagedSession = {
-      tree: durableShellTree(reg?.tree ?? { messageEntries: {} }),
+      tree,
       titleSource: useRegistry ? titleSource : (sc.titleSource ?? "fallback"),
       info,
       pi: undefined,
@@ -1934,7 +2011,30 @@ export class SessionManager {
 
   /** Keep the existing event entry point for RPC wiring and test harnesses. */
   private onPiEvent(s: ManagedSession, ev: Record<string, unknown>): void {
+    const interrupted = s.interruptRequested;
     this.events.onPiEvent(s, ev);
+    if (ev.type === "agent_idle" && s.info.time.idle !== undefined) {
+      recordTurn(s);
+      s.tree.lastIdle = s.info.time.idle;
+      const last = s.messages?.findLast(
+        (message) =>
+          message.info.role === "assistant" &&
+          !message.info.summary &&
+          !message.info.id.startsWith("msg_background_") &&
+          !s.localMessageIds?.has(message.info.id),
+      );
+      if (last?.info.role === "assistant") {
+        const error = interrupted ? { name: "MessageAbortedError", data: { message: "Cancelled" } } : last.info.error;
+        const outcome = interrupted ? "interrupted" : (s.info.outcome ?? "succeeded");
+        s.info.outcome = outcome;
+        (s.tree.idleBoundaries ??= {})[last.info.id] = {
+          at: s.info.time.idle,
+          outcome,
+          ...(error !== undefined ? { error } : {}),
+        };
+      }
+      this.persistMeta(s);
+    }
   }
 }
 

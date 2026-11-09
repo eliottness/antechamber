@@ -203,6 +203,26 @@ input.on("line", (line) => {
     data = model;
   }
   if (command.type === "compact") record("assistant", "Compacted summary");
+  if (command.type === "send_custom_message") {
+    // OmO persists content/display/details before emitting the custom message:
+    // senpi/dist/core/agent-session.js:6408-6418 (_appendCustomMessage).
+    const entry = {
+      type: "custom_message",
+      id: randomUUID(),
+      parentId: leaf,
+      timestamp: Date.now(),
+      customType: command.customType,
+      content: command.content,
+      display: command.display,
+      details: command.details,
+    };
+    leaf = entry.id;
+    records.push(entry);
+    appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+    const message = { ...entry, role: "custom" };
+    send({ type: "message_start", message });
+    send({ type: "message_end", message });
+  }
   // Real OmO session_start hooks append extension entries (pi-rules.scan, session bindings)
   // on the active leaf, sometimes after the switch_session reply and a following navigate_tree
   // (OmO core/session-manager.js appendCustomEntry, called from core/extensions/builtin/rules/index.js).
