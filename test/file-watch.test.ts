@@ -109,3 +109,25 @@ test("B3 a full location evicts its soonest expiring lease without evicting anot
     "each location has its own capacity",
   );
 });
+
+test("a re-arm that fs.watch refuses releases the lease instead of throwing", (t) => {
+  const { root, registry, watches } = registryFor(t);
+  t.mock.method(console, "error", () => undefined);
+  const file = join(root, "notes.txt");
+  writeFileSync(file, "before");
+  const lease = opened(t, watches, () => registry.watch(root, file, file));
+  const watcher = watches.mock.calls[0]?.result;
+  assert.ok(watcher);
+  // A replacement the watch cannot open, e.g. a mode-000 file renamed over it.
+  watches.mock.mockImplementationOnce(() => {
+    throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+  }, watches.mock.callCount());
+
+  assert.doesNotThrow(() => watcher.emit("change", "rename", "notes.txt"));
+
+  assert.ok(
+    closes(lease).every((count) => count === 1),
+    "the refused lease must be released",
+  );
+  assert.ok(opened(t, watches, () => registry.watch(root, file, file)).length > 0, "a new POST starts a fresh lease");
+});

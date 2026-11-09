@@ -98,7 +98,7 @@ export class FileWatchRegistry {
       if (event !== "rename" || lease?.watcher !== watcher) return;
       watcher.close();
       lease.watcher = null;
-      if (exists) lease.watcher = this.armFile(directory, file, reportedFile);
+      if (exists) this.rearm(directory, file, reportedFile, lease);
       else this.awaitFile(directory, file, reportedFile, lease);
     });
     watcher.on("error", () => {
@@ -114,10 +114,23 @@ export class FileWatchRegistry {
       unwatchFile(file, listener);
       lease.missing = null;
       this.emit(directory, { type: "filesystem.changed", properties: { file: reportedFile, event: "change" } });
-      lease.watcher = this.armFile(directory, file, reportedFile);
+      this.rearm(directory, file, reportedFile, lease);
     };
     lease.missing = listener;
     watchFile(file, { persistent: false, interval: MISSING_POLL_MS }, listener);
+  }
+
+  /**
+   * Runs inside a watch listener, where a throw would end the process: fs.watch throws synchronously for a
+   * replacement it cannot open (EACCES, a file gone again, ENOSPC/EMFILE). Such a lease is released instead.
+   */
+  private rearm(directory: string, file: string, reportedFile: string, lease: FileWatchLease): void {
+    try {
+      lease.watcher = this.armFile(directory, file, reportedFile);
+    } catch (error) {
+      console.error(`[file-watch] stopped watching ${reportedFile}:`, error);
+      this.unwatch(directory, reportedFile);
+    }
   }
 
   private release(lease: FileWatchLease): void {
