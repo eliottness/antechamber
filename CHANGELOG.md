@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.41] - 2026-11-09
+
 ### Fixed
 
 OpenChamber 2.6.1 against OpenCode 2.2.5 was captured and replayed against antechamber; these close the differences
