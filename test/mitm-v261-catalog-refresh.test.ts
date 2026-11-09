@@ -60,3 +60,50 @@ test("cold reads refresh only after sixty seconds and publish changed catalogs",
   }
   assert.equal(spawnCount(spawnLog), starts + 2);
 });
+
+test("turns in sessions on different models do not change the configured catalog", { timeout: 30_000 }, async (t) => {
+  const { root, url } = await serverFor(t);
+  writeFileSync(
+    join(root, ".catalog-state.json"),
+    JSON.stringify({
+      models: [
+        { provider: "fake", id: "fake-model" },
+        { provider: "other", id: "other-model" },
+      ],
+    }),
+  );
+  const stream = await events(t, url);
+  const json = async (path: string, method = "GET", body?: unknown) =>
+    record(
+      await (
+        await fetch(`${url}${path}`, {
+          method,
+          ...(body === undefined
+            ? {}
+            : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+        })
+      ).json(),
+    ).data;
+  const configured = await json("/api/model/default");
+  const create = async (body: Record<string, unknown>) =>
+    record(await json("/api/session", "POST", { location: { directory: root }, ...body })).id;
+  const plain = await create({});
+  const other = await create({ model: { providerID: "other", id: "other-model" } });
+  for (const id of [other, plain, other, plain]) {
+    const idle = stream.wait("session.idle", undefined, stream.count("session.idle"));
+    await json(`/api/session/${id}/prompt`, "POST", { text: "turn" });
+    await idle;
+    // The idle refresh is already in flight when idle reaches the client; this read waits for it.
+    assert.deepEqual(await json("/api/model/default"), configured);
+  }
+  // Every frame before the rename has been delivered once the rename arrives.
+  const renamed = stream.wait("session.renamed", undefined, stream.count("session.renamed"));
+  await fetch(`${url}/api/session/${plain}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "sentinel" }),
+  });
+  await renamed;
+  assert.equal(stream.count("provider.updated"), 0);
+  assert.equal(stream.count("model.updated"), 0);
+});

@@ -11,7 +11,7 @@ import { disposeMcpAgents, mcpSurfacesChanged } from "./mcp.js";
 import { debugLog } from "./misc-routes.js";
 import { SessionManager } from "./sessions.js";
 import type { TodoUpdated } from "./todo-bridge.js";
-import { loadCatalog, type Catalog } from "./catalog.js";
+import { catalogFingerprint, loadCatalog, type Catalog } from "./catalog.js";
 import type { OCEvent } from "./types.js";
 import { Http } from "./http.js";
 import { SSE, type SSESubscriber } from "./sse.js";
@@ -80,7 +80,9 @@ export class AdapterServer {
     client?: PiRpcClient,
     mode: "cached" | "read" | "settled" = "cached",
   ): Promise<Catalog> {
-    const pi = client ?? this.sessions.liveClient(directory);
+    // A live session's agent can only refresh an existing snapshot: its get_state reports that session's
+    // selected model, so the first snapshot (and the configured default) always comes from a fresh agent.
+    const pi = this.catalogPromise === undefined ? undefined : (client ?? this.sessions.liveClient(directory));
     if (
       this.catalogPromise !== undefined &&
       (this.catalogExpiresAt === Infinity ||
@@ -92,13 +94,17 @@ export class AdapterServer {
     const previous = this.catalogPromise;
     this.catalogExpiresAt = Infinity;
     this.catalogColdExpiresAt = Date.now() + 60_000;
-    this.catalogPromise = loadCatalog(directory, pi)
+    this.catalogPromise = (
+      pi === undefined || previous === undefined
+        ? loadCatalog(directory)
+        : previous.then((last) => loadCatalog(directory, pi, last))
+    )
       .then(async (current) => {
         this.catalogExpiresAt = Date.now() + 5_000;
         this.catalogColdExpiresAt = Date.now() + 60_000;
         if (previous !== undefined) {
           const last = await previous;
-          if (JSON.stringify(last.providers) !== JSON.stringify(current.providers)) {
+          if (catalogFingerprint(last) !== catalogFingerprint(current)) {
             this.broadcast(directory, { type: "provider.updated", properties: {} });
             this.broadcast(directory, { type: "model.updated", properties: {} });
           }

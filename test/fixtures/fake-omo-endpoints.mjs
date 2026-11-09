@@ -9,6 +9,7 @@ const sessionFile = join(process.cwd(), `fake-endpoints-${sessionId}.jsonl`);
 const noSession = process.argv.includes("--no-session");
 let leaf;
 let rejectedInstructions = false;
+let selectedModel = { provider: "fake", id: "fake-model" };
 let timestamp = Date.now();
 let hasPrompt = false;
 let pendingBash;
@@ -78,7 +79,7 @@ input.on("line", (line) => {
       reply(command, true, {
         model:
           process.env.FAKE_THINKING_LEVEL === undefined
-            ? { provider: "fake", id: "fake-model" }
+            ? selectedModel
             : {
                 provider: "fake",
                 id: "fake-model",
@@ -266,6 +267,8 @@ input.on("line", (line) => {
       reply(command, true, true);
       return;
     case "set_model":
+      // OmO's get_state reports the session's selected model after set_model (senpi core/agent-session.js setModel).
+      selectedModel = { provider: command.provider, id: command.modelId };
       reply(command, true, { provider: command.provider, id: command.modelId });
       return;
     case "send_custom_message": {
