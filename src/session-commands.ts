@@ -14,7 +14,13 @@ import type {
 } from "./types.js";
 
 type CommandDescriptor = { name: string; description: string; template: "" };
-type SlashCommandInput = { command: string; arguments: string; messageID?: string; parts?: OCPromptPart[] };
+type SlashCommandInput = {
+  command: string;
+  arguments: string;
+  messageID?: string;
+  parts?: OCPromptPart[];
+  delivery?: "steer" | "queue";
+};
 type ShellResult = { output: string; exitCode: number | null; cancelled: boolean; truncated: boolean };
 export type ShellMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCToolPart] };
 type ShellUserMessage = OCMessageWithParts & { info: OCUserMessage; parts: [OCTextPart] };
@@ -139,31 +145,31 @@ function mapCommands(data: unknown): CommandDescriptor[] {
 const COMMAND_CACHE_TTL_MS = 5_000;
 const commandCache = new Map<string, { expiresAt: number; promise: Promise<CommandDescriptor[]> }>();
 
-export function getCommands(directory: string): Promise<CommandDescriptor[]> {
+export function getCommands(directory: string, client?: PiRpcClient, refresh = false): Promise<CommandDescriptor[]> {
   const now = Date.now();
   for (const [key, entry] of commandCache) {
     if (entry.expiresAt <= now) commandCache.delete(key);
   }
   const existing = commandCache.get(directory);
-  if (existing) return existing.promise;
+  if (existing && (!refresh || existing.expiresAt === Infinity)) return existing.promise;
   const entry = {
     expiresAt: Infinity,
     promise: (async () => {
-      const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+      const pi = client ?? new PiRpcClient({ cwd: directory, args: ["--no-session"] });
       try {
         const response = await pi.command<unknown>({ type: "get_commands" });
         if (!response.success) throw new Error(response.error ?? "OmO get_commands failed");
         return mapCommands(response.data);
       } finally {
-        await pi.dispose();
+        if (client === undefined) await pi.dispose();
       }
     })().then(
       (commands) => {
-        entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
+        if (commandCache.get(directory) === entry) entry.expiresAt = Date.now() + COMMAND_CACHE_TTL_MS;
         return commands;
       },
       (error: unknown) => {
-        commandCache.delete(directory);
+        if (commandCache.get(directory) === entry) commandCache.delete(directory);
         throw error;
       },
     ),
@@ -179,11 +185,13 @@ export function parseSlashCommand(value: unknown): SlashCommandInput | undefined
   const messageID = typeof value.messageID === "string" && value.messageID !== "" ? value.messageID : undefined;
   const parts = parsePromptParts(value.parts);
   nativePromptInput("", parts);
+  if (value.delivery !== undefined && value.delivery !== "steer" && value.delivery !== "queue") return undefined;
   return {
     command: value.command,
     arguments: value.arguments,
     ...(messageID ? { messageID } : {}),
     ...(parts.length > 0 ? { parts } : {}),
+    ...(value.delivery !== undefined ? { delivery: value.delivery } : {}),
   };
 }
 
@@ -230,7 +238,7 @@ export async function runSlashCommand(
     undefined,
     false,
     input.messageID,
-    "steer",
+    input.delivery ?? "steer",
     input.parts ? [{ type: "text", text }, ...input.parts] : undefined,
   );
   await sessions.reloadMessages(sessionId);

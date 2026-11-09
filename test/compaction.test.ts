@@ -149,6 +149,7 @@ test("a compaction waits for MCP servers still connecting instead of being cance
   withEnv(t, "ANTECHAMBER_TEST_CONNECTING_MCP", "2");
   const h = bugHarness(t);
   const session = await h.manager.create(h.root);
+  await h.manager.prompt(session.id, "normal");
   const from = h.events.length;
 
   assert.deepEqual(await compactSession(h.manager, session.id), { kind: "compacted" });

@@ -1,7 +1,7 @@
 /**
  * Model/provider catalog: obtained from a throwaway `pi --mode rpc` process
  * (`get_available_models` + `get_state`), translated into OpenCode v2
- * Provider/Model shapes, cached for the adapter lifetime.
+ * Provider/Model shapes, refreshed from live agents or bounded cold reads.
  */
 
 import { PiRpcClient } from "./pi-rpc.js";
@@ -103,32 +103,111 @@ function toOCModel(m: PiModelInfo): OCv2Model {
   };
 }
 
-export async function loadCatalog(directory: string): Promise<Catalog> {
-  const pi = new PiRpcClient({ cwd: directory, args: ["--no-session"] });
+type PiState = { model: PiModelInfo | null; thinkingLevel?: string };
+
+function inventory(res: { success: boolean; data?: { models: PiModelInfo[] } }): Map<string, OCv2Provider> {
+  const providers = new Map<string, OCv2Provider>();
+  if (res.success && res.data) {
+    for (const m of res.data.models) {
+      let p = providers.get(m.provider);
+      if (!p) {
+        p = { id: m.provider, name: m.provider, source: "config", env: [], options: {}, models: {} };
+        providers.set(m.provider, p);
+      }
+      p.models[m.id] = toOCModel(m);
+    }
+  }
+  return providers;
+}
+
+/**
+ * Apply the default to the inventory: list it even if get_available_models omitted it (the client drops a
+ * selection it cannot find), and put it first, because OpenChamber's picker defaults to the first listed
+ * provider/model. `active` is a model from a fresh agent's get_state, or the previous snapshot's default.
+ */
+function withDefault(
+  providers: Map<string, OCv2Provider>,
+  active: { providerID: string; modelID: string; model: OCv2Model } | null,
+  thinkingLevel: string | undefined,
+): Catalog {
+  const defaults: Record<string, string> = {};
+  if (active !== null) {
+    defaults[active.providerID] = active.modelID;
+    let p = providers.get(active.providerID);
+    if (p === undefined) {
+      p = { id: active.providerID, name: active.providerID, source: "config", env: [], options: {}, models: {} };
+      providers.set(active.providerID, p);
+    }
+    if (p.models[active.modelID] === undefined) p.models[active.modelID] = active.model;
+  }
+  const sorted = [...providers.values()].sort((a, b) => {
+    const aDef = defaults[a.id] !== undefined ? 0 : 1;
+    const bDef = defaults[b.id] !== undefined ? 0 : 1;
+    return aDef - bDef;
+  });
+  for (const p of sorted) {
+    const def = defaults[p.id];
+    if (!def) continue;
+    const entries = Object.entries(p.models).sort(([a], [b]) => (a === def ? -1 : b === def ? 1 : 0));
+    p.models = Object.fromEntries(entries);
+  }
+  // exactOptionalPropertyTypes: omit `default` rather than set it undefined.
+  if (active === null) return { providers: sorted, defaults };
+  const resolvedDefault = { providerID: active.providerID, modelID: active.modelID };
+  // Only a level the catalog offers as a variant is selectable in the picker.
+  const offered = sorted.find((p) => p.id === active.providerID)?.models[active.modelID]?.variants;
+  return thinkingLevel !== undefined && offered?.[thinkingLevel] !== undefined
+    ? { providers: sorted, defaults, default: resolvedDefault, defaultThinkingLevel: thinkingLevel }
+    : { providers: sorted, defaults, default: resolvedDefault };
+}
+
+/**
+ * The configured default plus the provider/model inventory in a fixed order, so a reordering alone is not
+ * reported as a catalog change but a new default is.
+ */
+export function catalogFingerprint(catalog: Catalog): string {
+  return JSON.stringify([
+    catalog.default ?? null,
+    catalog.defaultThinkingLevel ?? null,
+    [...catalog.providers]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((p) => [
+        p.id,
+        Object.keys(p.models)
+          .sort()
+          .map((id) => [id, p.models[id]]),
+      ]),
+  ]);
+}
+
+/**
+ * `configured` is the previous snapshot when `client` is a live session's agent: that agent's `get_state.model`
+ * is the session's own selection, not the configured default, so only the model inventory is re-read and the
+ * snapshot's default is kept. Only a fresh `--no-session` agent defines the default.
+ */
+export async function loadCatalog(directory: string, client?: PiRpcClient, configured?: Catalog): Promise<Catalog> {
+  const pi = client ?? new PiRpcClient({ cwd: directory, args: ["--no-session"] });
   try {
+    if (configured !== undefined) {
+      const modelsRes = await pi.command<{ models: PiModelInfo[] }>({ type: "get_available_models" });
+      const def = configured.default;
+      const model = def && configured.providers.find((p) => p.id === def.providerID)?.models[def.modelID];
+      return withDefault(
+        inventory(modelsRes),
+        def && model ? { ...def, model } : null,
+        configured.defaultThinkingLevel,
+      );
+    }
     const [modelsRes, firstState] = await Promise.all([
       pi.command<{ models: PiModelInfo[] }>({ type: "get_available_models" }),
-      pi.command<{ model: PiModelInfo | null; thinkingLevel?: string }>({ type: "get_state" }),
+      pi.command<PiState>({ type: "get_state" }),
     ]);
-
-    const providers = new Map<string, OCv2Provider>();
-    if (modelsRes.success && modelsRes.data) {
-      for (const m of modelsRes.data.models) {
-        let p = providers.get(m.provider);
-        if (!p) {
-          p = { id: m.provider, name: m.provider, source: "config", env: [], options: {}, models: {} };
-          providers.set(m.provider, p);
-        }
-        p.models[m.id] = toOCModel(m);
-      }
-    }
-
     // get_state occasionally races pi's own startup. One retry beats resolving
     // no active model, which is precisely what leaves the UI picker guessing.
     let active = firstState.success ? (firstState.data?.model ?? null) : null;
     let thinkingLevel = firstState.success ? firstState.data?.thinkingLevel : undefined;
     if (active === null) {
-      const retry = await pi.command<{ model: PiModelInfo | null; thinkingLevel?: string }>({ type: "get_state" });
+      const retry = await pi.command<PiState>({ type: "get_state" });
       active = retry.success ? (retry.data?.model ?? null) : null;
       thinkingLevel = retry.success ? retry.data?.thinkingLevel : undefined;
     }
@@ -137,44 +216,12 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
         "[catalog] warning: pi reported no active model — /api/model/default will be null and the UI picker falls back to its own default",
       );
     }
-
-    const defaults: Record<string, string> = {};
-    let resolvedDefault: { providerID: string; modelID: string } | undefined;
-    if (active !== null) {
-      defaults[active.provider] = active.id;
-      resolvedDefault = { providerID: active.provider, modelID: active.id };
-      // The client drops any selection it cannot find in this catalog and picks
-      // something else instead, so a model get_available_models omitted still
-      // has to be listed here — otherwise the active model is unselectable.
-      let p = providers.get(active.provider);
-      if (p === undefined) {
-        p = { id: active.provider, name: active.provider, source: "config", env: [], options: {}, models: {} };
-        providers.set(active.provider, p);
-      }
-      if (p.models[active.id] === undefined) p.models[active.id] = toOCModel(active);
-    }
-
-    // OpenChamber's picker defaults to the first listed provider/model — put pi's active config there.
-    const sorted = [...providers.values()].sort((a, b) => {
-      const aDef = defaults[a.id] !== undefined ? 0 : 1;
-      const bDef = defaults[b.id] !== undefined ? 0 : 1;
-      return aDef - bDef;
-    });
-    for (const p of sorted) {
-      const def = defaults[p.id];
-      if (!def) continue;
-      const entries = Object.entries(p.models).sort(([a], [b]) => (a === def ? -1 : b === def ? 1 : 0));
-      p.models = Object.fromEntries(entries);
-    }
-
-    // exactOptionalPropertyTypes: omit `default` rather than set it undefined.
-    if (resolvedDefault === undefined) return { providers: sorted, defaults };
-    // Only a level the catalog offers as a variant is selectable in the picker.
-    const offered = sorted.find((p) => p.id === resolvedDefault.providerID)?.models[resolvedDefault.modelID]?.variants;
-    return thinkingLevel !== undefined && offered?.[thinkingLevel] !== undefined
-      ? { providers: sorted, defaults, default: resolvedDefault, defaultThinkingLevel: thinkingLevel }
-      : { providers: sorted, defaults, default: resolvedDefault };
+    return withDefault(
+      inventory(modelsRes),
+      active === null ? null : { providerID: active.provider, modelID: active.id, model: toOCModel(active) },
+      thinkingLevel,
+    );
   } finally {
-    await pi.dispose();
+    if (client === undefined) await pi.dispose();
   }
 }

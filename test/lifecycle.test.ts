@@ -148,7 +148,11 @@ for (const failure of ["missing", "corrupt"] as const)
 
     assert.equal(session.pi, undefined);
     assert.ok(session.restored);
-    assert.deepEqual(session.tree, before);
+    // The exit is an idle boundary: only the saved idle time moves, so /view still works after a restart.
+    const { lastIdle, ...tree } = session.tree;
+    const { lastIdle: _previous, ...unchanged } = before;
+    assert.deepEqual(tree, unchanged);
+    assert.equal(lastIdle, session.info.time.idle);
   });
 
 test("detached fixture groups are cleaned up after assertion failure", { timeout: 20_000 }, async (t) => {

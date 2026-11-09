@@ -108,6 +108,7 @@ export async function miscRoute(
   const dirs = url.searchParams.get("dirs") !== "false" && url.searchParams.get("type") !== "file";
   const onlyDirs = url.searchParams.get("type") === "directory";
   const files: string[] = [];
+  const matchedDirs = new Set<string>();
   let visited = 0;
   const lowerQuery = query.toLowerCase();
   async function visit(directory: string, depth: number): Promise<void> {
@@ -119,11 +120,17 @@ export async function miscRoute(
       if (entry.isSymbolicLink() || entry.name === ".git") continue;
       const absolute = resolve(directory, entry.name);
       const path = relative(root, absolute).split(sep).join("/");
+      if (onlyDirs && entry.isFile() && path.toLowerCase().includes(lowerQuery)) {
+        matchedDirs.add("/");
+        const segments = path.split("/");
+        for (let i = 1; i < segments.length; i++) matchedDirs.add(`${segments.slice(0, i).join("/")}/`);
+      }
       if (((entry.isFile() && !onlyDirs) || (entry.isDirectory() && dirs)) && path.toLowerCase().includes(lowerQuery))
-        files.push(path);
+        if (onlyDirs) matchedDirs.add(`${path}/`);
+        else files.push(path);
       if (entry.isDirectory() && entry.name !== "node_modules") await visit(absolute, depth + 1);
     }
   }
   await visit(root, 0);
-  return { status: 200, body: files.sort() };
+  return { status: 200, body: onlyDirs ? [...matchedDirs].sort().slice(0, limit) : files.sort() };
 }

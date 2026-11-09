@@ -1,13 +1,17 @@
 /** HTTP/SSE composition root for the OpenCode API backed by pi. */
 
 import { createHash, randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
+import { watch, type FSWatcher } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import { basename, dirname, resolve } from "node:path";
 import type { Duplex } from "node:stream";
+import { promisify } from "node:util";
 import { disposeMcpAgents, mcpSurfacesChanged } from "./mcp.js";
 import { debugLog } from "./misc-routes.js";
 import { SessionManager } from "./sessions.js";
 import type { TodoUpdated } from "./todo-bridge.js";
-import { loadCatalog, type Catalog } from "./catalog.js";
+import { catalogFingerprint, loadCatalog, type Catalog } from "./catalog.js";
 import type { OCEvent } from "./types.js";
 import { Http } from "./http.js";
 import { SSE, type SSESubscriber } from "./sse.js";
@@ -16,6 +20,10 @@ import { handleV2 } from "./routes-v2.js";
 import type { RouteServices } from "./route-services.js";
 import { type SelfUpdateResult, selfUpdate } from "./self-update.js";
 import { handleWorkStatus } from "./work-status.js";
+import { FileWatchRegistry } from "./file-watch.js";
+import { getCommands } from "./session-commands.js";
+import type { PiRpcClient } from "./pi-rpc.js";
+import { TextGeneration } from "./text-generation.js";
 
 export { isLoopbackHost, serverPassword } from "./http.js";
 
@@ -38,12 +46,25 @@ export class AdapterServer {
   private webSocketEvents: Array<{ id: number; directory: string; payload: OCEvent | TodoUpdated }> = [];
   private nextWebSocketEventID = 0;
   private catalogPromise: Promise<Catalog> | undefined;
+  private catalogExpiresAt = 0;
+  private catalogColdExpiresAt = 0;
+  private readonly commandSnapshots = new Map<string, Awaited<ReturnType<typeof getCommands>>>();
+  private readonly commandColdReads = new Map<string, { expiresAt: number; promise: ReturnType<typeof getCommands> }>();
+  private readonly branchSnapshots = new Map<string, string | undefined>();
+  private readonly branchWatchers = new Map<string, Promise<FSWatcher | undefined>>();
+  private readonly branchChecks = new Map<string, Promise<void>>();
+  private readonly projectDirectories = new Set<string>();
+  private readonly fileWatches = new FileWatchRegistry((directory, event) => this.broadcast(directory, event));
+  private readonly pendingRefreshes = new Set<Promise<void>>();
+  private readonly textGeneration = new TextGeneration();
+  private stopping = false;
   private actualPort: number | undefined;
   /** Bearer token for the `/antechamber/work-status` routes, published in the run record for the OmO Work extension. */
   readonly extensionToken = randomBytes(32).toString("base64url");
   private readonly http = new Http(() => this.url, this.extensionToken);
 
   constructor(private options: AdapterServerOptions) {
+    this.projectDirectories.add(options.defaultDirectory);
     this.sse = new SSE(options, this.sseClients, (id) => this.sessions.monitors.owns(id));
     this.sessions = new SessionManager(
       (directory, event) => this.broadcast(directory, event),
@@ -56,13 +77,130 @@ export class AdapterServer {
     this.server.on("upgrade", (req, socket, head) => this.handleUpgrade(req, socket, head));
   }
 
-  private catalog(): Promise<Catalog> {
-    this.catalogPromise ??= loadCatalog(this.options.defaultDirectory).catch((err) => {
-      this.catalogPromise = undefined;
-      console.error("[catalog] failed to load models from pi:", err);
-      return { providers: [], defaults: {} };
-    });
+  private catalog(
+    directory = this.options.defaultDirectory,
+    client?: PiRpcClient,
+    mode: "cached" | "read" | "settled" = "cached",
+  ): Promise<Catalog> {
+    // A live session's agent can only refresh an existing snapshot: its get_state reports that session's
+    // selected model, so the first snapshot (and the configured default) always comes from a fresh agent.
+    const pi = this.catalogPromise === undefined ? undefined : (client ?? this.sessions.liveClient(directory));
+    if (
+      this.catalogPromise !== undefined &&
+      (this.catalogExpiresAt === Infinity ||
+        (mode !== "settled" &&
+          (Date.now() < this.catalogExpiresAt ||
+            (pi === undefined && (mode === "cached" || Date.now() < this.catalogColdExpiresAt)))))
+    )
+      return this.catalogPromise;
+    const previous = this.catalogPromise;
+    this.catalogExpiresAt = Infinity;
+    this.catalogColdExpiresAt = Date.now() + 60_000;
+    this.catalogPromise = (
+      pi === undefined || previous === undefined
+        ? loadCatalog(directory)
+        : previous.then((last) => loadCatalog(directory, pi, last))
+    )
+      .then(async (current) => {
+        this.catalogExpiresAt = Date.now() + 5_000;
+        this.catalogColdExpiresAt = Date.now() + 60_000;
+        if (previous !== undefined) {
+          const last = await previous;
+          if (catalogFingerprint(last) !== catalogFingerprint(current)) {
+            this.broadcast(directory, { type: "provider.updated", properties: {} });
+            this.broadcast(directory, { type: "model.updated", properties: {} });
+          }
+        }
+        return current;
+      })
+      .catch((err: unknown) => {
+        this.catalogExpiresAt = Date.now() + 5_000;
+        console.error("[catalog] failed to load models from pi:", err);
+        if (previous === undefined) {
+          // An unsuccessful first read established no snapshot to rate-limit or refresh.
+          this.catalogPromise = undefined;
+          this.catalogColdExpiresAt = 0;
+        }
+        return previous ?? { providers: [], defaults: {} };
+      });
     return this.catalogPromise;
+  }
+
+  private async commands(directory: string, client?: PiRpcClient, refresh = false): ReturnType<typeof getCommands> {
+    const pi = client ?? this.sessions.liveClient(directory);
+    const cold = this.commandColdReads.get(directory);
+    if (pi === undefined && cold !== undefined && Date.now() < cold.expiresAt) return cold.promise;
+    const request = getCommands(directory, pi, refresh);
+    if (pi === undefined) this.commandColdReads.set(directory, { expiresAt: Date.now() + 60_000, promise: request });
+    const commands = await request;
+    const previous = this.commandSnapshots.get(directory);
+    this.commandSnapshots.set(directory, commands);
+    this.commandColdReads.set(directory, { expiresAt: Date.now() + 60_000, promise: Promise.resolve(commands) });
+    if (previous !== undefined && JSON.stringify(previous) !== JSON.stringify(commands))
+      this.broadcast(directory, { type: "command.updated", properties: {} });
+    return commands;
+  }
+
+  private watchBranch(directory: string): Promise<FSWatcher | undefined> {
+    if (this.stopping) return Promise.resolve(undefined);
+    const existing = this.branchWatchers.get(directory);
+    if (existing !== undefined) return existing;
+    const pending = promisify(execFile)("git", ["rev-parse", "--git-path", "HEAD"], {
+      cwd: directory,
+      timeout: 3000,
+    })
+      .then(({ stdout }) => {
+        if (this.stopping) return undefined;
+        const head = resolve(directory, stdout.trim());
+        const watcher = watch(dirname(head), (_event, name) => {
+          if (this.stopping || (name !== null && name.toString() !== basename(head))) return;
+          void this.vcsBranch(directory);
+        });
+        watcher.on("error", () => {
+          watcher.close();
+          this.branchWatchers.delete(directory);
+        });
+        watcher.unref();
+        return watcher;
+      })
+      .catch(() => {
+        this.branchWatchers.delete(directory);
+        return undefined;
+      });
+    this.branchWatchers.set(directory, pending);
+    return pending;
+  }
+
+  private vcsBranch(directory: string): Promise<string | undefined> {
+    const pending = this.branchChecks.get(directory) ?? Promise.resolve();
+    const current = pending.then(() => this.readBranch(directory));
+    this.branchChecks.set(
+      directory,
+      current.then(() => undefined),
+    );
+    return current;
+  }
+
+  private async readBranch(directory: string): Promise<string | undefined> {
+    if (this.stopping) return this.branchSnapshots.get(directory);
+    await this.watchBranch(directory);
+    let branch: string | undefined;
+    try {
+      const { stdout } = await promisify(execFile)("git", ["symbolic-ref", "--short", "HEAD"], {
+        cwd: directory,
+        timeout: 3000,
+      });
+      branch = stdout.trim() || undefined;
+    } catch {
+      branch = undefined;
+    }
+    if (this.branchSnapshots.has(directory) && this.branchSnapshots.get(directory) !== branch)
+      this.broadcast(directory, {
+        type: "vcs.branch.updated",
+        properties: branch === undefined ? {} : { branch },
+      });
+    this.branchSnapshots.set(directory, branch);
+    return branch;
   }
 
   async start(): Promise<void> {
@@ -84,10 +222,19 @@ export class AdapterServer {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
+    await this.textGeneration.dispose();
+    await Promise.all([...this.pendingRefreshes]);
+    const branchWatchers = [...this.branchWatchers.values()];
+    this.branchWatchers.clear();
+    await Promise.all(this.branchChecks.values());
+    for (const watcher of await Promise.all([...branchWatchers, ...this.branchWatchers.values()])) watcher?.close();
+    this.branchWatchers.clear();
     // Stop admission before ending SSE: its clients can reconnect while the
     // session RPC groups and private task hosts are still being disposed.
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
     this.sse.close();
+    this.fileWatches.close();
     for (const socket of this.webSocketClients) socket.destroy();
     this.webSocketClients.clear();
     try {
@@ -104,6 +251,38 @@ export class AdapterServer {
   // ---------------------------------------------------------------
 
   private broadcast(directory: string, event: OCEvent | TodoUpdated): void {
+    if (event.type === "session.idle" && !this.stopping) {
+      const session = this.sessions.get(event.properties.sessionID);
+      if (session?.pi !== undefined) {
+        const reads = [
+          ...(this.catalogPromise === undefined ? [] : [this.catalog(session.info.directory, session.pi, "settled")]),
+          ...(this.commandSnapshots.has(session.info.directory)
+            ? [this.commands(session.info.directory, session.pi, true)]
+            : []),
+        ];
+        if (reads.length > 0) {
+          const refresh = Promise.all(reads)
+            .then(() => undefined)
+            .catch((error: unknown) => console.error("[catalog] live refresh failed:", error));
+          this.pendingRefreshes.add(refresh);
+          void refresh.finally(() => this.pendingRefreshes.delete(refresh));
+        }
+      }
+    }
+    if (event.type === "session.created" && !this.projectDirectories.has(directory)) {
+      this.projectDirectories.add(directory);
+      const now = Date.now();
+      this.broadcast(directory, {
+        type: "project.updated",
+        properties: {
+          id: directory,
+          canonical: directory,
+          time: { created: now, updated: now, active: now },
+          sandboxes: [],
+          vcs: "git",
+        },
+      });
+    }
     this.sse.broadcast(directory, event);
     this.broadcastWebSocket(directory, event);
   }
@@ -268,9 +447,13 @@ export class AdapterServer {
       defaultDirectory: this.options.defaultDirectory,
       url: this.url,
       body: (request) => this.http.body(request),
-      catalog: () => this.catalog(),
+      catalog: (dir, refresh) => this.catalog(dir, undefined, refresh === true ? "read" : "cached"),
       broadcast: (dir, event) => this.broadcast(dir, event),
       selfUpdate: this.options.selfUpdate ?? (() => selfUpdate()),
+      fileWatches: this.fileWatches,
+      commands: (dir) => this.commands(dir),
+      vcsBranch: (dir) => this.vcsBranch(dir),
+      textGeneration: this.textGeneration,
     };
     if (path === "/api" || path.startsWith("/api/")) {
       await handleV2(services, req, res, url, path, method, directory);

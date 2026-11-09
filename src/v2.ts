@@ -24,6 +24,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
+import { toV2Permission } from "./approvals.js";
 import { questionFormID, toQuestionForm } from "./question-forms.js";
 import { v2PromptAttachments } from "./prompt-parts.js";
 import type {
@@ -163,7 +164,7 @@ export interface V2Session {
   model?: { id: string; providerID: string; variant?: string };
   cost: number;
   tokens: V2Tokens;
-  time: { created: number; updated: number; archived?: number };
+  time: { created: number; updated: number; idle?: number; viewed?: number; archived?: number };
   title: string;
   subpath: string;
   location: { directory: string };
@@ -187,6 +188,7 @@ export function toV2Session(
       created: info.time.created,
       updated: info.time.updated,
       ...(info.time.idle !== undefined ? { idle: info.time.idle } : {}),
+      ...(info.time.viewed !== undefined ? { viewed: info.time.viewed } : {}),
       ...(info.time.archived !== undefined ? { archived: info.time.archived } : {}),
     },
     title: info.title,
@@ -212,7 +214,12 @@ export function toV2Session(
 export interface V2Message {
   id: string;
   time: { created: number; completed?: number; streamed?: number };
-  type: "user" | "assistant" | "synthetic";
+  type: "user" | "assistant" | "synthetic" | "idle" | "compaction";
+  status?: "running" | "completed" | "failed";
+  reason?: string;
+  summary?: string;
+  outcome?: "succeeded" | "failed" | "interrupted";
+  description?: string;
   text?: string;
   files?: Array<Record<string, unknown>>;
   agents?: Array<Record<string, unknown>>;
@@ -233,7 +240,14 @@ function toV2UserMessage(info: OCMessageWithParts): V2Message {
   const metadata = user.metadata !== undefined ? { metadata: user.metadata } : {};
   // Admitted no-reply context lists as OpenCode's synthetic item, not as a user turn.
   if (user.synthetic)
-    return { id: user.id, time: { created: user.time.created }, type: "synthetic", text, ...metadata };
+    return {
+      id: user.id,
+      time: { created: user.time.created },
+      type: "synthetic",
+      text,
+      ...(user.description !== undefined ? { description: user.description } : {}),
+      ...metadata,
+    };
   const inputs = info.parts.flatMap((part) => (part.type === "file" || part.type === "agent" ? [part] : []));
   return {
     id: user.id,
@@ -447,16 +461,28 @@ export class V2EventTranslator {
     switch (ev.type) {
       case "session.inbox.enqueued":
       case "session.inbox.delivered":
+      case "session.renamed":
+      case "session.agent.selected":
+      case "session.archived":
+      case "session.unarchived":
+      case "session.viewed":
       case "session.revert.staged":
       case "session.revert.cleared":
       case "session.revert.committed":
       case "session.compaction.started":
+      case "session.compaction.delta":
       case "session.compaction.ended":
       case "session.compaction.failed":
       case "session.shell.started":
       case "session.shell.ended":
       case "shell.created":
       case "shell.exited":
+      case "filesystem.changed":
+      case "project.updated":
+      case "provider.updated":
+      case "model.updated":
+      case "command.updated":
+      case "vcs.branch.updated":
         return [this.frame(directory, ev.type, ev.properties)];
       case "message.removed":
         return [
@@ -475,6 +501,7 @@ export class V2EventTranslator {
             subpath: subpathOf(info.directory),
             title: info.title,
             agent: info.agent ?? getAgentName(),
+            ...(info.model !== undefined ? { model: info.model } : {}),
             ...(info.parentID !== undefined ? { parentID: info.parentID } : {}),
             ...(info.parentMessageID !== undefined ? { parentMessageID: info.parentMessageID } : {}),
             ...(info.metadata !== undefined ? { metadata: info.metadata } : {}),
@@ -484,11 +511,9 @@ export class V2EventTranslator {
       case "session.updated": {
         const info = ev.properties.info;
         return [
-          this.frame(directory, "session.renamed", { sessionID: info.id, title: info.title }),
           ...(info.metadata !== undefined
             ? [this.frame(directory, "session.metadata.updated", { sessionID: info.id, metadata: info.metadata })]
             : []),
-          this.frame(directory, "session.agent.selected", { sessionID: info.id, agent: info.agent ?? getAgentName() }),
           ...(info.cost !== undefined
             ? [
                 this.frame(directory, "session.usage.updated", {
@@ -583,7 +608,7 @@ export class V2EventTranslator {
       }
       case "permission.asked": {
         const p = ev.properties;
-        return [this.frame(directory, "permission.asked", p)];
+        return [this.frame(directory, "permission.asked", toV2Permission(p))];
       }
       case "permission.replied":
         return [this.frame(directory, "permission.replied", ev.properties)];

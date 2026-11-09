@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { errorBody, json, RequestBodyError } from "./http.js";
 import { nativePromptInput, parsePromptParts, v2PromptAttachments, v2PromptParts } from "./prompt-parts.js";
@@ -14,11 +15,12 @@ import { toV2Permission } from "./approvals.js";
 import { formQuestionAnswer, questionFormID, toQuestionForm } from "./question-forms.js";
 import { getAgentName } from "./agent-name.js";
 import { vcsRead, VcsError } from "./vcs.js";
-import { announceSessionError, compactSession, getCommands, unsupportedShare } from "./session-commands.js";
-import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Session } from "./v2.js";
+import { announceSessionError, compactSession, unsupportedShare } from "./session-commands.js";
+import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Message, type V2Session } from "./v2.js";
 import type { OCSession } from "./types.js";
 import { SHELL_CANCELLATION_KEY } from "./omo-shells.js";
 import { WorkStatusError } from "./work-status.js";
+import { FileWatchError } from "./file-watch.js";
 import {
   agentDescriptors,
   modelRefFromBody,
@@ -105,18 +107,6 @@ function followsCursor(session: V2Session, cursor: V2SessionCursor, order: "asc"
   return order === "asc" ? comparison > 0 : comparison < 0;
 }
 
-async function currentGitBranch(directory: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execFileAsync("git", ["symbolic-ref", "--short", "HEAD"], {
-      cwd: directory,
-      timeout: 3000,
-    });
-    return stdout.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function initializeGit(directory: string): Promise<boolean> {
   try {
     await execFileAsync("git", ["init", "-q"], { cwd: directory, timeout: 3000 });
@@ -144,6 +134,7 @@ function v2Projects(services: RouteServices): Array<Record<string, unknown>> {
 async function handleV2Bootstrap(
   services: RouteServices,
   res: ServerResponse,
+  url: URL,
   path: string,
   method: string,
   directory: string,
@@ -168,17 +159,27 @@ async function handleV2Bootstrap(
     return true;
   }
   if (path === "/api/provider" && method === "GET") {
-    const cat = await services.catalog();
+    const cat = await services.catalog(directory, true);
     json(res, 200, withLocation(cat.providers.map((p) => ({ ...p, activation: "enabled" }))));
     return true;
   }
   if (path === "/api/model" && method === "GET") {
-    const cat = await services.catalog();
-    json(res, 200, withLocation(flattenModels(cat)));
+    const cat = await services.catalog(directory, true);
+    const requested = url.searchParams.getAll("types");
+    const types = requested.length === 0 ? ["chat"] : requested;
+    json(
+      res,
+      200,
+      withLocation(
+        flattenModels(cat).filter((model) =>
+          types.some((type) => model.capabilities.output.includes(type === "chat" ? "text" : type)),
+        ),
+      ),
+    );
     return true;
   }
   if (path === "/api/model/default" && method === "GET") {
-    const cat = await services.catalog();
+    const cat = await services.catalog(directory);
     json(res, 200, withLocation(defaultV2Model(cat) ?? null));
     return true;
   }
@@ -199,7 +200,7 @@ async function handleV2Bootstrap(
       res,
       200,
       withLocation(
-        (await getCommands(directory)).map((command) => ({
+        (await services.commands(directory)).map((command) => ({
           ...command,
           source: "command",
           hints: [],
@@ -268,7 +269,11 @@ export async function handleV2(
   const withLocation = (data: unknown) => ({ location, data });
 
   // --- bootstrap ---
-  if (await handleV2Bootstrap(services, res, path, method, directory)) return;
+  if (await handleV2Bootstrap(services, res, url, path, method, directory)) return;
+  if (path === "/api/debug/location" && method === "GET") {
+    json(res, 200, []);
+    return;
+  }
   if (path === "/api/debug/location" && method === "DELETE") {
     // OpenChamber evicts a location after git worktree changes so OpenCode re-reads it. antechamber
     // keeps no per-location instance (project and VCS reads are fresh per request): nothing to evict.
@@ -335,6 +340,62 @@ export async function handleV2(
     });
     return;
   }
+  if (path === "/api/experimental/generate/text" && method === "POST") {
+    const body = await services.body(req);
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("prompt" in body) ||
+      typeof body.prompt !== "string" ||
+      body.prompt.trim() === ""
+    ) {
+      json(res, 400, errorBody("InvalidRequestError", "prompt must be a nonempty string"));
+      return;
+    }
+    const model: unknown = "model" in body ? body.model : undefined;
+    if (
+      model !== undefined &&
+      (typeof model !== "object" ||
+        model === null ||
+        !("providerID" in model) ||
+        typeof model.providerID !== "string" ||
+        !("id" in model) ||
+        typeof model.id !== "string")
+    ) {
+      json(res, 400, errorBody("InvalidRequestError", "model must include providerID and id"));
+      return;
+    }
+    const selected =
+      model !== undefined && typeof model === "object" && model !== null && "providerID" in model && "id" in model
+        ? { providerID: String(model.providerID), id: String(model.id) }
+        : undefined;
+    const cancellation = new AbortController();
+    const disconnected = () => cancellation.abort(new Error("Text generation caller disconnected"));
+    res.once("close", disconnected);
+    if (res.destroyed) disconnected();
+    try {
+      json(res, 200, {
+        data: {
+          text: await services.textGeneration.generate(
+            services.defaultDirectory,
+            body.prompt,
+            selected,
+            cancellation.signal,
+          ),
+        },
+      });
+    } catch (error) {
+      if (res.destroyed) return;
+      json(res, 503, {
+        _tag: "ServiceUnavailableError",
+        message: error instanceof Error ? error.message : "Text generation is unavailable",
+        service: "opencode",
+      });
+    } finally {
+      res.off("close", disconnected);
+    }
+    return;
+  }
   // OmO's background work (monitors, background terminal sessions, detached eval cells) as OpenCode shells.
   if (path === "/api/shell" && method === "GET") {
     json(res, 200, withLocation(services.sessions.shells.list(directory)));
@@ -362,8 +423,29 @@ export async function handleV2(
     json(res, 400, errorBody("UnsupportedError", "Session statistics are not available with OmO"));
     return;
   }
+  if (path === "/api/experimental/usage/limits" && method === "GET") {
+    json(res, 200, withLocation(null));
+    return;
+  }
   if (path === "/api/mcp" || path.startsWith("/api/mcp/") || path.startsWith("/api/experimental/mcp/")) {
     json(res, 400, errorBody("UnsupportedError", "MCP is not available with OmO"));
+    return;
+  }
+  if (path === "/api/experimental/fs/watch" && (method === "POST" || method === "DELETE")) {
+    const body = await services.body(req);
+    if (typeof body !== "object" || body === null || !("path" in body) || typeof body.path !== "string") {
+      json(res, 400, errorBody("InvalidRequestError", "path must be a string"));
+      return;
+    }
+    try {
+      const file = await services.fileWatches.file(directory, body.path, method === "POST");
+      if (method === "POST") services.fileWatches.watch(directory, file, resolve(directory, body.path));
+      else services.fileWatches.unwatch(directory, file);
+      res.writeHead(204).end();
+    } catch (error) {
+      if (!(error instanceof FileWatchError)) throw error;
+      json(res, error.status, errorBody(error.kind, error.message));
+    }
     return;
   }
   if (path === "/api/fs/find" && method === "GET") {
@@ -379,7 +461,7 @@ export async function handleV2(
     const files = Array.isArray(result.body)
       ? result.body
           .filter((entry): entry is string => typeof entry === "string")
-          .map((path) => ({ path, type: "file" }))
+          .map((path) => ({ path, type: path.endsWith("/") ? "directory" : "file" }))
       : [];
     json(res, 200, withLocation(files));
     return;
@@ -402,7 +484,7 @@ export async function handleV2(
         services.sessions
           .permissions()
           .filter((permission) => services.sessions.get(permission.sessionID)?.info.directory === directory)
-          .map((permission) => ({ ...toV2Permission(permission), ...permission })),
+          .map(toV2Permission),
       ),
     );
     return;
@@ -420,7 +502,16 @@ export async function handleV2(
     return;
   }
   if (path === "/api/form" && method === "GET") {
-    json(res, 200, withLocation(services.sessions.questions().map(toQuestionForm)));
+    json(
+      res,
+      200,
+      withLocation(
+        services.sessions
+          .questions()
+          .filter((question) => services.sessions.get(question.sessionID)?.info.directory === directory)
+          .map(toQuestionForm),
+      ),
+    );
     return;
   }
   if (path === "/api/vcs/init" && method === "POST") {
@@ -432,7 +523,7 @@ export async function handleV2(
     return;
   }
   if (path === "/api/vcs" && method === "GET") {
-    const current = await currentGitBranch(directory);
+    const current = await services.vcsBranch(directory);
     json(res, 200, withLocation({ provider: "git", branch: current === undefined ? {} : { current } }));
     return;
   }
@@ -451,6 +542,7 @@ export async function handleV2(
     const dir = url.searchParams.get("directory") ?? url.searchParams.get("location");
     const search = url.searchParams.get("search");
     const parentID = url.searchParams.get("parentID");
+    const archived = url.searchParams.get("archived");
     const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
     const limit = numberParam(url.searchParams.get("limit"));
     let infos = (dir !== null && dir !== "" ? services.sessions.list(dir) : services.sessions.listAll()).filter(
@@ -458,7 +550,10 @@ export async function handleV2(
       (session) => !services.sessions.monitors.owns(session.id),
     );
     if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));
-    if (parentID !== null) infos = infos.filter((session) => session.parentID === parentID);
+    if (parentID !== null)
+      infos = infos.filter((session) => session.parentID === (parentID === "null" ? undefined : parentID));
+    if (archived === "true" || archived === "false")
+      infos = infos.filter((session) => (session.time.archived !== undefined) === (archived === "true"));
     let sessions = infos.map((info) => v2Session(services, info));
     sessions.sort((left, right) => compareSessions(left, right, order));
     const cursor = decodeSessionCursor(url.searchParams.get("cursor"));
@@ -512,6 +607,36 @@ export async function handleV2(
       if (status.type !== "idle" && !services.sessions.monitors.owns(id)) data[id] = { type: "running" };
     }
     json(res, 200, { data });
+    return;
+  }
+
+  const instructionEntry = path.match(/^\/api\/experimental\/session\/([^/]+)\/instructions\/entries\/([^/]+)$/);
+  if (instructionEntry && (method === "PUT" || method === "DELETE")) {
+    const sessionId = decodeURIComponent(instructionEntry[1]!);
+    const key = decodeURIComponent(instructionEntry[2]!);
+    if (services.sessions.get(sessionId) === undefined) {
+      json(res, 404, errorBody("NotFoundError", `session not found: ${sessionId}`));
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(key)) {
+      json(res, 400, errorBody("InvalidRequestError", "instruction entry key is invalid"));
+      return;
+    }
+    if (method === "PUT") {
+      const body: unknown = await services.body(req);
+      if (typeof body !== "object" || body === null || Array.isArray(body) || !("value" in body)) {
+        json(res, 400, errorBody("InvalidRequestError", "instruction entry requires a JSON value"));
+        return;
+      }
+      if (Buffer.byteLength(JSON.stringify(body.value), "utf8") > 256 * 1024) {
+        json(res, 413, errorBody("InstructionEntryValueTooLargeError", "instruction entry exceeds 256 KiB"));
+        return;
+      }
+      services.sessions.putInstruction(sessionId, key, body.value);
+    } else {
+      services.sessions.removeInstruction(sessionId, key);
+    }
+    res.writeHead(204).end();
     return;
   }
 
@@ -643,6 +768,16 @@ export async function handleV2(
         json(res, 200, { data: v2Session(services, managed.info) });
         return;
       }
+      case "POST /view": {
+        const body = (await services.body(req)) as { idle?: unknown };
+        if (typeof body.idle !== "number" || !Number.isFinite(body.idle)) {
+          json(res, 400, errorBody("InvalidRequestError", "idle must be a finite epoch-millisecond number"));
+          return;
+        }
+        services.sessions.view(sessionId, body.idle);
+        res.writeHead(204).end();
+        return;
+      }
       case "PATCH ": {
         const body = (await services.body(req)) as {
           title?: string;
@@ -674,7 +809,32 @@ export async function handleV2(
       case "GET /message": {
         const order = url.searchParams.get("order");
         const limit = numberParam(url.searchParams.get("limit"));
-        let messages = (services.sessions.messages(sessionId) ?? []).map((m) => toV2Message(m));
+        const history = services.sessions.messages(sessionId) ?? [];
+        const messagesWithTurns = history.flatMap<V2Message>((message) => {
+          if (message.parts.some((part) => part.type === "compaction")) {
+            const item = services.sessions.compaction(sessionId, message.info.id);
+            return item === undefined ? [] : [item];
+          }
+          if (message.info.role === "assistant" && message.info.summary === true) return [];
+          const item = toV2Message(message);
+          const boundary = managed.tree.idleBoundaries?.[message.info.id];
+          if (boundary === undefined) return [item];
+          return [
+            item,
+            {
+              id: `msg_idle_${message.info.id.replace(/^msg_/, "")}`,
+              type: "idle" as const,
+              time: { created: boundary.at },
+              outcome: boundary.outcome,
+              ...(boundary.error !== undefined ? { error: boundary.error } : {}),
+            },
+          ];
+        });
+        if (managed.compactionID && !messagesWithTurns.some((message) => message.id === managed.compactionID)) {
+          const item = services.sessions.compaction(sessionId, managed.compactionID);
+          if (item !== undefined) messagesWithTurns.push(item);
+        }
+        let messages = messagesWithTurns;
         if (order !== "asc") messages = messages.reverse(); // v2 default is newest-first
         const cursor = url.searchParams.get("cursor");
         if (cursor !== null) {
@@ -691,18 +851,58 @@ export async function handleV2(
       }
       case "POST /compact":
       case "POST /summarize": {
-        await services.body(req);
-        const result = await compactSession(services.sessions, sessionId);
-        if (result.kind === "error") {
-          announceSessionError(
-            { sessions: services.sessions, session: managed, emit: services.broadcast },
-            "BadRequestError",
-            result.message,
-          );
-          json(res, 400, errorBody("BadRequestError", result.message));
+        const body = (await services.body(req)) as { id?: unknown; delivery?: unknown };
+        if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
+          throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
+        if (body.id !== undefined && (typeof body.id !== "string" || !body.id.startsWith("msg_")))
+          throw new RequestBodyError(400, "id must be a message ID");
+        const inputID = body.id ?? `msg_${randomUUID().replaceAll("-", "")}`;
+        const admission = services.sessions.admitCompaction(sessionId, inputID);
+        if (admission.kind === "conflict") {
+          json(res, 409, errorBody("ConflictError", "Message ID already in use"));
           return;
         }
-        json(res, 200, { data: true });
+        if (admission.kind === "existing") {
+          json(res, 200, { data: admission.item });
+          return;
+        }
+        // The agent can stop before compaction_end: if the compaction is still this request's, no event closed it,
+        // so the client's card would stay "running" unless it is failed here.
+        const fail = (message: string) => {
+          if (managed.compactionID !== inputID) return;
+          delete managed.compactionID;
+          delete managed.compactionReason;
+          services.broadcast(managed.info.directory, {
+            type: "session.compaction.failed",
+            properties: {
+              sessionID: sessionId,
+              inputID,
+              reason: "manual",
+              error: { name: "CompactionError", data: { message } },
+            },
+          });
+        };
+        void compactSession(services.sessions, sessionId)
+          .then((result) => {
+            if (result.kind === "error") {
+              fail(result.message);
+              announceSessionError(
+                { sessions: services.sessions, session: managed, emit: services.broadcast },
+                "BadRequestError",
+                result.message,
+              );
+            }
+            if (managed.compactionID === inputID) delete managed.compactionID;
+          })
+          .catch((error: unknown) => {
+            fail(error instanceof Error ? error.message : String(error));
+            announceSessionError(
+              { sessions: services.sessions, session: managed, emit: services.broadcast },
+              error instanceof Error ? error.name : "UnknownError",
+              error instanceof Error ? error.message : String(error),
+            );
+          });
+        json(res, 200, { data: admission.item });
         return;
       }
       case "POST /shell": {
@@ -723,11 +923,23 @@ export async function handleV2(
         return;
       }
       case "POST /command": {
-        const body = (await services.body(req)) as { name?: string; text?: string; id?: string };
+        const body = (await services.body(req)) as {
+          name?: string;
+          text?: string;
+          id?: string;
+          parts?: unknown;
+          files?: unknown;
+          agents?: unknown;
+          delivery?: unknown;
+        };
+        if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
+          throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
         const result = await runSessionSlash(services, sessionId, {
           command: body.name,
           arguments: body.text ?? "",
           messageID: body.id,
+          parts: [...parsePromptParts(body.parts), ...v2PromptParts("", body.files, body.agents)],
+          delivery: body.delivery,
         });
         if (result.kind === "input") {
           json(res, 400, errorBody("BadRequestError", "command is required"));
@@ -831,6 +1043,7 @@ export async function handleV2(
         const body = (await services.body(req)) as {
           id?: string;
           text?: unknown;
+          description?: unknown;
           metadata?: unknown;
           delivery?: string;
         };
@@ -857,6 +1070,9 @@ export async function handleV2(
         const messageID =
           typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
         const text = body.text;
+        if (body.description !== undefined && typeof body.description !== "string")
+          throw new RequestBodyError(400, "description must be a string");
+        if (body.description !== undefined) (managed.tree.promptDescriptions ??= {})[messageID] = body.description;
         promptAsync(services, managed, text, undefined, true, messageID, body.delivery ?? "steer", undefined, metadata);
         // OpenChamber 2.3.2 treats anything but 200 + the admitted record as a failed send (captured OpenCode shape).
         json(res, 200, {
@@ -866,6 +1082,7 @@ export async function handleV2(
             time: { created: Date.now() },
             type: "synthetic",
             payload: { text },
+            ...(body.description !== undefined ? { description: body.description } : {}),
           },
         });
         return;
@@ -979,7 +1196,31 @@ export async function handleV2(
         return;
       }
       case "GET /inbox": {
-        json(res, 200, { data: [] });
+        const messages = services.sessions.messages(sessionId) ?? [];
+        json(res, 200, {
+          data: [...(managed.inputs ?? [])].flatMap(([id, input]) => {
+            if (!input.accepted || input.delivered) return [];
+            const message = messages.find((item) => item.info.id === id);
+            if (message?.info.role !== "user") return [];
+            return [
+              {
+                id,
+                sessionID: sessionId,
+                time: { created: message.info.time.created },
+                type: "user",
+                delivery: input.delivery,
+                payload: {
+                  text: message.parts
+                    .filter((part) => part.type === "text")
+                    .map((part) => part.text)
+                    .join("\n"),
+                  ...v2PromptAttachments(message.parts.filter((part) => part.type === "file" || part.type === "agent")),
+                  ...(message.info.metadata !== undefined ? { metadata: message.info.metadata } : {}),
+                },
+              },
+            ];
+          }),
+        });
         return;
       }
       case "GET /diff":

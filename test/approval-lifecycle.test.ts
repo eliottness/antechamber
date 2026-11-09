@@ -212,9 +212,10 @@ test("v2 SSE permission uses native action resources source and event type", () 
   assert.ok(event);
   const frame = new V2EventTranslator().translate("/tmp", event)[0];
   assert.equal(frame?.type, "permission.asked");
-  assert.equal(frame?.data.permission, "read");
-  assert.deepEqual(frame?.data.patterns, ["/tmp/x"]);
-  assert.deepEqual(frame?.data.tool, { messageID: "msg_test", callID: "call" });
+  assert.equal(frame?.data.action, "read");
+  assert.deepEqual(frame?.data.resources, ["/tmp/x"]);
+  assert.deepEqual(frame?.data.save, ["/tmp/x"]);
+  assert.deepEqual(frame?.data.source, { type: "tool", messageID: "msg_test", id: "call" });
 });
 
 test("real RPC transport forwards blocking requests without auto-cancellation", { timeout: 20000 }, async (t) => {

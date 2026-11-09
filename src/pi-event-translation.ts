@@ -273,6 +273,24 @@ export class PiEventTranslator {
     }
     delete s.compactingFromIdle;
     delete s.info.time.compacting;
+    // A compaction the run never finished must not stay "running": a later Compact would join it and report
+    // success for work that will never happen.
+    if (s.compactionID !== undefined) {
+      const inputID = s.compactionID;
+      const reason = s.compactionReason ?? "manual";
+      delete s.compactionID;
+      delete s.compactionReason;
+      delete s.heldCompactionEnd;
+      this.services.emit(s.info.directory, {
+        type: "session.compaction.failed",
+        properties: {
+          sessionID: s.info.id,
+          inputID,
+          reason,
+          error: { name: "CompactionError", data: { message: error.data.message } },
+        },
+      });
+    }
   }
 
   setStatus(s: ManagedSession, status: OCSessionStatus): void {
@@ -283,6 +301,13 @@ export class PiEventTranslator {
     });
     if (status.type === "idle") {
       s.info.time.idle = Date.now();
+      // Restored as time.idle after a restart, so /view can still accept the watermark a client saw.
+      s.tree.lastIdle = s.info.time.idle;
+      try {
+        this.services.persistMeta(s);
+      } catch (error) {
+        console.error(`[session] could not save the idle time of ${s.info.id}:`, error);
+      }
       const last = s.messages?.findLast(
         (message) => message.info.role === "assistant" && !message.info.id.startsWith("msg_background_"),
       );
@@ -399,6 +424,7 @@ export class PiEventTranslator {
         this.onMessageEvent(s, ev);
         break;
       case "compaction_start":
+      case "compaction_progress":
       case "compaction_end":
         this.onCompactionEvent(s, ev);
         break;
@@ -736,7 +762,8 @@ export class PiEventTranslator {
         }
         // An auto-compaction can fall between steps; its summary is a new step.
         this.completeAwaitingTools(s);
-        s.compactionID = id("compaction");
+        s.compactionID ??= id("msg");
+        s.compactionReason = typeof ev.reason === "string" ? ev.reason : "manual";
         this.services.emit(s.info.directory, {
           type: "session.compaction.started",
           properties: {
@@ -753,6 +780,15 @@ export class PiEventTranslator {
           this.setStatus(s, { type: "busy" });
         }
         return;
+      case "compaction_progress":
+        // Extension compaction feedback carries actual partial summary fragments
+        // (senpi/dist/core/agent-session.js _updateExtensionCompactionFeedback).
+        if (s.compactionID !== undefined && typeof ev.delta === "string" && ev.delta !== "")
+          this.services.emit(s.info.directory, {
+            type: "session.compaction.delta",
+            properties: { sessionID: s.info.id, text: ev.delta },
+          });
+        return;
       case "compaction_end": {
         const retry = s.compactRetry;
         if (ev.aborted === true && retry !== undefined && retry.left > 0 && (s.abortRequests ?? 0) === retry.aborts) {
@@ -761,8 +797,9 @@ export class PiEventTranslator {
         }
         delete s.info.time.compacting;
         const result = ev.result as { summary?: unknown; firstKeptEntryId?: unknown } | undefined;
-        const inputID = s.compactionID ?? id("compaction");
+        const inputID = s.compactionID ?? id("msg");
         delete s.compactionID;
+        delete s.compactionReason;
         this.services.emit(
           s.info.directory,
           ev.aborted === true || typeof result?.summary !== "string"
@@ -798,6 +835,10 @@ export class PiEventTranslator {
             for (const entry of readSessionTree(s.piPath).entries) {
               if (entry.type === "compaction") key = entry.id;
             }
+          }
+          if (key !== undefined) {
+            s.tree.messageEntries[inputID] ??= key;
+            (s.tree.compactionReasons ??= {})[key] = ev.reason === "manual" ? "manual" : "auto";
           }
           for (const message of compactionMessages(
             s,

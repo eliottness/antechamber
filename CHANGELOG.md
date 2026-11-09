@@ -7,6 +7,33 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+OpenChamber 2.6.1 against OpenCode 2.2.5 was captured and replayed against antechamber; these close the differences
+that OpenChamber relies on.
+
+- Permission cards on `/api/event` now use OpenCode 2.x's fields (`action`, `resources`, `save`, `source`), and
+  "Allow always" advertises the scope OmO saves for reads, edits, lists, globs, greps and eval. The pending-form list
+  only shows questions from the current project.
+- Session lists honor `parentID=null` and `archived`, so message search indexes existing conversations. A metadata
+  update no longer sends a rename and an agent switch; renames, agent switches, archive and unarchive are announced
+  once, when they really happen, and a new session announces its model.
+- OpenChamber's per-session guidance, checkout info, memory, pinned messages and response style now reach the agent:
+  instruction entries are stored and sent to OmO before the next prompt, removals are announced, and compaction
+  re-sends them. Unread state is kept (`/view` no longer fails), and the inbox lists inputs still waiting for the agent.
+- A reloaded transcript keeps the turn boundaries and compaction records the live one had. `/compact` answers as soon
+  as the compaction starts instead of waiting for it, and slash commands keep their attachments and delivery mode.
+- Rename with AI and other small-model actions work: `/api/experimental/generate/text` runs a one-off OmO turn with
+  no tools and no session. The image-model picker only lists image models, directory search finds folders, open
+  files reload when they change on disk, and project, provider, model, command and Git branch changes reach an open
+  OpenChamber without a reload. Nothing polls: refreshes ride on finished turns, client reads and a watch on Git's
+  HEAD. Usage limits and the debug location list answer like OpenCode instead of 404.
+- Text generation picks its model at agent start, so Rename with AI never changes OmO's saved default model; it is
+  bounded by one deadline and two concurrent runs, and stops when the caller disconnects or the server stops.
+- File watches are 24-hour leases that OpenChamber's renewals extend, so closed editors no longer leave watchers
+  behind; a reverted, forked or compacted conversation gets back the instruction entries it lost; and a turn still
+  running tools no longer shows as finished in a reloaded transcript.
+
 ## [1.0.40] - 2026-11-06
 
 ### Fixed

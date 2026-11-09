@@ -68,6 +68,11 @@ export interface ScannedSession extends SessionSelection {
 
 export type TitleSource = "user" | "native" | "fallback" | "generated";
 
+export interface InstructionEntryState {
+  value: unknown;
+  removed?: true;
+}
+
 /** Adapter-owned metadata that pi's files do not carry. */
 export interface SessionRegistryEntry {
   /** Created by this connector, rather than discovered from another OmO client. */
@@ -79,6 +84,7 @@ export interface SessionRegistryEntry {
   parentMessageID?: string;
   agent?: string;
   metadata?: Record<string, unknown>;
+  instructions?: Record<string, InstructionEntryState>;
   task?: ChildTask;
   piSessionId: string;
   piPath: string;
@@ -87,6 +93,8 @@ export interface SessionRegistryEntry {
   titleSource?: TitleSource;
   /** Archive timestamp (absent/0 = live) — OpenChamber's archive toggle. */
   archived?: number;
+  /** Last idle watermark acknowledged by a viewer. */
+  viewed?: number;
   /**
    * Last model pi was known to run. pi's JSONL header does not carry it, so
    * without this a dormant session would advertise no model at all until it is
@@ -473,6 +481,13 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
     (!record(value.promptMetadata) || !Object.values(value.promptMetadata).every((metadata) => record(metadata)))
   )
     return false;
+  if (value.promptDescriptions !== undefined && !stringRecord(value.promptDescriptions)) return false;
+  if (
+    value.compactionReasons !== undefined &&
+    (!stringRecord(value.compactionReasons) ||
+      !Object.values(value.compactionReasons).every((reason) => reason === "manual" || reason === "auto"))
+  )
+    return false;
   if (
     value.messageParts !== undefined &&
     (!record(value.messageParts) ||
@@ -482,6 +497,25 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
   )
     return false;
   if (value.shellDispatch !== undefined && !booleanRecord(value.shellDispatch)) return false;
+  const finite = (item: unknown) => typeof item === "number" && Number.isFinite(item);
+  if (value.lastIdle !== undefined && !finite(value.lastIdle)) return false;
+  if (
+    value.compactionAdmissions !== undefined &&
+    (!record(value.compactionAdmissions) || !Object.values(value.compactionAdmissions).every(finite))
+  )
+    return false;
+  if (
+    value.idleBoundaries !== undefined &&
+    (!record(value.idleBoundaries) ||
+      !Object.values(value.idleBoundaries).every(
+        (boundary) =>
+          record(boundary) &&
+          finite(boundary.at) &&
+          ["succeeded", "failed", "interrupted"].includes(boundary.outcome as string) &&
+          (boundary.error === undefined || record(boundary.error)),
+      ))
+  )
+    return false;
   if (value.leafId !== undefined && value.leafId !== null && typeof value.leafId !== "string") return false;
   if (value.fileSize !== undefined && (typeof value.fileSize !== "number" || !Number.isFinite(value.fileSize)))
     return false;
@@ -543,11 +577,24 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
   if (value.parentMessageID !== undefined && typeof value.parentMessageID !== "string") return false;
   if (value.agent !== undefined && typeof value.agent !== "string") return false;
   if (value.metadata !== undefined && !record(value.metadata)) return false;
+  if (
+    value.instructions !== undefined &&
+    (!record(value.instructions) ||
+      !Object.entries(value.instructions).every(
+        ([key, entry]) =>
+          /^[a-z0-9][a-z0-9._-]*$/.test(key) &&
+          record(entry) &&
+          "value" in entry &&
+          (entry.removed === undefined || entry.removed === true),
+      ))
+  )
+    return false;
   if (value.task !== undefined && !childTask(value.task)) return false;
   if (value.title !== undefined && typeof value.title !== "string") return false;
   if (value.titleSource !== undefined && !titleSource(value.titleSource)) return false;
   if (value.archived !== undefined && (typeof value.archived !== "number" || !Number.isFinite(value.archived)))
     return false;
+  if (value.viewed !== undefined && (typeof value.viewed !== "number" || !Number.isFinite(value.viewed))) return false;
   if (
     value.model !== undefined &&
     (!record(value.model) || typeof value.model.providerID !== "string" || typeof value.model.modelID !== "string")
