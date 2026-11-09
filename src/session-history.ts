@@ -286,6 +286,9 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
           agent: agentName,
           model: userMessageModel(currentModel, currentThinkingLevel),
           synthetic: true,
+          ...(s.tree.promptDescriptions?.[contextID] !== undefined
+            ? { description: s.tree.promptDescriptions[contextID] }
+            : {}),
         },
         parts: [
           {

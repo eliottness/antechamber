@@ -213,7 +213,12 @@ export function toV2Session(
 export interface V2Message {
   id: string;
   time: { created: number; completed?: number; streamed?: number };
-  type: "user" | "assistant" | "synthetic";
+  type: "user" | "assistant" | "synthetic" | "idle" | "compaction";
+  status?: "running" | "completed" | "failed";
+  reason?: string;
+  summary?: string;
+  outcome?: "succeeded" | "failed" | "interrupted";
+  description?: string;
   text?: string;
   files?: Array<Record<string, unknown>>;
   agents?: Array<Record<string, unknown>>;
@@ -234,7 +239,14 @@ function toV2UserMessage(info: OCMessageWithParts): V2Message {
   const metadata = user.metadata !== undefined ? { metadata: user.metadata } : {};
   // Admitted no-reply context lists as OpenCode's synthetic item, not as a user turn.
   if (user.synthetic)
-    return { id: user.id, time: { created: user.time.created }, type: "synthetic", text, ...metadata };
+    return {
+      id: user.id,
+      time: { created: user.time.created },
+      type: "synthetic",
+      text,
+      ...(user.description !== undefined ? { description: user.description } : {}),
+      ...metadata,
+    };
   const inputs = info.parts.flatMap((part) => (part.type === "file" || part.type === "agent" ? [part] : []));
   return {
     id: user.id,
@@ -452,6 +464,7 @@ export class V2EventTranslator {
       case "session.revert.cleared":
       case "session.revert.committed":
       case "session.compaction.started":
+      case "session.compaction.delta":
       case "session.compaction.ended":
       case "session.compaction.failed":
       case "session.shell.started":

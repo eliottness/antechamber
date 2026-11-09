@@ -943,7 +943,19 @@ test("compact returns the small-session error and reloads compacted history", { 
     body: "{}",
   });
   assert.equal(compactedV2.status, 200);
-  assert.deepEqual(await compactedV2.json(), { data: true });
+  const admitted = (await compactedV2.json()) as {
+    data: { id: string; type: string; status: string; reason: string; summary: string };
+  };
+  assert.match(admitted.data.id, /^msg_/);
+  assert.deepEqual(
+    {
+      type: admitted.data.type,
+      status: admitted.data.status,
+      reason: admitted.data.reason,
+      summary: admitted.data.summary,
+    },
+    { type: "compaction", status: "running", reason: "manual", summary: "" },
+  );
   await updatedV2;
 
   const v2History = await fetch(`${url}/api/session/${sessionId}/message?order=asc`);

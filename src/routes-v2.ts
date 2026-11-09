@@ -683,7 +683,63 @@ export async function handleV2(
       case "GET /message": {
         const order = url.searchParams.get("order");
         const limit = numberParam(url.searchParams.get("limit"));
-        let messages = (services.sessions.messages(sessionId) ?? []).map((m) => toV2Message(m));
+        const history = services.sessions.messages(sessionId) ?? [];
+        const messagesWithTurns = history.flatMap((message, index) => {
+          if (message.parts.some((part) => part.type === "compaction")) {
+            const summary = history[index + 1];
+            if (summary?.info.role !== "assistant" || summary.info.summary !== true) return [];
+            const entryID =
+              managed.tree.messageEntries[message.info.id] ?? message.info.id.replace(/^msg_compaction_/, "");
+            const admittedID =
+              Object.keys(managed.tree.messageEntries).find(
+                (key) => key !== message.info.id && managed.tree.messageEntries[key] === entryID,
+              ) ?? message.info.id;
+            const content = summary.parts.find((part) => part.type === "text");
+            return [
+              {
+                id: admittedID,
+                type: "compaction" as const,
+                time: { created: message.info.time.created },
+                status: "completed" as const,
+                reason: managed.tree.compactionReasons?.[entryID] ?? "manual",
+                summary: content?.type === "text" ? content.text : "",
+              },
+            ];
+          }
+          if (message.info.role === "assistant" && message.info.summary === true) return [];
+          const item = toV2Message(message);
+          const next = history
+            .slice(index + 1)
+            .find((candidate) => candidate.info.role !== "user" || !candidate.info.synthetic);
+          if (message.info.role !== "assistant" || next?.info.role === "assistant" || message.info.finish === undefined)
+            return [item];
+          const error = message.info.error;
+          return [
+            item,
+            {
+              id: `msg_idle_${message.info.id.replace(/^msg_/, "")}`,
+              type: "idle" as const,
+              time: { created: message.info.time.completed ?? message.info.time.created },
+              outcome:
+                error?.name === "MessageAbortedError"
+                  ? ("interrupted" as const)
+                  : error
+                    ? ("failed" as const)
+                    : ("succeeded" as const),
+              ...(error !== undefined ? { error } : {}),
+            },
+          ];
+        });
+        if (managed.compactionID && !messagesWithTurns.some((message) => message.id === managed.compactionID))
+          messagesWithTurns.push({
+            id: managed.compactionID,
+            type: "compaction",
+            time: { created: managed.info.time.compacting ?? Date.now() },
+            status: "running",
+            reason: "manual",
+            summary: "",
+          });
+        let messages = messagesWithTurns;
         if (order !== "asc") messages = messages.reverse(); // v2 default is newest-first
         const cursor = url.searchParams.get("cursor");
         if (cursor !== null) {
@@ -700,18 +756,44 @@ export async function handleV2(
       }
       case "POST /compact":
       case "POST /summarize": {
-        await services.body(req);
-        const result = await compactSession(services.sessions, sessionId);
-        if (result.kind === "error") {
-          announceSessionError(
-            { sessions: services.sessions, session: managed, emit: services.broadcast },
-            "BadRequestError",
-            result.message,
-          );
-          json(res, 400, errorBody("BadRequestError", result.message));
+        const body = (await services.body(req)) as { id?: unknown; delivery?: unknown };
+        if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
+          throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
+        if (body.id !== undefined && (typeof body.id !== "string" || !body.id.startsWith("msg_")))
+          throw new RequestBodyError(400, "id must be a message ID");
+        if (managed.compactionID !== undefined) {
+          json(res, 409, errorBody("ConflictError", "Compaction already running"));
           return;
         }
-        json(res, 200, { data: true });
+        const inputID = body.id ?? `msg_${randomUUID().replaceAll("-", "")}`;
+        managed.compactionID = inputID;
+        const item = {
+          id: inputID,
+          type: "compaction",
+          time: { created: Date.now() },
+          status: "running",
+          reason: "manual",
+          summary: "",
+        };
+        void compactSession(services.sessions, sessionId)
+          .then((result) => {
+            if (result.kind === "error")
+              announceSessionError(
+                { sessions: services.sessions, session: managed, emit: services.broadcast },
+                "BadRequestError",
+                result.message,
+              );
+            if (managed.compactionID === inputID) delete managed.compactionID;
+          })
+          .catch((error: unknown) => {
+            if (managed.compactionID === inputID) delete managed.compactionID;
+            announceSessionError(
+              { sessions: services.sessions, session: managed, emit: services.broadcast },
+              error instanceof Error ? error.name : "UnknownError",
+              error instanceof Error ? error.message : String(error),
+            );
+          });
+        json(res, 200, { data: item });
         return;
       }
       case "POST /shell": {
@@ -732,11 +814,23 @@ export async function handleV2(
         return;
       }
       case "POST /command": {
-        const body = (await services.body(req)) as { name?: string; text?: string; id?: string };
+        const body = (await services.body(req)) as {
+          name?: string;
+          text?: string;
+          id?: string;
+          parts?: unknown;
+          files?: unknown;
+          agents?: unknown;
+          delivery?: unknown;
+        };
+        if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
+          throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
         const result = await runSessionSlash(services, sessionId, {
           command: body.name,
           arguments: body.text ?? "",
           messageID: body.id,
+          parts: [...parsePromptParts(body.parts), ...v2PromptParts("", body.files, body.agents)],
+          delivery: body.delivery,
         });
         if (result.kind === "input") {
           json(res, 400, errorBody("BadRequestError", "command is required"));
@@ -840,6 +934,7 @@ export async function handleV2(
         const body = (await services.body(req)) as {
           id?: string;
           text?: unknown;
+          description?: unknown;
           metadata?: unknown;
           delivery?: string;
         };
@@ -866,6 +961,9 @@ export async function handleV2(
         const messageID =
           typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
         const text = body.text;
+        if (body.description !== undefined && typeof body.description !== "string")
+          throw new RequestBodyError(400, "description must be a string");
+        if (body.description !== undefined) (managed.tree.promptDescriptions ??= {})[messageID] = body.description;
         promptAsync(services, managed, text, undefined, true, messageID, body.delivery ?? "steer", undefined, metadata);
         // OpenChamber 2.3.2 treats anything but 200 + the admitted record as a failed send (captured OpenCode shape).
         json(res, 200, {
@@ -875,6 +973,7 @@ export async function handleV2(
             time: { created: Date.now() },
             type: "synthetic",
             payload: { text },
+            ...(body.description !== undefined ? { description: body.description } : {}),
           },
         });
         return;

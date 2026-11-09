@@ -399,6 +399,7 @@ export class PiEventTranslator {
         this.onMessageEvent(s, ev);
         break;
       case "compaction_start":
+      case "compaction_progress":
       case "compaction_end":
         this.onCompactionEvent(s, ev);
         break;
@@ -736,7 +737,7 @@ export class PiEventTranslator {
         }
         // An auto-compaction can fall between steps; its summary is a new step.
         this.completeAwaitingTools(s);
-        s.compactionID = id("compaction");
+        s.compactionID ??= id("msg");
         this.services.emit(s.info.directory, {
           type: "session.compaction.started",
           properties: {
@@ -753,6 +754,15 @@ export class PiEventTranslator {
           this.setStatus(s, { type: "busy" });
         }
         return;
+      case "compaction_progress":
+        // Extension compaction feedback carries actual partial summary fragments
+        // (senpi/dist/core/agent-session.js _updateExtensionCompactionFeedback).
+        if (s.compactionID !== undefined && typeof ev.delta === "string" && ev.delta !== "")
+          this.services.emit(s.info.directory, {
+            type: "session.compaction.delta",
+            properties: { sessionID: s.info.id, text: ev.delta },
+          });
+        return;
       case "compaction_end": {
         const retry = s.compactRetry;
         if (ev.aborted === true && retry !== undefined && retry.left > 0 && (s.abortRequests ?? 0) === retry.aborts) {
@@ -761,7 +771,7 @@ export class PiEventTranslator {
         }
         delete s.info.time.compacting;
         const result = ev.result as { summary?: unknown; firstKeptEntryId?: unknown } | undefined;
-        const inputID = s.compactionID ?? id("compaction");
+        const inputID = s.compactionID ?? id("msg");
         delete s.compactionID;
         this.services.emit(
           s.info.directory,
@@ -798,6 +808,10 @@ export class PiEventTranslator {
             for (const entry of readSessionTree(s.piPath).entries) {
               if (entry.type === "compaction") key = entry.id;
             }
+          }
+          if (key !== undefined) {
+            s.tree.messageEntries[inputID] = key;
+            (s.tree.compactionReasons ??= {})[key] = ev.reason === "manual" ? "manual" : "auto";
           }
           for (const message of compactionMessages(
             s,

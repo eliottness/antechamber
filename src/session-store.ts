@@ -473,6 +473,13 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
     (!record(value.promptMetadata) || !Object.values(value.promptMetadata).every((metadata) => record(metadata)))
   )
     return false;
+  if (value.promptDescriptions !== undefined && !stringRecord(value.promptDescriptions)) return false;
+  if (
+    value.compactionReasons !== undefined &&
+    (!stringRecord(value.compactionReasons) ||
+      !Object.values(value.compactionReasons).every((reason) => reason === "manual" || reason === "auto"))
+  )
+    return false;
   if (
     value.messageParts !== undefined &&
     (!record(value.messageParts) ||

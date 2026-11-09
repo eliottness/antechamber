@@ -48,6 +48,8 @@ export interface OCUserMessage {
   model: OCModelRef & { variant?: string };
   /** No-reply context admitted without a turn (v2 lists it as `type: "synthetic"`). */
   synthetic?: boolean;
+  /** Human-readable label for a v2 synthetic notice. */
+  description?: string;
   /** Client metadata sent with the prompt (OpenChamber 2.x). */
   metadata?: Record<string, unknown>;
 }
@@ -228,6 +230,10 @@ export type OCEvent =
   | {
       type: "session.compaction.started";
       properties: { sessionID: string; reason: string; inputID: string };
+    }
+  | {
+      type: "session.compaction.delta";
+      properties: { sessionID: string; text: string };
     }
   | {
       type: "session.compaction.ended";

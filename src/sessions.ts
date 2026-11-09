@@ -1208,6 +1208,9 @@ export class SessionManager {
       agent: getAgentName(),
       model: userMessageModel(s.model ?? model ?? { providerID: "unknown", modelID: "unknown" }, s.thinkingLevel),
       ...(context ? { synthetic: true } : {}),
+      ...(context && s.tree.promptDescriptions?.[messageID ?? ""] !== undefined
+        ? { description: s.tree.promptDescriptions[messageID ?? ""] }
+        : {}),
       ...(metadata !== undefined ? { metadata } : {}),
     };
     if (metadata !== undefined) (s.tree.promptMetadata ??= {})[userMsg.id] = metadata;

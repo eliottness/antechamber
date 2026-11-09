@@ -14,6 +14,10 @@ export interface SessionTreeState {
   promptParts?: Record<string, OCPromptPart[]>;
   /** Client prompt metadata; native RPC does not store it. */
   promptMetadata?: Record<string, Record<string, unknown>>;
+  /** Client-provided synthetic notice labels; native RPC stores only the context text. */
+  promptDescriptions?: Record<string, string>;
+  /** Native compaction reasons by the durable compaction entry ID. */
+  compactionReasons?: Record<string, "manual" | "auto">;
   /** Actual transport dispatch, not inferred from a card's terminal state. */
   shellDispatch?: Record<string, boolean>;
   /** Identity-only dispatched admissions; never rendered without a native entry. */

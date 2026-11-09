@@ -250,6 +250,13 @@ const start = (cmd) => {
   send({ type: "agent_end" });
   active = undefined;
   send({ type: "agent_idle" });
+  if (cmd.message === "auto-compaction") {
+    const firstKeptEntryId = entries.find((entry) => entry.type === "message")?.id ?? "none";
+    const result = { summary: "Auto summary", firstKeptEntryId, tokensBefore: 1234 };
+    send({ type: "compaction_start", reason: "overflow" });
+    record("compaction", result, Date.now());
+    send({ type: "compaction_end", reason: "overflow", result, aborted: false, willRetry: false });
+  }
 };
 createInterface({ input: process.stdin })
   .on("line", (line) => {
@@ -353,6 +360,30 @@ createInterface({ input: process.stdin })
       send({ type: "agent_end" });
       send({ type: "agent_idle" });
     }
+    if (cmd.type === "send_custom_message") {
+      // OmO persists a custom_message entry, then emits message_start/message_end
+      // (senpi/dist/core/agent-session.js:6408-6418).
+      const message = {
+        role: "custom",
+        customType: cmd.customType,
+        content: cmd.content,
+        display: cmd.display,
+        details: cmd.details,
+        timestamp: Date.now(),
+      };
+      record(
+        "custom_message",
+        {
+          customType: message.customType,
+          content: message.content,
+          display: message.display,
+          details: message.details,
+        },
+        message.timestamp,
+      );
+      send({ type: "message_start", message });
+      send({ type: "message_end", message });
+    }
     if (cmd.type === "nested_finish" && nestedEntries) {
       const result = nestedEntries.find((entry) => entry.id === "nested-result").message;
       const sibling = nestedEntries.find((entry) => entry.id === "sibling-result").message;
@@ -426,6 +457,28 @@ createInterface({ input: process.stdin })
     if (cmd.type === "compact") {
       // OmO: compaction_start, persisted entry, compaction_end with the result, then the reply.
       send({ type: "compaction_start", reason: "manual" });
+      // A session with no compactable history still emits a failed end before rejecting
+      // (senpi/dist/core/agent-session.js:7967-7992).
+      if (!entries.some((entry) => entry.type === "message")) {
+        send({ type: "compaction_end", reason: "manual", aborted: false, willRetry: false });
+        send({
+          type: "response",
+          id: cmd.id,
+          command: cmd.type,
+          success: false,
+          error: "Nothing to compact (session too small)",
+        });
+        return;
+      }
+      // Extension compaction feedback can emit partial summary fragments before compaction_end
+      // (senpi/dist/core/agent-session.js:8150-8160).
+      if (process.env.ANTECHAMBER_TEST_COMPACT_PROGRESS === "1")
+        send({
+          type: "compaction_progress",
+          reason: "manual",
+          delta: "native summary fragment",
+          text: "native summary fragment",
+        });
       if (process.env.ANTECHAMBER_TEST_HOLD_COMPACT === "1") {
         heldCompact = cmd;
         return;

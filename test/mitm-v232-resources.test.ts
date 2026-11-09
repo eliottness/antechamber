@@ -141,9 +141,14 @@ test("MITM232-04: v2 resources preserve captured field paths and types", {
   assert.equal(session.status, 200);
   assertGoldenShape(responses.session, await session.json(), "session response");
 
-  const messages = await fetch(`${url}/api/session/${sessionID}/message?order=desc&limit=1`, { headers });
+  const messages = await fetch(`${url}/api/session/${sessionID}/message?order=desc&limit=2`, { headers });
   assert.equal(messages.status, 200);
-  assertGoldenShape(responses.message, await messages.json(), "message response");
+  const response = record(await messages.json(), "message response");
+  const items = response.data;
+  assert.ok(Array.isArray(items));
+  assert.equal(record(items[0], "idle message").type, "idle");
+  assert.equal(record(items[0], "idle message").outcome, "succeeded");
+  assertGoldenShape(responses.message, { ...response, data: items.slice(1) }, "message response");
 });
 
 test("MITM232-07: v2 agents preserve captured descriptor fields", { timeout: 10_000 }, async (t: TestContext) => {

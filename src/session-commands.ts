@@ -14,7 +14,13 @@ import type {
 } from "./types.js";
 
 type CommandDescriptor = { name: string; description: string; template: "" };
-type SlashCommandInput = { command: string; arguments: string; messageID?: string; parts?: OCPromptPart[] };
+type SlashCommandInput = {
+  command: string;
+  arguments: string;
+  messageID?: string;
+  parts?: OCPromptPart[];
+  delivery?: "steer" | "queue";
+};
 type ShellResult = { output: string; exitCode: number | null; cancelled: boolean; truncated: boolean };
 export type ShellMessage = OCMessageWithParts & { info: OCAssistantMessage; parts: [OCToolPart] };
 type ShellUserMessage = OCMessageWithParts & { info: OCUserMessage; parts: [OCTextPart] };
@@ -179,11 +185,13 @@ export function parseSlashCommand(value: unknown): SlashCommandInput | undefined
   const messageID = typeof value.messageID === "string" && value.messageID !== "" ? value.messageID : undefined;
   const parts = parsePromptParts(value.parts);
   nativePromptInput("", parts);
+  if (value.delivery !== undefined && value.delivery !== "steer" && value.delivery !== "queue") return undefined;
   return {
     command: value.command,
     arguments: value.arguments,
     ...(messageID ? { messageID } : {}),
     ...(parts.length > 0 ? { parts } : {}),
+    ...(value.delivery !== undefined ? { delivery: value.delivery } : {}),
   };
 }
 
@@ -230,7 +238,7 @@ export async function runSlashCommand(
     undefined,
     false,
     input.messageID,
-    "steer",
+    input.delivery ?? "steer",
     input.parts ? [{ type: "text", text }, ...input.parts] : undefined,
   );
   await sessions.reloadMessages(sessionId);
