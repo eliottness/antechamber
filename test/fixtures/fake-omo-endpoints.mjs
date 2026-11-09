@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -10,6 +10,12 @@ const noSession = process.argv.includes("--no-session");
 let leaf;
 let rejectedInstructions = false;
 let selectedModel = { provider: "fake", id: "fake-model" };
+// Startup overrides initialize agent state without writing defaults (senpi dist/cli/args.js:93-104,
+// main.js:561-576, core/sdk.js:125,292-298). set_model below deliberately does persist them.
+const providerArg = process.argv.indexOf("--provider");
+const modelArg = process.argv.indexOf("--model");
+if (providerArg !== -1 && modelArg !== -1)
+  selectedModel = { provider: process.argv[providerArg + 1], id: process.argv[modelArg + 1] };
 let timestamp = Date.now();
 let hasPrompt = false;
 let pendingBash;
@@ -17,6 +23,19 @@ let holdEntries = false;
 let pendingEntries;
 let compactions = 0;
 const entries = [];
+const generationLog = (event) => {
+  if (noSession && process.env.FAKE_OMO_GENERATION_LOG)
+    appendFileSync(process.env.FAKE_OMO_GENERATION_LOG, `${JSON.stringify({ event, pid: process.pid })}\n`);
+};
+generationLog("spawn");
+process.on("exit", () => generationLog("exit"));
+function released(action) {
+  const watcher = watch(process.cwd(), (_event, file) => {
+    if (file?.toString() !== "release-generation") return;
+    watcher.close();
+    action();
+  });
+}
 if (process.env.FAKE_OMO_SPAWN_LOG) appendFileSync(process.env.FAKE_OMO_SPAWN_LOG, `${process.pid}\n`);
 const catalogState = () => {
   const file = join(process.cwd(), ".catalog-state.json");
@@ -96,6 +115,11 @@ input.on("line", (line) => {
       reply(command, true, { models: catalogState().models ?? [] });
       return;
     case "get_entries":
+      if (holdEntries && noSession) {
+        generationLog("read");
+        released(() => reply(command, true, { entries }));
+        return;
+      }
       if (holdEntries) {
         pendingEntries = command;
         send({ type: "fixture_entries_pending" });
@@ -113,6 +137,39 @@ input.on("line", (line) => {
     case "prompt": {
       const text = command.message;
       hasPrompt = true;
+      if (text === "fixture-generation-fail") {
+        reply(command, false, undefined, "Generation refused");
+        return;
+      }
+      // OmO's prompt ack is gated by preflightResult, separately from agent_start/completion:
+      // senpi dist/modes/rpc/client-input-handler.js:38-72; connection-handler.js:987-995.
+      // Hold that ack after agent_start to reproduce the reviewer's pending admission.
+      if (text === "fixture-generation-admission") {
+        send({ type: "agent_start" });
+        generationLog("admission");
+        released(() => {
+          reply(command, true, {});
+          send({ type: "agent_end" });
+        });
+        return;
+      }
+      if (text === "fixture-generation-startup") {
+        generationLog("startup");
+        released(() => {
+          reply(command, true, {});
+          send({ type: "agent_end" });
+        });
+        return;
+      }
+      if (text === "fixture-generation-running" || text === "fixture-generation-read") {
+        send({ type: "agent_start" });
+        reply(command, true, {});
+        recordMessage("assistant", "finished generation");
+        holdEntries = text === "fixture-generation-read";
+        generationLog("running");
+        released(() => send({ type: "agent_end" }));
+        return;
+      }
       // OmO can acknowledge a follow-up admission before its queued turn begins
       // (installed omo-task.js:2, rpc_client_message_admission).
       if (text === "fixture-hold-input") {
@@ -166,7 +223,10 @@ input.on("line", (line) => {
         return;
       }
       recordMessage("user", text, text.startsWith("plain-content:"));
-      const assistant = recordMessage("assistant", `reply: ${text}`);
+      const assistant = recordMessage(
+        "assistant",
+        text === "fixture-generation-model" ? `${selectedModel.provider}/${selectedModel.id}` : `reply: ${text}`,
+      );
       send({ type: "agent_start" });
       send({ type: "message_start", message: assistant });
       send({
@@ -282,6 +342,10 @@ input.on("line", (line) => {
     case "set_model":
       // OmO's get_state reports the session's selected model after set_model (senpi core/agent-session.js setModel).
       selectedModel = { provider: command.provider, id: command.modelId };
+      // OmO persists even with --no-session: dist/modes/rpc/effect-commands.js:218 ->
+      // core/agent-session.js:6913-6914,7338-7339. This file stands in for shared model settings.
+      if (process.env.FAKE_OMO_DEFAULT_MODEL)
+        writeFileSync(process.env.FAKE_OMO_DEFAULT_MODEL, JSON.stringify(selectedModel));
       reply(command, true, { provider: command.provider, id: command.modelId });
       return;
     case "send_custom_message": {

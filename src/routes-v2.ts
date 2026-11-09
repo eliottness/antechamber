@@ -20,7 +20,6 @@ import { defaultV2Model, flattenModels, toV2Message, toV2Session, type V2Message
 import type { OCSession } from "./types.js";
 import { SHELL_CANCELLATION_KEY } from "./omo-shells.js";
 import { WorkStatusError } from "./work-status.js";
-import { generateText } from "./text-generation.js";
 import { FileWatchError } from "./file-watch.js";
 import {
   agentDescriptors,
@@ -370,18 +369,30 @@ export async function handleV2(
       model !== undefined && typeof model === "object" && model !== null && "providerID" in model && "id" in model
         ? { providerID: String(model.providerID), id: String(model.id) }
         : undefined;
+    const cancellation = new AbortController();
+    const disconnected = () => cancellation.abort(new Error("Text generation caller disconnected"));
+    res.once("close", disconnected);
+    if (res.destroyed) disconnected();
     try {
       json(res, 200, {
         data: {
-          text: await generateText(services.defaultDirectory, body.prompt, selected),
+          text: await services.textGeneration.generate(
+            services.defaultDirectory,
+            body.prompt,
+            selected,
+            cancellation.signal,
+          ),
         },
       });
     } catch (error) {
+      if (res.destroyed) return;
       json(res, 503, {
         _tag: "ServiceUnavailableError",
         message: error instanceof Error ? error.message : "Text generation is unavailable",
         service: "opencode",
       });
+    } finally {
+      res.off("close", disconnected);
     }
     return;
   }

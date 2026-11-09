@@ -23,6 +23,7 @@ import { handleWorkStatus } from "./work-status.js";
 import { FileWatchRegistry } from "./file-watch.js";
 import { getCommands } from "./session-commands.js";
 import type { PiRpcClient } from "./pi-rpc.js";
+import { TextGeneration } from "./text-generation.js";
 
 export { isLoopbackHost, serverPassword } from "./http.js";
 
@@ -55,6 +56,7 @@ export class AdapterServer {
   private readonly projectDirectories = new Set<string>();
   private readonly fileWatches = new FileWatchRegistry((directory, event) => this.broadcast(directory, event));
   private readonly pendingRefreshes = new Set<Promise<void>>();
+  private readonly textGeneration = new TextGeneration();
   private stopping = false;
   private actualPort: number | undefined;
   /** Bearer token for the `/antechamber/work-status` routes, published in the run record for the OmO Work extension. */
@@ -218,6 +220,7 @@ export class AdapterServer {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    await this.textGeneration.dispose();
     await Promise.all([...this.pendingRefreshes]);
     for (const watcher of await Promise.all(this.branchWatchers.values())) watcher?.close();
     this.branchWatchers.clear();
@@ -445,6 +448,7 @@ export class AdapterServer {
       fileWatches: this.fileWatches,
       commands: (dir) => this.commands(dir),
       vcsBranch: (dir) => this.vcsBranch(dir),
+      textGeneration: this.textGeneration,
     };
     if (path === "/api" || path.startsWith("/api/")) {
       await handleV2(services, req, res, url, path, method, directory);
