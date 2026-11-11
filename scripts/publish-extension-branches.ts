@@ -1,12 +1,10 @@
 // Publishes the release's extension zips as Git branches whose root is the
 // extension, one commit per release on top of the previous one:
 //
-//   antechamber-omo-graph.zip  -> extension/omo-graph
-//   antechamber-omo-work.zip   -> extension/omo-work
-//   antechamber-omo-compat.zip -> extension/omo-compat
+//   antechamber-openchamber.zip -> extension/antechamber
 //
 // OpenChamber installs a Git URL such as
-// https://github.com/eliottness/antechamber#extension/omo-graph by cloning that
+// https://github.com/eliottness/antechamber#extension/antechamber by cloning that
 // branch, and it checks only Git installs for updates: it compares the
 // package.json version at the branch tip with the installed one. Each branch
 // holds exactly the files of its zip. The working tree, the index and HEAD are
@@ -21,9 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const EXTENSION_BRANCHES = [
-  { archive: "antechamber-omo-graph.zip", branch: "extension/omo-graph" },
-  { archive: "antechamber-omo-work.zip", branch: "extension/omo-work" },
-  { archive: "antechamber-omo-compat.zip", branch: "extension/omo-compat" },
+  { archive: "antechamber-openchamber.zip", branch: "extension/antechamber" },
 ] as const;
 
 const REMOTE = "origin";

@@ -4,6 +4,7 @@ dist/
 extensions/*/panel/main.js
 extensions/*/service/main.js
 extensions/*/status/main.js
+extensions/*/runtime/launcher.js
 .env
 *.log
 .DS_Store

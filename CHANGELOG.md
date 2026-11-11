@@ -7,8 +7,28 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **One OpenChamber extension for everything.** `extensions/antechamber` replaces OmO Graph, OmO Work and OmO
+  Compatibility: the Graph rail panel and page, the Work Status section and the OmO tool-card headers come in one
+  package, behind one approval. Install it from `https://github.com/eliottness/antechamber#extension/antechamber`, then
+  set Settings → OpenCode CLI to its `bin/opencode-antechamber` (the Graph panel's settings show the path). On its
+  first start the launcher installs, with Bun, the antechamber release the extension's version names and the OmO
+  that release pins, into `~/.antechamber/runtime/<version>`; the extension's service installs it ahead of time when a
+  panel opens. Updating the extension in Settings → Extensions updates antechamber and OmO together, and OpenChamber's
+  own Update action points there. `ANTECHAMBER_RUNTIME_DIR` and `ANTECHAMBER_RUNTIME_SPEC` move or replace the runtime.
+
 ### Changed
 
+- **Breaking:** the `omo-graph`, `omo-work` and `omo-compat` extensions and their `extension/omo-*` branches are
+  retired. Remove them in Settings → Extensions and install the `antechamber` extension; its Graph paths and Work
+  settings start empty because OpenChamber keys stored data by extension id.
+- **Breaking:** the antechamber npm package depends on `omo-ai` at an exact version, and antechamber runs that OmO by
+  default. `ANTECHAMBER_PI_BINARY` still selects another agent, and `omo` on PATH is used only when the pinned one is
+  not installed.
+- When the extension launches antechamber (`ANTECHAMBER_MANAGED=openchamber-extension`), `POST /global/upgrade`,
+  `antechamber upgrade` and `ANTECHAMBER_AUTO_UPDATE` refuse to touch npm and say to update the extension instead,
+  and `antechamber doctor` gives the same advice.
 - **Breaking:** antechamber now runs on Bun 1.4+ instead of Node.js. OmO already requires Bun, and under Bun the
   server starts about 3 times faster and idles at about half the memory. `dist/cli.js` has a `bun` shebang,
   `bin/opencode-antechamber` finds Bun on PATH, in `$BUN_INSTALL/bin` or in `~/.bun/bin`, and `antechamber doctor`

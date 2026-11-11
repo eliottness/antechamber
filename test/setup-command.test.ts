@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { createContext, settingsPath } from "../src/commands/context.js";
 import { doctor } from "../src/commands/doctor.js";
@@ -263,26 +263,16 @@ test("auto-update setup refuses an installation that cannot update itself", (t) 
   assert.equal(fs.existsSync(settings), false);
 });
 
-test("setup points at the bundled OmO Graph extension once it is built", (t) => {
+test("setup points at the bundled antechamber extension once it is built", (t) => {
   const { home, ctx, options } = fixture(t);
-  const extension = join(home, "extensions", "omo-dag");
-  const hint = (lines: string[]) => lines.filter((line) => line.includes("OmO Graph extension"));
+  const extension = join(home, "extensions", "antechamber");
+  const hint = (lines: string[]) => lines.filter((line) => line.includes("antechamber extension"));
   assert.deepEqual(hint(setup({ ...options, dryRun: true }, ctx)), []);
 
-  fs.mkdirSync(join(extension, "panel"), { recursive: true });
-  fs.mkdirSync(join(extension, "service"));
-  for (const file of ["package.json", "panel/main.js", "service/main.js"]) fs.writeFileSync(join(extension, file), "");
-  const [line] = hint(setup({ ...options, dryRun: true }, ctx));
-  assert.ok(line?.endsWith(`Folder: ${extension}`));
-});
-
-test("setup points at the bundled OmO Compatibility extension, which needs no build", (t) => {
-  const { home, ctx, options } = fixture(t);
-  const extension = join(home, "extensions", "omo-compat");
-  const hint = (lines: string[]) => lines.filter((line) => line.includes("OmO Compatibility extension"));
-  assert.deepEqual(hint(setup({ ...options, dryRun: true }, ctx)), []);
-  fs.mkdirSync(extension, { recursive: true });
-  fs.writeFileSync(join(extension, "package.json"), "");
+  for (const file of ["package.json", "panel/main.js", "status/main.js", "service/main.js", "runtime/launcher.js"]) {
+    fs.mkdirSync(dirname(join(extension, file)), { recursive: true });
+    fs.writeFileSync(join(extension, file), "");
+  }
   const [line] = hint(setup({ ...options, dryRun: true }, ctx));
   assert.ok(line?.endsWith(`Folder: ${extension}`));
 });

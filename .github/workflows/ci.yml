@@ -45,6 +45,26 @@ jobs:
             | bun -e 'const m = JSON.parse(await Bun.stdin.text()); if (m.info?.role !== "assistant") throw new Error(JSON.stringify(m).slice(0, 500))'
           kill -TERM "$server"
           wait "$server"
+      - name: Install and serve the runtime through the extension launcher
+        run: |
+          set -eu
+          work="$(mktemp -d)"
+          npm pack --pack-destination "$work" > /dev/null
+          export ANTECHAMBER_RUNTIME_DIR="$work/runtime" ANTECHAMBER_RUNTIME_SPEC="$(ls "$work"/antechamber-*.tgz)"
+          launcher=extensions/antechamber/bin/opencode-antechamber
+          test "$($launcher --version)" = "$(bun -e 'console.log(/OPENCODE_API_VERSION = "([^"]+)"/.exec(await Bun.file("src/version.ts").text())[1])')"
+          test ! -e "$ANTECHAMBER_RUNTIME_DIR"
+          $launcher upgrade | grep -q 'Settings -> Extensions'
+          mkdir "$work/agent"
+          ANTECHAMBER_STATE_DIR="$work/state" ANTECHAMBER_PI_BINARY="$PWD/test/fixtures/turn-omo.mjs" PI_CODING_AGENT_DIR="$work/agent" \
+            $launcher serve --hostname 127.0.0.1 --port 4097 > "$work/out.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true; cat "$work/out.log"' EXIT
+          for _ in $(seq 1 1200); do grep -q '^opencode server listening on http://127.0.0.1:4097$' "$work/out.log" && break; sleep 0.1; done
+          curl -fsS http://127.0.0.1:4097/global/health | grep -q '"healthy":true'
+          ls "$ANTECHAMBER_RUNTIME_DIR"/local-*/node_modules/omo-ai/bin/omo.js
+          kill -TERM "$server"
+          wait "$server"
 
   check:
     runs-on: ubuntu-latest
@@ -73,12 +93,9 @@ jobs:
           const [pack] = JSON.parse(readFileSync(process.argv[2], "utf8"));
           const paths = pack.files.map(({ path }) => path);
           assert.ok(paths.includes("dist/cli.js"), "package must contain dist/cli.js");
-          for (const file of ["package.json", "icon.svg", "panel/index.html", "panel/main.js", "service/main.js"])
-            assert.ok(paths.includes(`extensions/omo-dag/${file}`), `package must contain the built OmO Graph extension (${file})`);
-          for (const file of ["package.json", "status/index.html", "status/main.js", "service/main.js"])
-            assert.ok(paths.includes(`extensions/omo-work/${file}`), `package must contain the built OmO Work extension (${file})`);
-          for (const file of ["package.json", "icon.svg"])
-            assert.ok(paths.includes(`extensions/omo-compat/${file}`), `package must contain the OmO Compatibility extension (${file})`);
+          for (const file of ["package.json", "icon.svg", "bin/opencode-antechamber", "panel/index.html", "panel/main.js", "status/index.html", "status/main.js", "service/main.js", "runtime/launcher.js"])
+            assert.ok(paths.includes(`extensions/antechamber/${file}`), `package must contain the built antechamber extension (${file})`);
+          assert.ok(!paths.some((path) => /^extensions\/omo-/.test(path)), "package must not contain the retired omo-* extensions");
           assert.ok(!paths.some((path) => /^extensions\/[^/]+\/(src|test|scripts)\//.test(path)),
             "package must not contain extension sources or tests");
           assert.ok(!paths.some((path) => /^(test|contrib)\//.test(path)),
