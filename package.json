@@ -1,0 +1,60 @@
+{
+  "name": "antechamber-openchamber",
+  "version": "2.0.1",
+  "description": "OpenChamber extension for antechamber: installs and pins the antechamber server and OmO, draws the OmO Graph and the OmO Work section, and titles OmO tool cards",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.3.2"
+    },
+    "contributes": {
+      "panel": {
+        "id": "antechamber",
+        "name": "OmO",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "page": {
+        "entry": "panel/index.html",
+        "title": "OmO Graph"
+      },
+      "statusSection": {
+        "entry": "status/index.html",
+        "title": "OmO Work",
+        "height": 120
+      },
+      "capabilities": [
+        "sessions"
+      ],
+      "service": {
+        "entry": "service/main.js",
+        "runtime": "host",
+        "permissions": {
+          "exec": [
+            "bun"
+          ]
+        }
+      },
+      "tools": [
+        {
+          "match": "shell",
+          "title": "{metadata.evalTitle}",
+          "subtitle": "{metadata.evalSubtitle}"
+        },
+        {
+          "match": "task",
+          "title": "{metadata.agentTitle}",
+          "subtitle": "{metadata.agentSubtitle}"
+        },
+        {
+          "match": "agent",
+          "title": "{metadata.agentTitle}",
+          "subtitle": "{metadata.agentSubtitle}"
+        }
+      ]
+    }
+  }
+}

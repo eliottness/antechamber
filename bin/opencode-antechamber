@@ -1,0 +1,42 @@
+#!/bin/sh
+# OpenChamber launcher: point Settings -> OpenCode CLI (settings.opencodeBinary) at this file.
+# OpenChamber runs `<binary> serve --hostname H --port P` and `<binary> --version`; its Update action
+# runs `<binary> upgrade`. The first `serve` installs the antechamber release this extension pins (and
+# the OmO it pins) with Bun; updating the extension in Settings -> Extensions updates both.
+set -eu
+SCRIPT_PATH=$0
+while [ -h "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+  LINK="$(readlink "$SCRIPT_PATH")"
+  case "$LINK" in
+    /*) SCRIPT_PATH=$LINK ;;
+    *) SCRIPT_PATH="$SCRIPT_DIR/$LINK" ;;
+  esac
+done
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+LAUNCHER="$SCRIPT_DIR/../runtime/launcher.js"
+# GUI apps and services often have a PATH without Bun's install directory.
+BUN=$(command -v bun || true)
+for CANDIDATE in "${BUN_INSTALL:-${HOME:-}/.bun}/bin/bun" "${HOME:-}/.bun/bin/bun"; do
+  if [ -z "$BUN" ] && [ -x "$CANDIDATE" ]; then BUN=$CANDIDATE; fi
+done
+if [ -z "$BUN" ]; then
+  echo "opencode-antechamber: bun not found on PATH or in ~/.bun/bin; install it from https://bun.sh" >&2
+  exit 1
+fi
+case "${1:-}" in
+  serve)
+    shift
+    CLI=$("$BUN" "$LAUNCHER" resolve)
+    ANTECHAMBER_MANAGED=openchamber-extension
+    export ANTECHAMBER_MANAGED
+    exec "$BUN" "$CLI" serve "$@"
+    ;;
+  --version|-v) exec "$BUN" "$LAUNCHER" version ;;
+  upgrade)
+    echo "antechamber is managed by its OpenChamber extension: update it in Settings -> Extensions."
+    exit 0
+    ;;
+esac
+echo "opencode-antechamber: unsupported command '${1:-}' (only 'serve', '--version' and 'upgrade' are implemented)" >&2
+exit 1
