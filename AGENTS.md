@@ -101,8 +101,8 @@ ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke   # live, costs toke
 npm run build && npm run replay -- [--session ses_x]   # real sessions in a real OpenChamber; no tokens, local only
 antechamber doctor                       # includes installed vs latest vs running adapter versions
 ```
-CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests. A `macos-latest` job (Node 24) runs typecheck and test so the darwin process paths meet the real `ps`.
-The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check, and serves a fake-agent turn through `bin/opencode-antechamber`.
+CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests. A `macos-latest` job runs typecheck and test on Node 24 so the darwin process paths meet the real `ps`, then, on Bun, `scripts/ci/darwin-teardown-probe.ts` (the shipped process table against the live table), doctor's `bun` and `private-host-teardown` checks, and `scripts/ci/launcher-smoke.sh` (the extension launcher installing and serving a packed runtime).
+The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check, and serves a fake-agent turn through `bin/opencode-antechamber`, then runs `scripts/ci/launcher-smoke.sh`.
 
 ## NOTES
 - The extension's bundles (`extensions/antechamber/{panel,status,service,runtime}/*.js`) and the root `package.json` `openchamber` manifest are committed, because OpenChamber installs the repository URL by cloning it and never builds. `npm run build` regenerates both; commit them with the source change (CI fails on a diff).
