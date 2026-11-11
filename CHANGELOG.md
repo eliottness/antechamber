@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-11-11
+
 ### Added
 
 - **Use as OpenCode CLI** in the OmO panel's Runtime block: once the runtime is installed, one click points
