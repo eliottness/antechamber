@@ -679,25 +679,59 @@ export class SessionStore {
   }
 
   private migrate(db: DatabaseSync, legacy: string): void {
+    const meta = (key: string) => db.prepare("SELECT value FROM registry_meta WHERE key = ?").get(key)?.value;
+    const setMeta = (key: string, value: string) =>
+      db
+        .prepare("INSERT INTO registry_meta VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run(key, value);
+    db.prepare("INSERT OR IGNORE INTO registry_meta VALUES ('created_at', ?)").run(String(Date.now()));
     if (!existsSync(legacy)) return;
     db.exec("BEGIN IMMEDIATE");
     let backup: string | undefined;
+    let merged = 0;
     try {
-      const imported = db.prepare("SELECT value FROM registry_meta WHERE key = 'legacy_backup'").get();
-      if (typeof imported?.value === "string") backup = imported.value;
-      else if (db.prepare("SELECT 1 FROM sessions LIMIT 1").get() === undefined && existsSync(legacy)) {
-        let parsed: unknown;
+      const imported = meta("legacy_backup");
+      const parse = (): Record<string, unknown> | undefined => {
         try {
-          parsed = JSON.parse(readFileSync(legacy, "utf8"));
+          const parsed: unknown = JSON.parse(readFileSync(legacy, "utf8"));
+          return record(parsed) ? parsed : undefined;
         } catch (error) {
           if (!(error instanceof SyntaxError)) throw error;
           // Preserve malformed JSON untouched; a later repair can still be imported.
+          return undefined;
         }
-        if (record(parsed)) {
+      };
+      if (typeof imported === "string" && !existsSync(imported)) backup = imported;
+      else if (imported === undefined && db.prepare("SELECT 1 FROM sessions LIMIT 1").get() === undefined) {
+        const parsed = parse();
+        if (parsed !== undefined) {
           const upsert = this.upsert(db);
           for (const [id, entry] of Object.entries(parsed)) if (registryEntry(entry)) this.writeRow(upsert, id, entry);
           backup = `${legacy}.migrated-${Date.now()}-${process.pid}`;
-          db.prepare("INSERT INTO registry_meta VALUES ('legacy_backup', ?)").run(backup);
+          setMeta("legacy_backup", backup);
+          setMeta("reconciled_at", String(Date.now()));
+        }
+      } else {
+        // A sessions.json next to a populated registry was written by an older antechamber after the migration (a
+        // rollback). Sessions it changed since then are newer than the rows here; older entries, including ones
+        // deleted since, stay as the registry has them.
+        const since = Number(
+          meta("reconciled_at") ?? /\.migrated-(\d+)-/.exec(String(imported))?.[1] ?? meta("created_at") ?? Infinity,
+        );
+        const parsed = parse();
+        if (parsed !== undefined) {
+          const upsert = this.upsert(db);
+          for (const [id, entry] of Object.entries(parsed)) {
+            if (!registryEntry(entry) || !(entry.updated > since)) continue;
+            const current = this.read(db, id);
+            if (current !== undefined && current.updated >= entry.updated) continue;
+            this.writeRow(upsert, id, entry);
+            merged += 1;
+          }
+          if (merged > 0) {
+            backup = `${legacy}.merged-${Date.now()}-${process.pid}`;
+            setMeta("reconciled_at", String(Date.now()));
+          }
         }
       }
       db.exec("COMMIT");
@@ -705,6 +739,8 @@ export class SessionStore {
       db.exec("ROLLBACK");
       throw error;
     }
+    if (merged > 0) this.entries.clear();
+    if (merged > 0) console.warn(`[session-store] merged ${merged} sessions an older antechamber wrote to ${legacy}`);
     // The durable marker handles a crash after COMMIT but before rename, including an empty import.
     // Never overwrite an existing backup or import the same legacy file after sessions are deleted.
     if (backup !== undefined && !existsSync(backup)) {

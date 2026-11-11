@@ -93,6 +93,35 @@ test("a restart completes a pending migration rename without overwriting committ
   assert.equal(readFileSync(join(state, backup), "utf8"), raw);
 });
 
+test("sessions an older antechamber wrote to sessions.json after the migration are merged, newest wins", (t) => {
+  const { state, entry } = setup(t);
+  const legacy = join(state, "sessions.json");
+  writeFileSync(legacy, JSON.stringify({ ses_kept: entry, ses_changed: entry, ses_deleted: entry }));
+  const store = new SessionStore(state);
+  store.remove("ses_deleted");
+  const later = Date.now() + 60_000;
+  t.mock.method(console, "warn", () => {});
+  // A rollback: v1.x rewrites sessions.json from its own view, then v2 starts again.
+  writeFileSync(
+    legacy,
+    JSON.stringify({
+      ses_kept: entry,
+      ses_deleted: entry,
+      ses_changed: { ...entry, title: "renamed in 1.x", updated: later },
+      ses_new: { ...entry, piSessionId: "new", updated: later },
+    }),
+  );
+
+  const reopened = new SessionStore(state);
+
+  assert.equal(reopened.get("ses_new")?.piSessionId, "new");
+  assert.equal(reopened.get("ses_changed")?.title, "renamed in 1.x");
+  assert.deepEqual(reopened.get("ses_kept"), entry);
+  assert.equal(reopened.get("ses_deleted"), undefined);
+  assert.equal(existsSync(legacy), false);
+  assert.equal(readdirSync(state).filter((name) => name.startsWith("sessions.json.merged-")).length, 1);
+});
+
 test("malformed legacy JSON stays untouched and can be repaired before migration", (t) => {
   const { state, entry } = setup(t);
   const legacy = join(state, "sessions.json");

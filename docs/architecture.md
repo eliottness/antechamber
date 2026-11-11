@@ -107,6 +107,10 @@ the writing store's memory but is omitted from persisted payloads.
 When an empty database first finds `sessions.json`, it validates and imports the
 records in one transaction. A migration marker records the backup name before
 commit; the source is then renamed to `sessions.json.migrated-<timestamp>-<pid>`.
+A `sessions.json` that appears next to a populated database later was written by an older antechamber (a
+rollback). Its entries updated since the last import or merge replace older rows, newest `updated` wins, and the file
+becomes `sessions.json.merged-<timestamp>-<pid>`; entries it has not changed since, including sessions deleted in
+the meantime, stay as the database has them.
 Two processes serialize migration through SQLite, and a restart can complete a
 rename interrupted after commit without importing twice. The original bytes
 are retained, including invalid records; malformed JSON is left untouched.

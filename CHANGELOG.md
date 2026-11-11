@@ -88,7 +88,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
   `ANTECHAMBER_AUTO_UPDATE` refuse to touch npm and say to update the extension instead, and `antechamber doctor`
   gives the same advice.
 - Move the session registry to SQLite with WAL and row-level writes. Existing `sessions.json` registries migrate
-  automatically and remain on disk as timestamped backups.
+  automatically and remain on disk as timestamped backups. After a rollback to 1.x and back, the sessions 1.x created
+  or changed in the meantime are merged in.
 - **Breaking:** antechamber now runs on Bun 1.4+ instead of Node.js. OmO already requires Bun, and under Bun the
   server starts about 3 times faster and idles at about half the memory. `dist/cli.js` has a `bun` shebang,
   `bin/opencode-antechamber` finds Bun on PATH, in `$BUN_INSTALL/bin` or in `~/.bun/bin`, and `antechamber doctor`
