@@ -12,7 +12,7 @@ const extensionDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const command = process.argv[2];
 
 if (command === "version") {
-  console.log(__OPENCODE_API_VERSION__);
+  console.log(`opencode v${__OPENCODE_API_VERSION__}`);
 } else if (command === "resolve") {
   const { version } = JSON.parse(readFileSync(join(extensionDir, "package.json"), "utf8")) as { version: string };
   const env = defaultEnv();
