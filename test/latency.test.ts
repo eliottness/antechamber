@@ -31,6 +31,8 @@ function setup(t: TestContext) {
 test("slow HTTP warnings include route patterns and status without query or path secrets", async (t) => {
   const warnings = setup(t);
   process.env.ANTECHAMBER_SLOW_REQUEST_MS = "10";
+  // The mocked clock also feeds the loop-lag sampler; keep it from adding warnings of its own.
+  process.env.ANTECHAMBER_EVENT_LOOP_LAG_MS = String(Number.MAX_SAFE_INTEGER);
   let time = 0;
   t.mock.method(performance, "now", () => (time += 50));
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: "/synthetic" });
