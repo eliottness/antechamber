@@ -7,8 +7,11 @@ page covers the parts that are specific to OmO.
 
 ## Basic setup
 
-OmO is antechamber's default backend: with `omo` on `PATH` (`bun add -g omo-ai`)
-no backend configuration is needed.
+OmO is antechamber's default backend: antechamber depends on an exact `omo-ai`
+version and runs `node_modules/omo-ai/bin/omo.js` from its own install by
+default, so no separate `omo-ai` install or backend configuration is needed.
+`omo` on `PATH` is only used as a fallback when that bundled binary can't be
+resolved.
 
 ```bash
 antechamber serve --hostname 127.0.0.1 --port 4096

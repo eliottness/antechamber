@@ -11,7 +11,7 @@ One line per module in `src/`:
 | `commands/serve.ts` | Default/OpenCode-compatible server startup, bind guard and shutdown signals |
 | `commands/setup.ts` | OpenChamber settings, optional auto-update launcher and systemd drop-in plans, backups and configuration |
 | `commands/upgrade.ts` | `antechamber upgrade` output around `selfUpdate` |
-| `self-update.ts` | Global npm/bun install detection, npm registry lookup, and the single-flight installer run behind `upgrade`, `POST /global/upgrade` and `ANTECHAMBER_AUTO_UPDATE` |
+| `self-update.ts` | Global npm/bun install detection, npm registry lookup, and the single-flight installer run behind `upgrade` and `ANTECHAMBER_AUTO_UPDATE`. `GET /global/upgrade` is a static 409 stub in `routes-v1.ts` and never calls into this module. |
 | `commands/doctor.ts` | Read-only installation diagnostics and text/JSON reporting |
 | `running-servers.ts` | `serve` records its PID, version and URL under `<state>/run/` so doctor can report what is actually running |
 | `commands/context.ts` | Injectable filesystem/environment/exec dependencies, executable and settings resolution |
