@@ -1543,10 +1543,13 @@ test("a repeated omo.task.updated row only changing live progress emits and save
   const store = h.manager.subagents["store"];
   const set = store.set.bind(store);
   let saves = 0;
-  // Count only this task's row: the parent's own record can be saved meanwhile by unrelated agent events.
+  // Count saves that change this task's row. Other rows, and same-content saves (macOS rechecks a watched task
+  // directory once FSEvents is live, FSEVENTS_STARTUP_RECHECK_MS), are not rewrites of this task.
   store.set = (...args: Parameters<typeof set>) => {
-    if (args[0] === ocIdFor("st_quiet")) saves++;
-    return set(...args);
+    const before = JSON.stringify(store.get(args[0]));
+    const result = set(...args);
+    if (args[0] === ocIdFor("st_quiet") && JSON.stringify(store.get(args[0])) !== before) saves++;
+    return result;
   };
   const before = h.events.length;
   await snapshot(parent, [{ ...row, live_progress: { tool_calls: 2 } }]);
