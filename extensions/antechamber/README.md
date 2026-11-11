@@ -23,15 +23,16 @@ It replaces the separate OmO Graph, OmO Work and OmO Compatibility extensions of
 
 ## Install
 
-1. In OpenChamber, open **Settings → Extensions → Add → URL** and enter
-   `https://github.com/eliottness/antechamber#extension/antechamber`. Keep the `#extension/antechamber` part: the
-   repository root is antechamber itself and is not an extension.
+1. In OpenChamber, open **Settings → Extensions → Add → URL** and enter `https://github.com/eliottness/antechamber`.
+   The repository root carries this extension's manifest (paths rebased into `extensions/antechamber/`) and the
+   built files are committed, so the clone is the extension. `https://github.com/eliottness/antechamber#extension/antechamber`
+   installs the same extension from a branch holding only its files.
 2. Approve what it asks for: **sessions**, to follow the open session and open sub-agent sessions, and **a local
    service that runs `bun`**, which installs the runtime and reads the OmO task store and antechamber's run records.
 3. Open the **OmO** rail panel and its settings (the sliders icon). The **Runtime** block shows the install and the
    launcher's path. The service starts installing as soon as a panel or the Work section opens.
-4. In **Settings → OpenCode CLI**, set the path to that launcher,
-   `<OpenChamber data dir>/extensions/antechamber/bin/opencode-antechamber`. OpenChamber restarts its server on
+4. In **Settings → OpenCode CLI**, set the path to that launcher: the path the Runtime block shows,
+   `<OpenChamber data dir>/extensions/antechamber/extensions/antechamber/bin/opencode-antechamber` for the repository URL. OpenChamber restarts its server on
    antechamber.
 
 Other ways to add it: a **Folder** (`extensions/antechamber` of an npm install or a built checkout; `antechamber
@@ -43,7 +44,7 @@ For a server you reach over HTTP:
 
 ```bash
 curl -sX POST "$OC/api/guests" -H 'content-type: application/json' \
-  -d '{"url":"https://github.com/eliottness/antechamber#extension/antechamber"}'
+  -d '{"url":"https://github.com/eliottness/antechamber"}'
 curl -sX PUT "$OC/api/guests/antechamber/capabilities" -H 'content-type: application/json' \
   -d '{"granted":["sessions","service"]}'
 ```
@@ -90,7 +91,7 @@ prepares OmO's engine), and the runtime is moved into place only once antechambe
 
 ## Development
 
-From the repository root: `npm run build:extension` bundles the panel and the section (browser IIFEs), the service
+From the repository root: `npm run build:extension` syncs the root `package.json` manifest and bundles the panel and the section (browser IIFEs), the service
 (ESM for OpenChamber's runtime) and the launcher (ESM for Bun); `npm test`, `npm run typecheck`, `npm run lint` and
 `npm run format:check` cover it; `npm run pack:extension -- out.zip` writes the release archive. To run a local
 build through the launcher, `npm pack` antechamber and point `ANTECHAMBER_RUNTIME_SPEC` at the tarball.

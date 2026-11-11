@@ -88,6 +88,9 @@ jobs:
       - run: npm run format:check
       - run: npm test
       - run: npm run build
+      # OpenChamber installs https://github.com/eliottness/antechamber by cloning it, and never builds.
+      - name: Committed extension bundles match the sources
+        run: git diff --exit-code -- package.json extensions/antechamber
       - name: Verify published package contents
         run: |
           npm pack --dry-run --json > "$RUNNER_TEMP/package.json"

@@ -1,7 +1,8 @@
-import { chmodSync, readFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { rootManifest } from "./root-manifest.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const apiVersion = /OPENCODE_API_VERSION = "([^"]+)"/.exec(
@@ -46,3 +47,14 @@ await build({
   logLevel: "info",
 });
 chmodSync(resolve(root, "bin/opencode-antechamber"), 0o755);
+
+// OpenChamber installs a Git URL by cloning the repository root, so the root package.json carries the same
+// manifest with every package path pointing into this folder: https://github.com/eliottness/antechamber installs it.
+const repoPackagePath = resolve(root, "../../package.json");
+const repoPackage = JSON.parse(readFileSync(repoPackagePath, "utf8"));
+const synced = rootManifest(JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).openchamber);
+if (JSON.stringify(repoPackage.openchamber) !== JSON.stringify(synced)) {
+  repoPackage.openchamber = synced;
+  writeFileSync(repoPackagePath, `${JSON.stringify(repoPackage, null, 2)}\n`);
+  console.log("synced the openchamber manifest into package.json");
+}

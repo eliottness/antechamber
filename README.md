@@ -75,11 +75,12 @@ Needs [Bun](https://bun.sh) 1.4+ on the machine OpenChamber runs on.
 ### As an OpenChamber extension (recommended)
 
 1. In OpenChamber 2.3.2 or newer, open **Settings → Extensions → Add → URL** and
-   enter `https://github.com/eliottness/antechamber#extension/antechamber`.
+   enter `https://github.com/eliottness/antechamber`.
 2. Approve **sessions** and the **local service** (it runs `bun`).
 3. Open the **OmO** rail panel's settings: the **Runtime** block shows the
    install and the launcher path,
-   `<OpenChamber data dir>/extensions/antechamber/bin/opencode-antechamber`.
+   `<OpenChamber data dir>/extensions/antechamber/extensions/antechamber/bin/opencode-antechamber`
+   for the repository URL.
 4. Paste that path into **Settings → OpenCode CLI**.
 
 The launcher installs the antechamber release named by the extension's version,
@@ -246,12 +247,13 @@ Add it from **Settings → Extensions → Add**:
 
 | Source | Add | Updates |
 |---|---|---|
-| **URL** (Git, recommended) | `https://github.com/eliottness/antechamber#extension/antechamber` | OpenChamber offers **Update** after each release |
+| **URL** (Git, recommended) | `https://github.com/eliottness/antechamber` (the repository root is the extension), or `…#extension/antechamber` for a clone of just the extension | OpenChamber offers **Update** after each release |
 | **Folder** | `extensions/antechamber` of an npm install or a built checkout | changes with the installation |
 | **ZIP** | `antechamber-openchamber.zip` from a GitHub release, or `npm run build && npm run pack:extension -- out.zip` | never; reinstall the new archive |
 
-Keep the `#extension/antechamber` part of the URL: the bare repository URL
-makes OpenChamber clone antechamber itself, which is not an extension. It asks
+Both URLs install the same extension: the root `package.json` carries its
+manifest, pointing into `extensions/antechamber/`, whose built files are
+committed. It asks
 for **sessions** and a **local service** (`bun`). Details, data paths and the
 design: [extensions/antechamber/README.md](extensions/antechamber/README.md),
 [docs/GRAPH.md](extensions/antechamber/docs/GRAPH.md),

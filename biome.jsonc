@@ -6,7 +6,18 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!dist", "!node_modules", "!reference", "!.omo"]
+    "includes": [
+      "**",
+      "!dist",
+      "!node_modules",
+      "!reference",
+      "!.omo",
+      // Built extension bundles, committed so a Git install of the repository finds them.
+      "!extensions/*/panel/main.js",
+      "!extensions/*/status/main.js",
+      "!extensions/*/service/main.js",
+      "!extensions/*/runtime/launcher.js"
+    ]
   },
   "formatter": {
     "indentStyle": "space",

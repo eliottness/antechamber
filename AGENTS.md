@@ -105,6 +105,7 @@ CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then
 The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check, and serves a fake-agent turn through `bin/opencode-antechamber`.
 
 ## NOTES
+- The extension's bundles (`extensions/antechamber/{panel,status,service,runtime}/*.js`) and the root `package.json` `openchamber` manifest are committed, because OpenChamber installs the repository URL by cloning it and never builds. `npm run build` regenerates both; commit them with the source change (CI fails on a diff).
 - `bin/opencode-antechamber` runs `dist/cli.js` with Bun (PATH, then `$BUN_INSTALL/bin`, then `~/.bun/bin`), so a fresh checkout needs `npm run build` before OpenChamber can launch it.
 - The hermetic suite stays on Node's runner: under `bun test`, fake `ChildProcess` streams are read-only and `syncBuiltinESMExports` mocks do not apply. Bun also flushes `child.stdin.write()` only when the event loop runs, so a write followed by a blocking sync call is delayed until that call returns.
 - Teardown of detached OmO task hosts uses pidfd via Python and `/proc` on Linux, and `/bin/ps` plus `/usr/sbin/lsof` with per-PID identity re-checks on macOS. On other platforms it warns and skips.
