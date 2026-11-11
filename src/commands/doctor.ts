@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { piAgentDir } from "../agent-dir.js";
 import { detectAgentName } from "../agent-name.js";
-import { agentBinary, defaultStateDir, envSetting, isPlainPi } from "../config.js";
+import { agentBinary, defaultStateDir, envSetting, isPlainPi, managedByExtension } from "../config.js";
 import { findPidfdPython } from "../pidfd.js";
 import { readRunningServers } from "../running-servers.js";
 import { isNewerVersion } from "../self-update.js";
@@ -93,7 +93,11 @@ export function doctor(
   if (latestVersion instanceof Error)
     add("version", "INFO", `${ADAPTER_VERSION}; latest unknown (${latestVersion.message})`);
   else if (latest !== undefined && isNewerVersion(latest, ADAPTER_VERSION))
-    add("version", "WARN", `${ADAPTER_VERSION} installed; ${latest} is released: run antechamber upgrade`);
+    add(
+      "version",
+      "WARN",
+      `${ADAPTER_VERSION} installed; ${latest} is released: ${managedByExtension(ctx.env) ? "update the antechamber extension in OpenChamber" : "run antechamber upgrade"}`,
+    );
   else add("version", "PASS", ADAPTER_VERSION);
   // A released fix is live only once OpenChamber relaunches the adapter.
   const running = readRunningServers(stateDir, ctx.fs, processAlive);

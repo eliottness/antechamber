@@ -4,6 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { managedByExtension } from "./config.js";
 import { ADAPTER_VERSION } from "./version.js";
 
 export type InstallMethod = "npm" | "bun";
@@ -50,7 +51,11 @@ function bunInstallDir(location: Pick<InstallLocation, "env" | "home">): string 
   return location.env.BUN_INSTALL ?? join(location.home, ".bun");
 }
 
+export const MANAGED_UPDATE_HINT =
+  "antechamber is managed by its OpenChamber extension: update the extension in Settings -> Extensions";
+
 function locate(location: InstallLocation): { root: string; bun: boolean } {
+  if (managedByExtension(location.env)) throw new SelfUpdateUnsupportedError(MANAGED_UPDATE_HINT);
   const root = tryRealpath(location.packageRoot, location) ?? location.packageRoot;
   if (basename(root) !== "antechamber" || basename(dirname(root)) !== "node_modules") throw notGlobal(root);
   const bunPackage = join(bunInstallDir(location), "install", "global", "node_modules", "antechamber");

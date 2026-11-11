@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultStateDir, envSetting } from "../src/config.js";
+import { agentBinary, bundledOmo, defaultStateDir, envSetting } from "../src/config.js";
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
   const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
@@ -40,4 +40,20 @@ test("defaultStateDir keeps the legacy directory only when the new one is absent
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("the agent is ANTECHAMBER_PI_BINARY, else the OmO antechamber pins, else omo on PATH", () => {
+  assert.equal(
+    agentBinary({ ANTECHAMBER_PI_BINARY: "/opt/pi" }, () => "/pinned/omo.js"),
+    "/opt/pi",
+  );
+  assert.equal(
+    agentBinary({}, () => "/pinned/omo.js"),
+    "/pinned/omo.js",
+  );
+  assert.equal(
+    agentBinary({}, () => undefined),
+    "omo",
+  );
+  assert.match(bundledOmo() ?? "", /node_modules[/\\]omo-ai[/\\]bin[/\\]omo\.js$/);
 });

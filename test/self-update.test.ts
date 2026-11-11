@@ -77,6 +77,17 @@ test("installMethod recognizes global npm and bun installs and refuses the npx c
   assert.throws(() => installMethod(npx.deps, () => npx.npmGlobal), SelfUpdateUnsupportedError);
 });
 
+test("an install the OpenChamber extension manages is never updated through npm or bun", async (t) => {
+  const { deps, calls } = install(t, ".bun", "install", "global", "node_modules", "antechamber");
+  const managed = { ...deps, env: { ANTECHAMBER_MANAGED: "openchamber-extension" } };
+  assert.throws(
+    () => installMethod(managed, () => ""),
+    (error: unknown) => error instanceof SelfUpdateUnsupportedError && error.message.includes("Settings -> Extensions"),
+  );
+  await assert.rejects(selfUpdate(managed), SelfUpdateUnsupportedError);
+  assert.deepEqual(installs(calls), []);
+});
+
 test("a missing npm is reported as unavailable rather than as a non-global install", (t) => {
   const { deps } = install(t, "npm", "lib", "node_modules", "antechamber");
   const missing = () => {
