@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-11
+
 ### Added
 
 - **One OpenChamber extension for everything.** `extensions/antechamber` replaces OmO Graph, OmO Work and OmO
