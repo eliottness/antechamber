@@ -1,6 +1,6 @@
 {
   "name": "antechamber-openchamber",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "OpenChamber extension for antechamber: installs and pins the antechamber server and OmO, draws the OmO Graph and the OmO Work section, and titles OmO tool cards",
   "private": true,
   "type": "module",
