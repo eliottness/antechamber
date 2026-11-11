@@ -163,9 +163,9 @@ antechamber serve --hostname 127.0.0.1 --port 4096
 |---|---|
 | `antechamber serve` | OpenCode-compatible server; `--hostname`/`--host`, `--port`, `--directory`. Bare `antechamber` also starts the server. |
 | `antechamber setup` | Configure OpenChamber; `--settings <file>`, `--profile <dir>`, `--binary <path>`, `--dry-run`, `--systemd [unit]`, `--pi-binary <path>`, `--restart`, `--auto-update`. |
-| `antechamber doctor` | Read-only Node, backend, agent/state directories, teardown, OpenChamber and auth checks, plus the installed, latest released and running adapter versions (a running server older than the install needs an OpenChamber restart); `--json`, `--settings <file>`, `--profile <dir>`. Exits 1 on any FAIL; warnings do not fail. |
-| `antechamber upgrade` | Install the latest release over a global npm or bun install, with the package manager that owns it. Refused for source checkouts and `npx`. |
-| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.1.0` for OpenChamber. |
+| `antechamber doctor` | Read-only Bun, backend, agent/state directories, teardown, OpenChamber and auth checks, plus the installed, latest released and running adapter versions (a running server older than the install needs an OpenChamber restart); `--json`, `--settings <file>`, `--profile <dir>`. Exits 1 on any FAIL; warnings do not fail. |
+| `antechamber upgrade` | Install the latest release over a global npm or bun install, with the package manager that owns it. Refused for source checkouts, `npx`, and when the extension's launcher manages antechamber (see Upgrade, uninstall and rollback below). |
+| `antechamber version` | Package version plus OpenCode API contract version. `--version`/`-v` deliberately print exactly `opencode v2.999.0` for OpenChamber. |
 | `antechamber help` | Usage and options; also `--help`/`-h`. |
 
 ## Upgrade, uninstall and rollback
