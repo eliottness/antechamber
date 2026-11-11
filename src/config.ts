@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /** Environment variable prefix for all antechamber settings. */
 export const ENV_PREFIX = "ANTECHAMBER_";
@@ -32,9 +33,26 @@ export function defaultStateDir(home: string = homedir(), exists: typeof existsS
   return current;
 }
 
-/** Agent executable spawned per session: OmO by default, plain pi when configured. */
-export function agentBinary(env: NodeJS.ProcessEnv = process.env): string {
-  return envSetting("PI_BINARY", env) ?? "omo";
+/** The OmO that antechamber's package.json pins, when it is installed beside antechamber. */
+export function bundledOmo(): string | undefined {
+  try {
+    return join(dirname(createRequire(import.meta.url).resolve("omo-ai/package.json")), "bin", "omo.js");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Agent executable spawned per session: the pinned OmO by default, else `omo` on PATH, plain pi when configured. */
+export function agentBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  bundled: () => string | undefined = bundledOmo,
+): string {
+  return envSetting("PI_BINARY", env) ?? bundled() ?? "omo";
+}
+
+/** Set by the OpenChamber extension's launcher: the extension, not npm, installs and updates antechamber. */
+export function managedByExtension(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envSetting("MANAGED", env) === "openchamber-extension";
 }
 
 /** True when the configured backend is upstream pi rather than OmO. */
