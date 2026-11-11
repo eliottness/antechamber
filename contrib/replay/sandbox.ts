@@ -12,7 +12,8 @@ export function copyReplayState(
   cpSync(stateDir, state, {
     recursive: true,
     dereference: true,
-    filter: (path) => !path.startsWith(join(stateDir, "run")),
+    // The registry goes in as a sessions.json of the selected sessions only, which the adapter under test imports.
+    filter: (path) => !path.startsWith(join(stateDir, "run")) && !/^sessions\.(sqlite|json)/.test(basename(path)),
   });
   const included = new Set(selected.map(([id]) => id));
   for (const id of included) {

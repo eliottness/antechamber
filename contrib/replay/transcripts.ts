@@ -27,6 +27,7 @@ import {
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { defaultStateDir, envSetting } from "../../src/config.js";
 import type { SessionRegistryEntry } from "../../src/session-store.js";
@@ -160,6 +161,21 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
   clearTimeout(timer);
 }
 
+/** The adapter's registry, read without writing: `sessions.sqlite` since 2.0, `sessions.json` before. */
+function readRegistry(stateDir: string): Record<string, SessionRegistryEntry> {
+  const database = join(stateDir, "sessions.sqlite");
+  if (!existsSync(database)) return JSON.parse(readFileSync(join(stateDir, "sessions.json"), "utf8"));
+  const db = new DatabaseSync(database, { readOnly: true });
+  try {
+    const rows = db.prepare("SELECT id, payload FROM sessions").all();
+    return Object.fromEntries(
+      rows.map((row) => [String(row.id), JSON.parse(String(row.payload)) as SessionRegistryEntry]),
+    );
+  } finally {
+    db.close();
+  }
+}
+
 async function main(): Promise<number> {
   const stateDir = resolve(values.state ?? envSetting("STATE_DIR") ?? defaultStateDir(homedir(), existsSync));
   const antechamber = resolve(values.antechamber);
@@ -175,10 +191,7 @@ async function main(): Promise<number> {
   if (viewports.length === 0) throw new Error("--viewport must be mobile, desktop or both");
   const timeoutMs = Number(values.timeout);
 
-  const registry = JSON.parse(readFileSync(join(stateDir, "sessions.json"), "utf8")) as Record<
-    string,
-    SessionRegistryEntry
-  >;
+  const registry = readRegistry(stateDir);
   const wanted = values.session === undefined ? undefined : new Set(values.session);
   let selected = Object.entries(registry).filter(
     ([id, record]) =>
