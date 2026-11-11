@@ -9,11 +9,7 @@ import { AdapterServer } from "../src/server.js";
 import { flattenTodos, type TodoUpdated } from "../src/todo-bridge.js";
 import type { OCEvent } from "../src/types.js";
 import { V2EventTranslator } from "../src/v2.js";
-import { bugHarness, openEvents } from "./bug-harness.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+import { bugHarness } from "./bug-harness.js";
 
 /** A live session fed raw pi events, recording the v1 events and the v2 frames they translate to. */
 function replaySession(t: TestContext) {
@@ -248,118 +244,6 @@ test("R-007: restored parts preserve live identities after restart", { timeout: 
   if (restored === undefined) throw new TypeError("restored session returned no messages");
   const restoredPartIDs = new Map(restored.map((message) => [message.info.id, message.parts.map((part) => part.id)]));
   assert.deepEqual(restoredPartIDs, livePartIDs);
-});
-
-test("R-011: first optimistic prompt reconciles to one visible user message", {
-  timeout: 20_000,
-}, async (t: TestContext) => {
-  const root = mkdtempSync(join(tmpdir(), "antechamber-r011-"));
-  const previousBinary = process.env.ANTECHAMBER_PI_BINARY;
-  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const previousState = process.env.ANTECHAMBER_STATE_DIR;
-  process.env.ANTECHAMBER_PI_BINARY = resolve("test/fixtures/turn-omo.mjs");
-  process.env.PI_CODING_AGENT_DIR = join(root, "agent");
-  process.env.ANTECHAMBER_STATE_DIR = join(root, "state");
-  const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: root });
-  t.after(async () => {
-    await server.stop();
-    if (previousBinary === undefined) delete process.env.ANTECHAMBER_PI_BINARY;
-    else process.env.ANTECHAMBER_PI_BINARY = previousBinary;
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    if (previousState === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
-    else process.env.ANTECHAMBER_STATE_DIR = previousState;
-    rmSync(root, { recursive: true, force: true });
-  });
-  await server.start();
-  const sessionEvents = await openEvents(`${server.url}/event`);
-  const globalEvents = await openEvents(`${server.url}/global/event`);
-  t.after(async () => {
-    await sessionEvents.close();
-    await globalEvents.close();
-  });
-
-  const create = await fetch(`${server.url}/session`, { method: "POST", body: "{}" });
-  assert.equal(create.status, 200);
-  const created: unknown = await create.json();
-  if (!isRecord(created) || typeof created.id !== "string") throw new TypeError("create response omitted session id");
-  const sessionID = created.id;
-  const messageID = "msg_r011_optimistic";
-  const text = "first visible prompt";
-
-  const sessionUser = sessionEvents.wait(
-    (event) =>
-      event.type === "message.updated" &&
-      isRecord(event.properties) &&
-      isRecord(event.properties.info) &&
-      event.properties.info.role === "user" &&
-      event.properties.info.id === messageID,
-  );
-  const globalUser = globalEvents.wait(
-    (frame) =>
-      isRecord(frame.payload) &&
-      frame.payload.type === "message.updated" &&
-      isRecord(frame.payload.properties) &&
-      isRecord(frame.payload.properties.info) &&
-      frame.payload.properties.info.role === "user" &&
-      frame.payload.properties.info.id === messageID,
-  );
-  const echoedPart = sessionEvents.wait(
-    (event) =>
-      event.type === "message.part.updated" &&
-      isRecord(event.properties) &&
-      isRecord(event.properties.part) &&
-      event.properties.part.messageID === messageID &&
-      event.properties.part.type === "text",
-  );
-  const idle = sessionEvents.wait(
-    (event) => event.type === "session.idle" && isRecord(event.properties) && event.properties.sessionID === sessionID,
-  );
-
-  const prompt = await fetch(`${server.url}/session/${sessionID}/prompt_async`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messageID, parts: [{ type: "text", text }] }),
-  });
-  assert.equal(prompt.status, 204);
-  const [, , partEvent] = await Promise.all([sessionUser, globalUser, echoedPart, idle]);
-  const eventProperties = partEvent.properties;
-  if (!isRecord(eventProperties) || !isRecord(eventProperties.part)) {
-    throw new TypeError("server did not publish an identifiable text part");
-  }
-  const echoed = eventProperties.part;
-  if (typeof echoed.id !== "string" || typeof echoed.sessionID !== "string") {
-    throw new TypeError("server did not publish an identifiable text part");
-  }
-
-  const history = await fetch(`${server.url}/session/${sessionID}/message`);
-  assert.equal(history.status, 200);
-  const messages: unknown = await history.json();
-  if (!Array.isArray(messages)) throw new TypeError("history response was not an array");
-  const userIDs = messages.flatMap((message) => {
-    if (
-      !isRecord(message) ||
-      !isRecord(message.info) ||
-      message.info.role !== "user" ||
-      typeof message.info.id !== "string"
-    )
-      return [];
-    return [message.info.id];
-  });
-  assert.deepEqual(userIDs, [messageID]);
-
-  const optimisticParts: Array<{ id: string; messageID: string; type: string; text: string; sessionID?: string }> = [
-    { id: "prt_r011_optimistic", messageID, type: "text", text },
-  ];
-  const optimisticIndex = optimisticParts.findIndex(
-    (part) => part.type === echoed.type && part.sessionID === undefined,
-  );
-  assert.notEqual(optimisticIndex, -1);
-  optimisticParts[optimisticIndex] = { id: echoed.id, messageID, type: "text", text, sessionID: echoed.sessionID };
-  assert.deepEqual(
-    optimisticParts.map((part) => part.id),
-    [echoed.id],
-  );
 });
 
 test("R-021: selected history hydrates todos only from its ancestor chain", {

@@ -19,7 +19,7 @@ type TestEvent = { type: string; properties?: Record<string, unknown>; data?: Re
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
-function startEvents(url: string, path = "/event") {
+function startEvents(url: string, path = "/api/event") {
   const controller = new AbortController();
   const events = new EventEmitter();
   const history: TestEvent[] = [];
@@ -127,9 +127,9 @@ async function startServer(t: TestContext, fixture = fakeRpc) {
 }
 
 async function createSession(url: string): Promise<string> {
-  const response = await fetch(`${url}/session`, { method: "POST", body: "{}" });
+  const response = await fetch(`${url}/api/session`, { method: "POST", body: "{}" });
   assert.equal(response.status, 200);
-  const session: unknown = await response.json();
+  const session = ((await response.json()) as { data: Record<string, unknown> }).data;
   assert.ok(isRecord(session));
   if (typeof session.id !== "string") throw new Error("session id missing from create response");
   return session.id;
@@ -278,10 +278,10 @@ test("v2 session creation rejects invalid settings and concurrent duplicate iden
 async function sendPrompt(url: string, sessionId: string, text: string): Promise<void> {
   assert.equal(
     (
-      await fetch(`${url}/session/${sessionId}/message`, {
+      await fetch(`${url}/api/session/${sessionId}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parts: [{ type: "text", text }] }),
+        body: JSON.stringify({ text }),
       })
     ).status,
     200,
@@ -301,7 +301,7 @@ for (const failure of ["rejected", "unsuccessful"])
       return { type: "response", id: "abort", command: "abort", success: false, error: "abort denied" };
     });
     const stop = t.mock.method(server["sessions"].subagents, "stopParent", () => {});
-    for (const path of [`/session/${sessionId}/abort`, `/api/session/${sessionId}/interrupt`]) {
+    for (const path of [`/api/session/${sessionId}/interrupt`]) {
       const response = await fetch(`${url}${path}`, { method: "POST" });
       assert.equal(response.status, 500);
       assert.deepEqual(await response.json(), {
@@ -312,15 +312,11 @@ for (const failure of ["rejected", "unsuccessful"])
     }
   });
 
-test("command catalog maps OmO commands for v1 and v2", { timeout: 30_000 }, async (t) => {
+test("command catalog maps OmO commands for v2", { timeout: 30_000 }, async (t) => {
   const { url, directory } = await startServer(t);
   const expected = [
     { name: "fixture", description: "Fixture command", template: "", source: "command", hints: [], subtask: false },
   ];
-
-  const v1 = await fetch(`${url}/command`);
-  assert.equal(v1.status, 200);
-  assert.deepEqual(await v1.json(), expected);
 
   const v2 = await fetch(`${url}/api/command`);
   assert.equal(v2.status, 200);
@@ -331,20 +327,23 @@ test("slash command routes prompt OmO and reject an empty command", { timeout: 3
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
 
-  const empty = await fetch(`${url}/session/${sessionId}/command`, {
+  const empty = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ command: "", arguments: "" }),
   });
   assert.equal(empty.status, 400);
 
-  const v1 = await fetch(`${url}/session/${sessionId}/command`, {
+  const v1 = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: "missing-command", arguments: "one" }),
+    body: JSON.stringify({ name: "missing-command", text: "one" }),
   });
-  assert.equal(v1.status, 200);
-  assert.match(JSON.stringify(await v1.json()), /\/missing-command one/);
+  assert.equal(v1.status, 204);
+  assert.match(
+    JSON.stringify(await (await fetch(`${url}/api/session/${sessionId}/message`)).json()),
+    /\/missing-command one/,
+  );
 
   const v2 = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
@@ -353,7 +352,7 @@ test("slash command routes prompt OmO and reject an empty command", { timeout: 3
   });
   assert.equal(v2.status, 204);
   assert.equal(await v2.text(), "");
-  const history = await (await fetch(`${url}/session/${sessionId}/message`)).json();
+  const history = await (await fetch(`${url}/api/session/${sessionId}/message`)).json();
   assert.match(JSON.stringify(history), /\/another-missing-command two/);
 });
 
@@ -362,21 +361,22 @@ test("slash command reuses the client messageID for its user message", { timeout
   const sessionId = await createSession(url);
   const messageID = "msg_client_optimistic_command";
 
-  const response = await fetch(`${url}/session/${sessionId}/command`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: "skill:fixture", arguments: "plan it", messageID }),
+    body: JSON.stringify({ name: "skill:fixture", text: "plan it", id: messageID }),
   });
-  assert.equal(response.status, 200);
-  await response.json();
+  assert.equal(response.status, 204);
 
-  const history: unknown = await (await fetch(`${url}/session/${sessionId}/message`)).json();
+  const history = (
+    (await (await fetch(`${url}/api/session/${sessionId}/message`)).json()) as {
+      data: Array<{ id: string; type: string }>;
+    }
+  ).data;
   assert.ok(Array.isArray(history));
-  const users = history.filter(
-    (message: unknown) => isRecord(message) && isRecord(message.info) && message.info.role === "user",
-  );
+  const users = history.filter((message: unknown) => isRecord(message) && message.type === "user");
   assert.deepEqual(
-    users.map((message: { info: { id: string } }) => message.info.id),
+    users.map((message) => message.id),
     [messageID],
   );
 });
@@ -385,13 +385,13 @@ test("bare skill slash command resends as OmO's /skill: form", { timeout: 30_000
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
 
-  const response = await fetch(`${url}/session/${sessionId}/command`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: "impeccable", arguments: "polish it" }),
+    body: JSON.stringify({ name: "impeccable", text: "polish it" }),
   });
-  assert.equal(response.status, 200);
-  const history = JSON.stringify(await (await fetch(`${url}/session/${sessionId}/message`)).json());
+  assert.equal(response.status, 204);
+  const history = JSON.stringify(await (await fetch(`${url}/api/session/${sessionId}/message`)).json());
   assert.match(history, /reply: \/skill:impeccable polish it/);
   assert.doesNotMatch(history, /Unknown command/);
 });
@@ -430,49 +430,6 @@ test("v2 shell lifecycle uses native shell and output resource shapes", { timeou
   assert.equal(output.truncated, false);
 });
 
-test("shell route emits a bash card with output and exit code", { timeout: 30_000 }, async (t) => {
-  const { url } = await startServer(t);
-  const sessionId = await createSession(url);
-  const stream = startEvents(url);
-  t.after(stream.close);
-  await stream.ready;
-
-  const assistantUpdated = stream.waitFor(
-    "message.updated",
-    (event) =>
-      JSON.stringify(event).includes(`"sessionID":"${sessionId}"`) &&
-      JSON.stringify(event).includes('"role":"assistant"'),
-  );
-  const completedPart = stream.waitFor(
-    "message.part.updated",
-    (event) =>
-      JSON.stringify(event).includes('"tool":"bash"') && JSON.stringify(event).includes('"status":"completed"'),
-  );
-  const response = await fetch(`${url}/session/${sessionId}/shell`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: "exit 3" }),
-  });
-  assert.equal(response.status, 200);
-  assert.match(JSON.stringify(await response.json()), /"role":"assistant"/);
-  const [messageEvent, partEvent] = await Promise.all([assistantUpdated, completedPart]);
-  assert.match(JSON.stringify(messageEvent), /assistant/);
-  assert.match(JSON.stringify(partEvent), /SHELL_OUTPUT/);
-  assert.match(JSON.stringify(partEvent), /"exitCode":3/);
-
-  const v2CompletedPart = stream.waitFor("message.part.updated", (event) =>
-    JSON.stringify(event).includes('"exitCode":4'),
-  );
-  const v2 = await fetch(`${url}/api/session/${sessionId}/shell`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: "exit 4", agent: "OmO" }),
-  });
-  assert.equal(v2.status, 204);
-  assert.equal(await v2.text(), "");
-  await v2CompletedPart;
-});
-
 test("shell synthetic users arrive over v2 SSE without an optimistic prompt", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
@@ -504,17 +461,16 @@ test("slash command refreshes entries persisted without agent events", { timeout
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const output = stream.waitFor("message.part.updated", (event) =>
+  const output = stream.waitFor("session.text.ended", (event) =>
     JSON.stringify(event).includes("Slash command output without agent events"),
   );
-  const response = await fetch(`${url}/session/${sessionId}/command`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: "fixture", arguments: "" }),
+    body: JSON.stringify({ name: "fixture", text: "" }),
   });
-  assert.equal(response.status, 200);
-  assert.match(JSON.stringify(await response.json()), /Slash command output without agent events/);
-  const history = await fetch(`${url}/session/${sessionId}/message`);
+  assert.equal(response.status, 204);
+  const history = await fetch(`${url}/api/session/${sessionId}/message`);
   assert.equal(history.status, 200);
   assert.match(JSON.stringify(await history.json()), /Slash command output without agent events/);
   await output;
@@ -523,7 +479,7 @@ test("slash command refreshes entries persisted without agent events", { timeout
 test("empty shell commands return a client error without creating a card", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
-  const response = await fetch(`${url}/session/${sessionId}/shell`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ command: "" }),
@@ -551,40 +507,41 @@ test("abort cancels a pending shell within ten seconds and tolerates repeated in
       if (event.type === "fixture_abort_bash") resolveAbortBash();
     });
   });
-  const cancelled = stream.waitFor(
-    "message.part.updated",
-    (event) => JSON.stringify(event).includes('"status":"error"') && JSON.stringify(event).includes('"cancelled":true'),
+  const cancelled = stream.waitFor("session.tool.failed", (event) =>
+    JSON.stringify(event).includes('"cancelled":true'),
   );
-  const idle = stream.waitFor("session.idle", (event) => event.properties?.sessionID === sessionId);
-  const shell = fetch(`${url}/session/${sessionId}/shell`, {
+  const idle = stream.waitFor("session.idle", (event) => event.data?.sessionID === sessionId);
+  const shell = fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "sleep 600" }),
     signal: AbortSignal.timeout(10_000),
   });
   await pending;
   // R-069: the idle check and the busy transition happen in one tick, so a second shell is rejected.
-  const second = await fetch(`${url}/session/${sessionId}/shell`, {
+  const second = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "echo SECOND" }),
   });
   assert.equal(second.status, 409);
   const started = performance.now();
-  const aborts = await Promise.all([1, 2].map(() => fetch(`${url}/session/${sessionId}/abort`, { method: "POST" })));
+  const aborts = await Promise.all(
+    [1, 2].map(() => fetch(`${url}/api/session/${sessionId}/interrupt`, { method: "POST" })),
+  );
   for (const response of aborts) {
     assert.equal(response.status, 200);
-    assert.equal(await response.json(), true);
+    assert.deepEqual(await response.json(), { interrupted: true });
   }
-  assert.equal((await shell).status, 200);
+  assert.equal((await shell).status, 204);
   // abort_bash is a notification, so the waiter is released before the agent reports it.
   await Promise.all([cancelled, idle, abortBashDispatched]);
   assert.ok(performance.now() - started < 10_000);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
   assert.doesNotMatch(JSON.stringify(server["sessions"].messages(sessionId)), /echo SECOND/);
-  const resumed = await fetch(`${url}/session/${sessionId}/shell`, {
+  const resumed = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "echo RESUMED" }),
   });
-  assert.equal(resumed.status, 200);
+  assert.equal(resumed.status, 204);
 });
 
 test("a late bash reply cannot resurrect or duplicate a cancelled shell after reload", {
@@ -599,14 +556,14 @@ test("a late bash reply cannot resurrect or duplicate a cancelled shell after re
       if (event.type === "fixture_bash_pending") resolvePending();
     });
   });
-  const shell = fetch(`${url}/session/${sessionId}/shell`, {
+  const shell = fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "sleep 600 late" }),
     signal: AbortSignal.timeout(10_000),
   });
   await pending;
-  await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" });
-  assert.equal((await shell).status, 200);
+  await fetch(`${url}/api/session/${sessionId}/interrupt`, { method: "POST" });
+  assert.equal((await shell).status, 204);
   // Release the fixture's native reply out of band. A queued HTTP shell must
   // not overtake the cancelled operation while its native reply is outstanding.
   assert.equal((await pi.command({ type: "bash", command: "echo RELEASE_LATE" })).success, true);
@@ -631,11 +588,11 @@ test("the shell route sends bash without an RPC deadline", {
   const pi = server["sessions"].get(sessionId)?.pi;
   assert.ok(pi);
   const command = t.mock.method(pi, "command");
-  const response = await fetch(`${url}/session/${sessionId}/shell`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "echo LOGIN" }),
   });
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 204);
   const bash = command.mock.calls.find((call) => call.arguments[0].type === "bash");
   assert.ok(bash);
   assert.equal(bash.arguments[1], undefined);
@@ -650,23 +607,22 @@ test("a running user shell shows its output live, before the command ends", { ti
   t.after(v2.close);
   await Promise.all([stream.ready, v2.ready]);
   const expected = "Open https://login.example.test/device\nWaiting for login...\n";
-  const live = stream.waitFor("message.part.updated", (event) => {
+  const live = stream.waitFor("session.tool.progress", (event) => {
     const text = JSON.stringify(event);
-    return text.includes('"status":"running"') && text.includes("Waiting for login");
+    return text.includes("Waiting for login");
   });
   const progress = v2.waitFor("session.tool.progress", (event) => JSON.stringify(event).includes("Waiting for login"));
-  const shell = fetch(`${url}/session/${sessionId}/shell`, {
+  const shell = fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "fixture-login" }),
     signal: AbortSignal.timeout(10_000),
   });
   const event = await live;
-  const part = event.properties?.part as { state: { metadata?: { output?: unknown } } };
-  assert.equal(part.state.metadata?.output, expected);
+  assert.equal((event.data?.metadata as { output?: unknown })?.output, expected);
   const v2Event = (await progress) as { data?: { metadata?: { output?: unknown } } };
   assert.equal(v2Event.data?.metadata?.output, expected);
-  assert.equal((await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" })).status, 200);
-  assert.equal((await shell).status, 200);
+  assert.equal((await fetch(`${url}/api/session/${sessionId}/interrupt`, { method: "POST" })).status, 200);
+  assert.equal((await shell).status, 204);
   // Stop keeps what the command printed on the cancelled card.
   const card = (server["sessions"].messages(sessionId) ?? [])
     .flatMap((message) => message.parts)
@@ -679,12 +635,12 @@ test("a running user shell shows its output live, before the command ends", { ti
 test("a native cancelled bash reply without exitCode ends the card as cancelled", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
-  const response = await fetch(`${url}/session/${sessionId}/shell`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "fixture-cancelled" }),
   });
-  assert.equal(response.status, 200);
-  const history = await fetch(`${url}/session/${sessionId}/message`).then((res) => res.json());
+  assert.equal(response.status, 204);
+  const history = await fetch(`${url}/api/session/${sessionId}/message`).then((res) => res.json());
   assert.match(JSON.stringify(history), /"status":"error"/);
   assert.match(JSON.stringify(history), /"cancelled":true/);
   assert.match(JSON.stringify(history), /"exitCode":null/);
@@ -702,15 +658,15 @@ test("abort releases a shell waiting on history refresh and ignores the late ent
       if (event.type === "fixture_entries_pending") resolvePending();
     });
   });
-  const shell = fetch(`${url}/session/${sessionId}/shell`, {
+  const shell = fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "fixture-reload-pending" }),
     signal: AbortSignal.timeout(10_000),
   });
   await pending;
   const started = performance.now();
-  assert.equal((await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" })).status, 200);
-  assert.equal((await shell).status, 200);
+  assert.equal((await fetch(`${url}/api/session/${sessionId}/interrupt`, { method: "POST" })).status, 200);
+  assert.equal((await shell).status, 204);
   assert.ok(performance.now() - started < 10_000);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
   // The fixture control cannot itself be queued behind the refresh it releases.
@@ -729,9 +685,9 @@ test("abort without a running shell is a no-op", { timeout: 30_000 }, async (t) 
   const { url, server } = await startServer(t);
   const sessionId = await createSession(url);
   const before = structuredClone(server["sessions"].messages(sessionId));
-  const response = await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" });
+  const response = await fetch(`${url}/api/session/${sessionId}/interrupt`, { method: "POST" });
   assert.equal(response.status, 200);
-  assert.equal(await response.json(), true);
+  assert.deepEqual(await response.json(), { interrupted: true });
   assert.deepEqual(server["sessions"].messages(sessionId), before);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
 });
@@ -760,10 +716,8 @@ test("F2 B5 abort cancels a queued shell before the preceding refresh completes"
   await stream.ready;
   const refresh = manager.reloadMessages(sessionId);
   await held.promise;
-  const running = stream.waitFor("message.part.updated", (event) =>
-    JSON.stringify(event).includes('"status":"running"'),
-  );
-  const shell = fetch(`${url}/session/${sessionId}/shell`, {
+  const running = stream.waitFor("session.tool.progress", (event) => JSON.stringify(event).includes('"sessionID"'));
+  const shell = fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     body: JSON.stringify({ command: "echo NEVER_DISPATCH" }),
     signal: AbortSignal.timeout(2_000),
@@ -771,9 +725,9 @@ test("F2 B5 abort cancels a queued shell before the preceding refresh completes"
   try {
     await running;
     const started = performance.now();
-    assert.equal((await fetch(`${url}/session/${sessionId}/abort`, { method: "POST" })).status, 200);
+    assert.equal((await fetch(`${url}/api/session/${sessionId}/interrupt`, { method: "POST" })).status, 200);
     const response = await shell;
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 204);
     assert.ok(performance.now() - started < 2_000);
     assert.equal(manager.get(sessionId)?.status.type, "idle");
     const parts = manager.messages(sessionId)?.flatMap((message) => message.parts) ?? [];
@@ -792,16 +746,16 @@ test("F2 B5 abort cancels a queued shell before the preceding refresh completes"
   assert.equal(commands.includes("bash"), false, "cancelled queue entries must never dispatch later");
   assert.equal(
     (
-      await fetch(`${url}/session/${sessionId}/shell`, {
+      await fetch(`${url}/api/session/${sessionId}/shell`, {
         method: "POST",
         body: JSON.stringify({ command: "echo RESUMED" }),
       })
     ).status,
-    200,
+    204,
   );
 });
 
-for (const version of ["v1", "v2"])
+for (const version of ["v2"])
   test(`F2 B3 ${version} async prompt registry failure emits an error and retains visible failed state`, {
     timeout: 15_000,
   }, async (t) => {
@@ -821,9 +775,9 @@ for (const version of ["v1", "v2"])
     const stream = startEvents(url);
     t.after(stream.close);
     await stream.ready;
-    const error = stream.waitFor("session.error", (event) => event.properties?.sessionID === sessionId);
+    const error = stream.waitFor("session.execution.failed", (event) => event.data?.sessionID === sessionId);
     void error.catch(() => undefined);
-    const path = version === "v1" ? `/session/${sessionId}/prompt_async` : `/api/session/${sessionId}/prompt`;
+    const path = `/api/session/${sessionId}/prompt`;
     const body =
       version === "v1"
         ? { messageID: "msg_failed_prompt", parts: [{ type: "text", text: "P3" }] }
@@ -832,15 +786,15 @@ for (const version of ["v1", "v2"])
       method: "POST",
       body: JSON.stringify(body),
     });
-    assert.equal(response.status, version === "v1" ? 204 : 200);
+    assert.equal(response.status, 200);
     await manager["operations"].get(sessionId);
     assert.equal(commands.includes("prompt"), false);
     // The direct control must still propagate the same essential write failure.
     await assert.rejects(manager.prompt(sessionId, "P3 control"), SessionPersistenceError);
     const event = await error;
-    assert.ok(isRecord(event.properties?.error));
-    assert.equal(event.properties.error.name, "SessionPersistenceError");
-    const history: unknown = await fetch(`${url}/session/${sessionId}/message`).then((res) => res.json());
+    assert.ok(isRecord(event.data?.error));
+    assert.equal(event.data.error.name, "SessionPersistenceError");
+    const history = manager.messages(sessionId) ?? [];
     assert.ok(Array.isArray(history));
     assert.ok(
       history.some(
@@ -863,16 +817,15 @@ test("a print-only slash command renders its notification and returns idle witho
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const output = stream.waitFor("message.part.updated", (event) =>
+  const output = stream.waitFor("session.text.ended", (event) =>
     JSON.stringify(event).includes("Print-only command output"),
   );
-  const idle = stream.waitFor("session.idle", (event) => event.properties?.sessionID === sessionId);
-  const response = await fetch(`${url}/session/${sessionId}/command`, {
+  const idle = stream.waitFor("session.idle", (event) => event.data?.sessionID === sessionId);
+  const response = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
-    body: JSON.stringify({ command: "notify-fixture", arguments: "" }),
+    body: JSON.stringify({ name: "notify-fixture", text: "" }),
   });
-  assert.equal(response.status, 200);
-  assert.match(JSON.stringify(await response.json()), /Print-only command output/);
+  assert.equal(response.status, 204);
   await Promise.all([output, idle]);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
 });
@@ -880,97 +833,35 @@ test("a print-only slash command renders its notification and returns idle witho
 test("shell refreshes persisted entries appended without agent events and retains its bash card", {
   timeout: 30_000,
 }, async (t) => {
-  const { url } = await startServer(t);
+  const { url, server } = await startServer(t);
   const sessionId = await createSession(url);
   await sendPrompt(url, sessionId, "before shell");
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const persistedPart = stream.waitFor("message.part.updated", (event) =>
+  const persistedPart = stream.waitFor("session.text.ended", (event) =>
     JSON.stringify(event).includes("Persisted shell output: exit 7"),
   );
-  const updated = stream.waitFor("session.updated", (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`));
-  const response = await fetch(`${url}/session/${sessionId}/shell`, {
+  const response = await fetch(`${url}/api/session/${sessionId}/shell`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ command: "exit 7" }),
   });
-  assert.equal(response.status, 200);
-  const history = await fetch(`${url}/session/${sessionId}/message`);
+  assert.equal(response.status, 204);
+  const history = await fetch(`${url}/api/session/${sessionId}/message`);
   assert.equal(history.status, 200);
-  const messages: unknown = await history.json();
+  const messages: unknown = server["sessions"].messages(sessionId);
   assert.match(JSON.stringify(messages), /Persisted shell output: exit 7/);
   assert.match(JSON.stringify(messages), /"tool":"bash"/);
   assert.match(JSON.stringify(messages), /"output":"SHELL_OUTPUT"/);
   assert.match(JSON.stringify(messages), /"exitCode":7/);
-  await Promise.all([persistedPart, updated]);
+  await persistedPart;
 });
 
-test("compact returns the small-session error and reloads compacted history", { timeout: 30_000 }, async (t) => {
-  const { url } = await startServer(t);
-  const smallSessionId = await createSession(url);
-  const smallEvents = startEvents(url);
-  t.after(smallEvents.close);
-  await smallEvents.ready;
-  const smallNotice = smallEvents.waitFor("message.part.updated", (event) =>
-    JSON.stringify(event).includes("Nothing to compact"),
-  );
-  const small = await fetch(`${url}/session/${smallSessionId}/summarize`, { method: "POST", body: "{}" });
-  assert.equal(small.status, 400);
-  assert.match(JSON.stringify(await small.json()), /Nothing to compact \(session too small\)/);
-  await smallNotice;
-
-  const sessionId = await createSession(url);
-  await sendPrompt(url, sessionId, "long context");
-  const stream = startEvents(url);
-  t.after(stream.close);
-  await stream.ready;
-  const updated = stream.waitFor("session.updated", (event) => JSON.stringify(event).includes(`"id":"${sessionId}"`));
-  const compacted = await fetch(`${url}/session/${sessionId}/summarize`, { method: "POST", body: "{}" });
-  assert.equal(compacted.status, 200);
-  assert.equal(await compacted.json(), true);
-  await updated;
-
-  const history = await fetch(`${url}/session/${sessionId}/message`);
-  assert.equal(history.status, 200);
-  assert.match(JSON.stringify(await history.json()), /Compacted summary 1/);
-
-  const v2Marker = stream.mark();
-  const updatedV2 = stream.waitForAfter(v2Marker, "session.updated", (event) =>
-    JSON.stringify(event).includes(`"id":"${sessionId}"`),
-  );
-  const compactedV2 = await fetch(`${url}/api/session/${sessionId}/summarize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
-  assert.equal(compactedV2.status, 200);
-  const admitted = (await compactedV2.json()) as {
-    data: { id: string; type: string; status: string; reason: string; summary: string };
-  };
-  assert.match(admitted.data.id, /^msg_/);
-  assert.deepEqual(
-    {
-      type: admitted.data.type,
-      status: admitted.data.status,
-      reason: admitted.data.reason,
-      summary: admitted.data.summary,
-    },
-    { type: "compaction", status: "running", reason: "manual", summary: "" },
-  );
-  await updatedV2;
-
-  const v2History = await fetch(`${url}/api/session/${sessionId}/message?order=asc`);
-  assert.equal(v2History.status, 200);
-  assert.match(JSON.stringify(await v2History.json()), /Compacted summary 2/);
-});
-
-test("share and unshare return the unsupported payload on both API surfaces", { timeout: 30_000 }, async (t) => {
+test("share and unshare return the unsupported payload on the v2 API", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
   for (const [path, method] of [
-    [`/session/${sessionId}/share`, "POST"],
-    [`/session/${sessionId}/share`, "DELETE"],
     [`/api/session/${sessionId}/share`, "POST"],
     [`/api/session/${sessionId}/share`, "DELETE"],
   ] as const) {
@@ -981,10 +872,6 @@ test("share and unshare return the unsupported payload on both API surfaces", { 
 });
 
 const emptyInputRoutes = [
-  { path: "/session", route: "prompt_async", v1: true, noReply: false },
-  { path: "/session", route: "prompt_async", v1: true, noReply: true },
-  { path: "/session", route: "message", v1: true, noReply: false },
-  { path: "/session", route: "message", v1: true, noReply: true },
   { path: "/api/session", route: "prompt", v1: false, noReply: false },
   { path: "/api/session", route: "synthetic", v1: false, noReply: false },
   { path: "/api/session", route: "context", v1: false, noReply: false },
@@ -1090,7 +977,7 @@ test("B2: v2 prompt requires text even with explicit parts or attachments", { ti
   assert.deepEqual(manager.messages(sessionID), []);
 });
 
-for (const v1 of [true, false]) {
+for (const v1 of [false]) {
   test(`B2: ${v1 ? "v1" : "v2"} attachment-only prompts still reach the agent`, {
     timeout: 15_000,
   }, async (t) => {
@@ -1105,30 +992,17 @@ for (const v1 of [true, false]) {
       if (args[0].type === "prompt") dispatched.push(args[0]);
       return command(...args);
     });
-    const inputs = v1
-      ? [
-          { parts: [{ type: "file", mime: "image/png", url: "data:image/png;base64,aW1hZ2U=" }] },
-          { parts: [{ type: "file", mime: "text/plain", url: "data:text/plain,attachment" }] },
-          { parts: [{ type: "file", mime: "text/plain", url: "file:///workspace/brief.txt" }] },
-          { parts: [{ type: "agent", name: "reviewer" }] },
-          {
-            parts: [
-              { type: "text", text: " " },
-              { type: "text", text: "content" },
-            ],
-          },
-        ]
-      : [
-          { text: "", files: [{ uri: "data:image/png;base64,aW1hZ2U=" }] },
-          { text: " ", files: [{ uri: "data:text/plain,attachment" }] },
-          { text: "", files: [{ uri: "file:///workspace/brief.txt" }] },
-          { text: "\n", agents: [{ name: "reviewer" }] },
-        ];
+    const inputs = [
+      { text: "", files: [{ uri: "data:image/png;base64,aW1hZ2U=" }] },
+      { text: " ", files: [{ uri: "data:text/plain,attachment" }] },
+      { text: "", files: [{ uri: "file:///workspace/brief.txt" }] },
+      { text: "\n", agents: [{ name: "reviewer" }] },
+    ];
     for (const body of inputs) {
-      const response = await fetch(
-        `${url}${v1 ? `/session/${sessionID}/message` : `/api/session/${sessionID}/prompt`}`,
-        { method: "POST", body: JSON.stringify(body) },
-      );
+      const response = await fetch(`${url}/api/session/${sessionID}/prompt`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
       assert.equal(response.status, 200);
       await manager["operations"].get(sessionID);
     }
@@ -1154,14 +1028,12 @@ test("inline attachments the native RPC cannot carry reach the agent as saved fi
   });
   const pdf = Buffer.from("%PDF-1.7\n\0binary");
   const uri = `data:application/pdf;base64,${pdf.toString("base64")}`;
-  const v1 = await fetch(`${url}/session/${sessionID}/message`, {
+  const v1 = await fetch(`${url}/api/session/${sessionID}/prompt`, {
     method: "POST",
     body: JSON.stringify({
-      messageID: "msg_pdf",
-      parts: [
-        { type: "text", text: "summarize" },
-        { type: "file", filename: "../report.pdf", mime: "application/pdf", url: uri },
-      ],
+      id: "msg_pdf",
+      text: "summarize",
+      files: [{ name: "../report.pdf", uri }],
     }),
   });
   assert.equal(v1.status, 200);
@@ -1199,67 +1071,20 @@ test("inline attachments the native RPC cannot carry reach the agent as saved fi
   assert.equal(users?.length, 2);
 });
 
-test("rich v1 prompts preserve native attachments and one user identity through reload", {
-  timeout: 10_000,
-}, async (t) => {
-  const { url, directory, server } = await startServer(t);
-  const sessionID = await createSession(url);
-  const pi = server["sessions"].get(sessionID)?.pi;
-  assert.ok(pi);
-  const command = pi.command.bind(pi);
-  const dispatched: Record<string, unknown>[] = [];
-  t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
-    if (args[0].type === "prompt") dispatched.push(args[0]);
-    return command(...args);
-  });
-  const parts = [
-    { type: "text", text: "use these" },
-    { type: "file", filename: "brief.txt", mime: "text/plain", url: "data:text/plain;base64,aGVsbG8=" },
-    { type: "file", filename: "image.png", mime: "image/png", url: "data:image/png;base64,aW1hZ2U=" },
-    { type: "agent", name: "reviewer" },
-  ];
-  const response = await fetch(`${url}/session/${sessionID}/message`, {
-    method: "POST",
-    body: JSON.stringify({ messageID: "msg_rich", parts, delivery: "queue" }),
-  });
-  assert.equal(response.status, 200);
-  await server["sessions"].reloadMessages(sessionID);
-  const users = server["sessions"].messages(sessionID)?.filter((message) => message.info.role === "user");
-  assert.deepEqual(
-    users?.map((message) => message.info.id),
-    ["msg_rich"],
-  );
-  assert.deepEqual(
-    users?.[0]?.parts.map(({ id: _id, sessionID: _sessionID, messageID: _messageID, ...part }) => part),
-    parts,
-  );
-  assert.equal(dispatched[0]?.streamingBehavior, "followUp");
-  assert.deepEqual(dispatched[0]?.images, [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }]);
-  assert.ok(String(dispatched[0]?.message).includes("hello"));
-  assert.ok(String(dispatched[0]?.message).includes("reviewer"));
-  const { SessionManager } = await import("../src/sessions.js");
-  const restored = new SessionManager(() => {}, undefined, directory);
-  t.after(() => restored.disposeAll());
-  assert.deepEqual(
-    restored.messages(sessionID)?.find((message) => message.info.id === "msg_rich")?.parts,
-    users?.[0]?.parts,
-  );
-});
-
 test("unavailable sharing emits a user-visible session error", { timeout: 30_000 }, async (t) => {
   const { url } = await startServer(t);
   const sessionId = await createSession(url);
   const stream = startEvents(url);
   t.after(stream.close);
   await stream.ready;
-  const shareError = stream.waitFor("session.error", (event) =>
+  const shareError = stream.waitFor("session.execution.failed", (event) =>
     JSON.stringify(event).includes("Sharing is not available with OmO"),
   );
-  const notice = stream.waitFor("message.part.updated", (event) =>
+  const notice = stream.waitFor("session.text.ended", (event) =>
     JSON.stringify(event).includes('"text":"Sharing is not available with OmO"'),
   );
 
-  const response = await fetch(`${url}/session/${sessionId}/share`, { method: "POST" });
+  const response = await fetch(`${url}/api/session/${sessionId}/share`, { method: "POST" });
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), unsupportedShare);
   const [event] = await Promise.all([shareError, notice]);

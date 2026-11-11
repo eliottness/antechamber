@@ -19,7 +19,6 @@ import {
 } from "./session-commands.js";
 import { envSetting } from "./config.js";
 import { PiStoppedError } from "./pi-rpc.js";
-import type { SelfUpdateResult } from "./self-update.js";
 import type { FileWatchRegistry } from "./file-watch.js";
 import type { getCommands } from "./session-commands.js";
 import type { TextGeneration } from "./text-generation.js";
@@ -31,7 +30,6 @@ export interface RouteServices {
   readonly body: (req: IncomingMessage) => Promise<unknown>;
   readonly catalog: (directory?: string, refresh?: boolean) => Promise<Catalog>;
   readonly broadcast: (directory: string, event: OCEvent | TodoUpdated) => void;
-  readonly selfUpdate: () => Promise<SelfUpdateResult>;
   readonly fileWatches: FileWatchRegistry;
   readonly commands: (directory: string) => ReturnType<typeof getCommands>;
   readonly vcsBranch: (directory: string) => Promise<string | undefined>;

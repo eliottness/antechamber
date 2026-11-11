@@ -41,7 +41,7 @@ test/
 
 ## FIXTURES MUST MATCH OMO
 - A fixture encodes what we believe OmO does. A regression that hinges on real OmO behavior (cancellation, timing, ordering, error text) needs that behavior added to the fixture first, citing the OmO bundle file or log line it comes from.
-- Size test data to the bug. Paging, expansion and history bugs need histories longer than the client's limits (OpenChamber 1.24: 30/50 first page, up to 120/150 expansion), not three messages.
+- Size test data to the bug. Paging, expansion and history bugs need histories longer than the supported OpenChamber 2.x client's page and rendering windows, not three messages.
 - A regression test must fail with the fix disabled. Check this once before committing.
 
 ## ANTI-PATTERNS

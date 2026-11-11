@@ -13,12 +13,12 @@ const legacyProbe = `
   const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.ANTECHAMBER_TEST_DIRECTORY });
   try {
     await server.start();
-    const created = await fetch(\`\${server.url}/session\`, { method: 'POST', body: '{}' });
-    const session = await created.json();
-    const prompt = await fetch(\`\${server.url}/session/\${session.id}/message\`, {
+    const created = await fetch(\`\${server.url}/api/session\`, { method: 'POST', body: '{}' });
+    const session = (await created.json()).data;
+    const prompt = await fetch(\`\${server.url}/api/session/\${session.id}/prompt\`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: 'build', parts: [{ type: 'text', text: 'legacy build agent prompt' }] }),
+      body: JSON.stringify({ agent: 'build', text: 'legacy build agent prompt' }),
     });
     const alias = await fetch(\`\${server.url}/api/agent/build\`);
     console.log(JSON.stringify({ prompt: prompt.status, alias: alias.status }));
@@ -139,20 +139,16 @@ const configProbe = `
   const server = new AdapterServer({ host: '127.0.0.1', port: 0, defaultDirectory: process.env.ANTECHAMBER_TEST_DIRECTORY });
   try {
     await server.start();
-    const v1Config = await fetch(\`\${server.url}/config\`).then(r => r.json());
     const v2Config = await fetch(\`\${server.url}/api/config\`).then(r => r.json());
-    const v1Agents = await fetch(\`\${server.url}/agent\`).then(r => r.json());
     const v2Agents = await fetch(\`\${server.url}/api/agent\`).then(r => r.json());
-    console.log(JSON.stringify({ v1Config, v2Config, v1Agents, v2Agents }));
+    console.log(JSON.stringify({ v2Config, v2Agents }));
   } finally {
     await server.stop();
   }
 `;
 
 function fetchConfigs(env: NodeJS.ProcessEnv): {
-  v1Config: unknown;
   v2Config: unknown;
-  v1Agents: unknown[];
   v2Agents: unknown[];
 } {
   return JSON.parse(
@@ -161,7 +157,7 @@ function fetchConfigs(env: NodeJS.ProcessEnv): {
       env: { ...process.env, ...env },
       encoding: "utf8",
     }),
-  ) as { v1Config: unknown; v2Config: unknown; v1Agents: unknown[]; v2Agents: unknown[] };
+  ) as { v2Config: unknown; v2Agents: unknown[] };
 }
 
 test("config includes default_agent with resolved OmO name", () => {
@@ -174,9 +170,6 @@ test("config includes default_agent with resolved OmO name", () => {
       ANTECHAMBER_STATE_DIR: state,
       ANTECHAMBER_TEST_DIRECTORY: state,
     });
-    // v1 /config returns { default_agent }
-    assert.ok(result.v1Config && typeof result.v1Config === "object" && "default_agent" in result.v1Config);
-    assert.equal(result.v1Config.default_agent, "OmO");
     // v2 /api/config returns the OpenCode 2.x bare ConfigEntry[] that OpenChamber folds by document `info`.
     assert.deepEqual(result.v2Config, [{ type: "document", path: "antechamber", info: { default_agent: "OmO" } }]);
   } finally {
@@ -194,12 +187,14 @@ test("build agent is hidden when OmO is resolved", () => {
       ANTECHAMBER_STATE_DIR: state,
       ANTECHAMBER_TEST_DIRECTORY: state,
     });
-    const v1Agents = result.v1Agents as [{ name: string; hidden: boolean }, { name: string; hidden: boolean }];
-    assert.equal(v1Agents.length, 2, "v1: should expose [OmO, build]");
-    assert.equal(v1Agents[0].name, "OmO");
-    assert.equal(v1Agents[0].hidden, false, "v1: OmO should be visible");
-    assert.equal(v1Agents[1].name, "build");
-    assert.equal(v1Agents[1].hidden, true, "v1: build should be hidden");
+    const agents = (
+      result.v2Agents as unknown as { data: [{ name: string; hidden: boolean }, { name: string; hidden: boolean }] }
+    ).data;
+    assert.equal(agents.length, 2, "v2: should expose [OmO, build]");
+    assert.equal(agents[0].name, "OmO");
+    assert.equal(agents[0].hidden, false, "v2: OmO should be visible");
+    assert.equal(agents[1].name, "build");
+    assert.equal(agents[1].hidden, true, "v2: build should be hidden");
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
@@ -207,7 +202,7 @@ test("build agent is hidden when OmO is resolved", () => {
 
 type AgentDefaults = Array<{ model?: unknown; variant?: unknown }>;
 
-function agentDefaultsFor(level: string): { v1: AgentDefaults; v2: AgentDefaults } {
+function agentDefaultsFor(level: string): { v2: AgentDefaults } {
   const state = mkdtempSync(join(tmpdir(), "antechamber-agent-effort-"));
   try {
     const result = fetchConfigs({
@@ -219,21 +214,15 @@ function agentDefaultsFor(level: string): { v1: AgentDefaults; v2: AgentDefaults
       FAKE_THINKING_LEVEL: level,
     });
     const v2 = (result.v2Agents as unknown as { data: AgentDefaults }).data;
-    const v1 = result.v1Agents as AgentDefaults;
-    assert.equal(v1.length, 2);
     assert.equal(v2.length, 2);
-    return { v1, v2 };
+    return { v2 };
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
 }
 
 test("agents advertise OmO's resolved model and thinking level as their default", () => {
-  const { v1, v2 } = agentDefaultsFor("medium");
-  for (const agent of v1) {
-    assert.deepEqual(agent.model, { providerID: "fake", modelID: "fake-model" });
-    assert.equal(agent.variant, "medium");
-  }
+  const { v2 } = agentDefaultsFor("medium");
   // OpenCode 2.x nests the level in the agent's ModelRef, the only place OpenChamber 2.x reads it.
   for (const agent of v2) {
     assert.deepEqual(agent.model, { id: "fake-model", providerID: "fake", variant: "medium" });
@@ -242,11 +231,7 @@ test("agents advertise OmO's resolved model and thinking level as their default"
 });
 
 test("a thinking level the model does not offer is not advertised", () => {
-  const { v1, v2 } = agentDefaultsFor("off");
-  for (const agent of v1) {
-    assert.deepEqual(agent.model, { providerID: "fake", modelID: "fake-model" });
-    assert.equal(agent.variant, undefined);
-  }
+  const { v2 } = agentDefaultsFor("off");
   for (const agent of v2) assert.deepEqual(agent.model, { id: "fake-model", providerID: "fake" });
 });
 
@@ -260,13 +245,13 @@ test("build agent is visible when no OmO name is resolved", () => {
       ANTECHAMBER_STATE_DIR: state,
       ANTECHAMBER_TEST_DIRECTORY: state,
     });
-    const v1Agents = result.v1Agents as [{ name: string; hidden: boolean }];
-    assert.equal(v1Agents.length, 1, "v1: should expose only [build]");
-    assert.equal(v1Agents[0].name, "build");
-    assert.equal(v1Agents[0].hidden, false, "v1: build should be visible when it's the default");
-    // v1 config should have default_agent: "build"
-    assert.ok(result.v1Config && typeof result.v1Config === "object" && "default_agent" in result.v1Config);
-    assert.equal(result.v1Config.default_agent, "build");
+    const agents = (
+      result.v2Agents as unknown as { data: [{ name: string; hidden: boolean }, { name: string; hidden: boolean }] }
+    ).data;
+    assert.equal(agents.length, 1, "v2: should expose only [build]");
+    assert.equal(agents[0].name, "build");
+    assert.equal(agents[0].hidden, false, "v2: build should be visible when it's the default");
+    assert.deepEqual(result.v2Config, [{ type: "document", path: "antechamber", info: { default_agent: "build" } }]);
   } finally {
     rmSync(state, { recursive: true, force: true });
   }

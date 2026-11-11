@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { AdapterServer } from "../src/server.js";
-import { bugHarness } from "./bug-harness.js";
+import { bugHarness, openEvents } from "./bug-harness.js";
 import { SessionStore } from "../src/session-store.js";
 
 test("an explicit placeholder title remains user owned after the first prompt", async (t) => {
@@ -169,20 +169,26 @@ test("unwritable debug log preserves health and agent events with exactly one wa
     AbortSignal.timeout(5000).addEventListener("abort", () => reject(new Error("startup deadline")), { once: true });
   });
   assert.equal((await fetch(`${url}/global/health`)).status, 200);
-  const session = (await (await fetch(`${url}/session`, { method: "POST", body: "{}" })).json()) as { id: string };
-  const prompted = await fetch(`${url}/session/${session.id}/message`, {
+  const session = (
+    (await (await fetch(`${url}/api/session`, { method: "POST", body: "{}" })).json()) as { data: { id: string } }
+  ).data;
+  const events = await openEvents(`${url}/api/event`);
+  t.after(() => events.close());
+  const settled = events.wait((event) => event.type === "session.idle");
+  const prompted = await fetch(`${url}/api/session/${session.id}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }),
+    body: JSON.stringify({ text: "[]" }),
   });
   assert.equal(prompted.status, 200);
+  await settled;
   assert.equal((await fetch(`${url}/global/health`)).status, 200);
   child.kill("SIGTERM");
   assert.equal((await exited)[0], 0);
   assert.equal(stderr.split("\n").filter((line) => line.startsWith("[debug] logging disabled:")).length, 1);
 });
 
-test("title matches GET, sidebar lists and session.updated through prompts, rename and reload", {
+test("title matches GET, sidebar lists and session.renamed through prompts, rename and reload", {
   timeout: 15_000,
 }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-t12-title-"));
@@ -206,11 +212,13 @@ test("title matches GET, sidebar lists and session.updated through prompts, rena
     rmSync(dir, { recursive: true, force: true });
   });
   await server.start();
-  const session = (await (
-    await fetch(`${server.url}/session`, { method: "POST", body: JSON.stringify({ title: "   " }) })
-  ).json()) as { id: string };
+  const session = (
+    (await (
+      await fetch(`${server.url}/api/session`, { method: "POST", body: JSON.stringify({ title: "   " }) })
+    ).json()) as { data: { id: string } }
+  ).data;
   const controller = new AbortController();
-  const stream = await fetch(`${server.url}/event`, { signal: controller.signal });
+  const stream = await fetch(`${server.url}/api/event`, { signal: controller.signal });
   assert.ok(stream.body);
   const reader = stream.body.getReader();
   await reader.read(); // server.connected: subscription is armed before the prompt.
@@ -225,48 +233,45 @@ test("title matches GET, sidebar lists and session.updated through prompts, rena
       const frames = text.split("\n\n");
       text = frames.pop() ?? "";
       for (const frame of frames) {
-        if (!frame.startsWith("data: ")) continue;
-        const event = JSON.parse(frame.slice(6));
-        if (event.type === "session.updated" && event.properties.info.title === "[]") return event.properties.info;
+        const data = frame.split("\n").find((line) => line.startsWith("data: "));
+        if (data === undefined) continue;
+        const event = JSON.parse(data.slice(6));
+        if (event.type === "session.renamed" && event.data.title === "[]") return event.data;
       }
     }
   })();
-  await fetch(`${server.url}/session/${session.id}/message`, {
+  await fetch(`${server.url}/api/session/${session.id}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ parts: [{ type: "text", text: "  []  " }] }),
+    body: JSON.stringify({ text: "  []  " }),
   });
   const eventInfo = await updated;
   controller.abort();
   assert.equal(eventInfo.title, "[]");
-  for (const path of [
-    `/session/${session.id}`,
-    "/session",
-    "/experimental/session",
-    "/experimental/session?archived=true",
-  ]) {
-    const body = (await (await fetch(server.url + path)).json()) as
+  for (const path of [`/api/session/${session.id}`, "/api/session"]) {
+    const body = ((await (await fetch(server.url + path)).json()) as { data: unknown }).data as
       | { title: string }
       | Array<{ id: string; title: string }>;
     assert.equal((Array.isArray(body) ? body.find((entry) => entry.id === session.id) : body)!.title, "[]");
   }
-  await fetch(`${server.url}/session/${session.id}`, {
+  await fetch(`${server.url}/api/session/${session.id}`, {
     method: "PATCH",
     body: JSON.stringify({ title: "Renamed session" }),
   });
-  await fetch(`${server.url}/session/${session.id}/message`, {
+  await fetch(`${server.url}/api/session/${session.id}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ parts: [{ type: "text", text: "[]" }] }),
+    body: JSON.stringify({ text: "[]" }),
   });
+  await server["sessions"]["operations"].get(session.id);
   assert.equal(
-    ((await (await fetch(`${server.url}/session/${session.id}`)).json()) as { title: string }).title,
+    ((await (await fetch(`${server.url}/api/session/${session.id}`)).json()) as { data: { title: string } }).data.title,
     "Renamed session",
   );
   await server.stop();
   server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: dir });
   await server.start();
   assert.equal(
-    ((await (await fetch(`${server.url}/session/${session.id}`)).json()) as { title: string }).title,
+    ((await (await fetch(`${server.url}/api/session/${session.id}`)).json()) as { data: { title: string } }).data.title,
     "Renamed session",
   );
 });

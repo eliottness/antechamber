@@ -18,7 +18,6 @@ import { SSE, type SSESubscriber } from "./sse.js";
 import { handleV1 } from "./routes-v1.js";
 import { handleV2 } from "./routes-v2.js";
 import type { RouteServices } from "./route-services.js";
-import { type SelfUpdateResult, selfUpdate } from "./self-update.js";
 import { handleWorkStatus } from "./work-status.js";
 import { FileWatchRegistry } from "./file-watch.js";
 import { getCommands } from "./session-commands.js";
@@ -33,8 +32,6 @@ interface AdapterServerOptions {
   host: string;
   /** Fallback directory when requests carry no ?directory= param. */
   defaultDirectory: string;
-  /** Replaces the npm self-update behind POST /global/upgrade (tests). */
-  selfUpdate?: () => Promise<SelfUpdateResult>;
 }
 
 export class AdapterServer {
@@ -295,17 +292,11 @@ export class AdapterServer {
     return this.sse.writeSSE(res, frame);
   }
 
-  private handleSSE(
-    req: IncomingMessage,
-    res: ServerResponse,
-    flavor: "v1" | "v2",
-    directory: string,
-    global: boolean,
-  ): void {
+  private handleSSE(req: IncomingMessage, res: ServerResponse, directory?: string): void {
     const lastEventID = req.headers["last-event-id"];
     this.sse.handleSSE(
       res,
-      { flavor, global, ...(global ? {} : { directory }) },
+      { ...(directory !== undefined ? { directory } : {}) },
       Array.isArray(lastEventID) ? lastEventID[0] : lastEventID,
       this.writeSSE.bind(this),
     );
@@ -429,15 +420,10 @@ export class AdapterServer {
     }
     const directory = directoryQuery ?? headerDirectory ?? this.options.defaultDirectory;
 
-    // SSE stream (v2 clients subscribe at /api/event; v1 at /event)
-    if (method === "GET" && (path === "/event" || path === "/global/event")) {
-      this.handleSSE(req, res, "v1", directory, path === "/global/event");
-      return;
-    }
-    if (method === "GET" && path === "/api/event") {
+    if (method === "GET" && (path === "/api/event" || path === "/api/global/event")) {
       // OpenChamber 2.3.2 opens one unscoped /api/event as its global hub (captured);
       // only an explicit directory selector scopes the stream.
-      this.handleSSE(req, res, "v2", directory, directoryQuery === null && headerDirectory === undefined);
+      this.handleSSE(req, res, directoryQuery === null && headerDirectory === undefined ? undefined : directory);
       return;
     }
 
@@ -453,7 +439,6 @@ export class AdapterServer {
       body: (request) => this.http.body(request),
       catalog: (dir, refresh) => this.catalog(dir, undefined, refresh === true ? "read" : "cached"),
       broadcast: (dir, event) => this.broadcast(dir, event),
-      selfUpdate: this.options.selfUpdate ?? (() => selfUpdate()),
       fileWatches: this.fileWatches,
       commands: (dir) => this.commands(dir),
       vcsBranch: (dir) => this.vcsBranch(dir),

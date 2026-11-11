@@ -289,29 +289,6 @@ for (const notification of [terminal, evaluation]) {
   });
 }
 
-test("v1 paging keeps completion cards and their user anchor beyond 190 results after reload", async (t) => {
-  const { h, s, pi } = await started(t);
-  await h.manager.prompt(s.info.id, "normal", undefined, false, "msg_page");
-  for (let index = 0; index < 192; index++)
-    await pi.command({ ...terminal, entryID: `page-result-${index}`, timestamp: 4000 + index });
-  await h.restart();
-  const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: h.root });
-  t.after(() => server.stop());
-  await server.start();
-  const base = `${server.url}/session/${s.info.id}/message`;
-  const response = await fetch(`${base}?limit=30`);
-  assert.equal(response.status, 200);
-  const page = (await response.json()) as OCMessageWithParts[];
-  assert.equal(page[0]?.info.id, "msg_page");
-  assert.equal(tools(page).length, 192);
-  assert.equal(response.headers.get("x-next-cursor"), "msg_page");
-  assert.ok(page.every((message) => message.info.role !== "assistant" || message.info.parentID === "msg_page"));
-  const older = (await (await fetch(`${base}?limit=30&before=msg_page`)).json()) as OCMessageWithParts[];
-  const all = (await (await fetch(base)).json()) as OCMessageWithParts[];
-  assert.deepEqual([...older, ...page], all);
-  assert.equal(new Set(all.map((message) => message.info.id)).size, all.length);
-});
-
 function card(messages: readonly OCMessageWithParts[] | undefined, callID: string): OCToolPart {
   const part = tools(messages ?? []).find((candidate) => candidate.callID === callID);
   assert.ok(part, `card ${callID}`);

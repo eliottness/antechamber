@@ -164,11 +164,13 @@ async function main(): Promise<number> {
   const stateDir = resolve(values.state ?? envSetting("STATE_DIR") ?? defaultStateDir(homedir(), existsSync));
   const antechamber = resolve(values.antechamber);
   const openchamberBin = values.openchamber ?? which("openchamber");
+  const bun = which("bun");
   const chrome =
     values.chrome ?? ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"].map(which).find(Boolean);
   if (!existsSync(antechamber)) throw new Error(`${antechamber} not found; run npm run build`);
   if (openchamberBin === undefined) throw new Error("openchamber is not on PATH; pass --openchamber");
   if (chrome === undefined) throw new Error("no Chrome or Chromium on PATH; pass --chrome");
+  if (bun === undefined) throw new Error("bun is not on PATH; the adapter requires Bun 1.4+");
   const viewports = VIEWPORTS.filter((v) => values.viewport === "both" || values.viewport === v.name);
   if (viewports.length === 0) throw new Error("--viewport must be mobile, desktop or both");
   const timeoutMs = Number(values.timeout);
@@ -206,7 +208,7 @@ async function main(): Promise<number> {
       "#!/bin/sh",
       `export ANTECHAMBER_STATE_DIR=${shellQuote(state)} OMO_CODING_AGENT_DIR=${shellQuote(agent)}`,
       "export ANTECHAMBER_PI_BINARY=/bin/false ANTECHAMBER_AGENT=OmO",
-      `exec ${shellQuote(process.execPath)} ${shellQuote(antechamber)} "$@"`,
+      `exec ${shellQuote(bun)} ${shellQuote(antechamber)} "$@"`,
       "",
     ].join("\n"),
   );
@@ -308,8 +310,11 @@ async function main(): Promise<number> {
           const history: unknown = await (
             await fetch(`${base}/api/session/${id}/message?directory=${directory}`)
           ).json();
-          const list = Array.isArray(history) ? history : [];
-          if (!list.some((message) => (message as { info?: { role?: string } }).info?.role === "user")) {
+          const list =
+            history !== null && typeof history === "object" && "data" in history && Array.isArray(history.data)
+              ? history.data
+              : [];
+          if (!list.some((message) => message !== null && typeof message === "object" && message.type === "user")) {
             results.push(result("SKIP", "history holds no user message"));
             continue;
           }

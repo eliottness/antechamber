@@ -336,97 +336,10 @@ test("R-020: a failed catalog load is retried by the next provider request", { t
     else process.env.REVIEW_RPC_CATALOG_COUNT_FILE = previousCountFile;
   });
 
-  const first = await fetch(`${url}/provider`);
+  const first = await fetch(`${url}/api/provider`);
   assert.equal(first.status, 200);
-  const second = await fetch(`${url}/provider`);
+  const second = await fetch(`${url}/api/provider`);
 
   assert.equal(second.status, 200);
   assert.match(JSON.stringify(await second.json()), /recovered-model/);
-});
-
-test("R-011: first prompt_async reuses the optimistic user identity without a duplicate", {
-  timeout: 10_000,
-}, async (t) => {
-  const { openEvents } = await import("./bug-harness.js");
-  const fixture = fileURLToPath(new URL("./fixtures/turn-omo.mjs", import.meta.url));
-  const { server, url } = await startReviewServer(t, fixture);
-  const createdResponse = await fetch(`${url}/session`, { method: "POST", body: "{}" });
-  assert.equal(createdResponse.status, 200);
-  const created: unknown = await createdResponse.json();
-  if (typeof created !== "object" || created === null || !("id" in created) || typeof created.id !== "string")
-    throw new Error("session creation did not return an ID");
-  const sessionID = created.id;
-  const messageID = "msg_r011_optimistic";
-  const stream = await openEvents(`${url}/event`);
-  const global = await openEvents(`${url}/global/event`);
-  t.after(async () => {
-    await Promise.all([stream.close(), global.close()]);
-  });
-  const isOptimisticUser = (event: Record<string, unknown>): boolean =>
-    event.type === "message.updated" &&
-    JSON.stringify(event).includes(`"id":"${messageID}"`) &&
-    JSON.stringify(event).includes('"role":"user"');
-  const userEvent = stream.wait(isOptimisticUser);
-  const globalUserEvent = global.wait(
-    (frame) =>
-      typeof frame.payload === "object" &&
-      frame.payload !== null &&
-      isOptimisticUser(frame.payload as Record<string, unknown>),
-  );
-  void userEvent.catch(() => undefined);
-  void globalUserEvent.catch(() => undefined);
-
-  const response = await fetch(`${url}/session/${sessionID}/prompt_async`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messageID, parts: [{ type: "text", text: "first turn" }] }),
-  });
-
-  assert.equal(response.status, 204);
-  await Promise.all([userEvent, globalUserEvent]);
-  await server["sessions"]["operations"].get(sessionID);
-  const history: unknown = await (await fetch(`${url}/session/${sessionID}/message`)).json();
-  if (!Array.isArray(history)) throw new Error("message history did not return an array");
-  const userIDs = history.flatMap((message) => {
-    if (
-      typeof message !== "object" ||
-      message === null ||
-      !("info" in message) ||
-      typeof message.info !== "object" ||
-      message.info === null ||
-      !("id" in message.info) ||
-      !("role" in message.info) ||
-      message.info.role !== "user" ||
-      typeof message.info.id !== "string"
-    )
-      return [];
-    return [message.info.id];
-  });
-  const eventIDs = (frames: readonly Record<string, unknown>[]) =>
-    frames.flatMap((event) => {
-      if (!isOptimisticUser(event)) return [];
-      const properties = event.properties;
-      if (
-        typeof properties !== "object" ||
-        properties === null ||
-        !("info" in properties) ||
-        typeof properties.info !== "object" ||
-        properties.info === null ||
-        !("id" in properties.info) ||
-        typeof properties.info.id !== "string"
-      )
-        return [];
-      return [properties.info.id];
-    });
-
-  assert.deepEqual(userIDs, [messageID]);
-  assert.deepEqual(eventIDs(stream.frames), [messageID]);
-  assert.deepEqual(
-    eventIDs(
-      global.frames.flatMap((frame) =>
-        typeof frame.payload === "object" && frame.payload !== null ? [frame.payload as Record<string, unknown>] : [],
-      ),
-    ),
-    [messageID],
-  );
 });

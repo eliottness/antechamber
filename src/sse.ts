@@ -12,15 +12,12 @@ const MAX_SSE_PENDING_BYTES = 8 * 1024 * 1024;
 const MAX_SSE_REPLAY_RECORDS = 1024;
 
 export type SSESubscriber = {
-  flavor: "v1" | "v2";
   directory?: string;
-  global: boolean;
 };
 
 type ReplayRecord = {
   id: number;
   directory: string;
-  v1?: OCEvent | TodoUpdated;
   v2?: unknown;
 };
 
@@ -66,10 +63,7 @@ export class SSE {
       : event.type === "todo.updated"
         ? [{ id: `evt_${randomUUID()}`, type: event.type, location: { directory }, data: event.properties }]
         : this.v2events.translate(directory, event);
-    const records =
-      v2Frames.length === 0
-        ? [this.record(directory, { v1: event })]
-        : v2Frames.map((v2, index) => this.record(directory, index === 0 ? { v1: event, v2 } : { v2 }));
+    const records = v2Frames.map((v2) => this.record(directory, { v2 }));
     for (const record of records) this.retain(record);
     for (const [res, subscriber] of this.clients) {
       if (res.writableEnded || res.destroyed) {
@@ -77,7 +71,7 @@ export class SSE {
         continue;
       }
       for (const record of records) {
-        if (!subscriber.global && subscriber.directory !== directory) continue;
+        if (subscriber.directory !== undefined && subscriber.directory !== directory) continue;
         if (!this.writeRecord(res, subscriber, record)) break;
       }
     }
@@ -124,24 +118,14 @@ export class SSE {
       this.clients.delete(res);
     });
     // OpenCode emits server.connected on subscribe; OpenChamber waits for it.
-    const connected =
-      subscriber.flavor === "v2"
-        ? {
-            id: `evt_${Date.now()}`,
-            created: Date.now(),
-            type: "server.connected",
-            location: { directory: subscriber.directory ?? this.options.defaultDirectory },
-            data: {},
-          }
-        : { type: "server.connected", properties: {} };
-    const initial =
-      subscriber.flavor === "v1" && subscriber.global
-        ? {
-            directory: subscriber.directory ?? this.options.defaultDirectory,
-            payload: { id: `evt_${randomUUID()}`, ...connected },
-          }
-        : connected;
-    write(res, `data: ${JSON.stringify(initial)}\n\n`);
+    const connected = {
+      id: `evt_${Date.now()}`,
+      created: Date.now(),
+      type: "server.connected",
+      location: { directory: subscriber.directory ?? this.options.defaultDirectory },
+      data: {},
+    };
+    write(res, `data: ${JSON.stringify(connected)}\n\n`);
     const cursor = Number(lastEventID);
     if (!Number.isSafeInteger(cursor) || cursor < 0) return;
     for (const record of this.replay) {
@@ -159,35 +143,10 @@ export class SSE {
   }
 
   private writeRecord(res: ServerResponse, subscriber: SSESubscriber, record: ReplayRecord): boolean {
-    if (!subscriber.global && subscriber.directory !== record.directory) return true;
-    const data =
-      subscriber.flavor === "v2"
-        ? record.v2
-        : record.v1 === undefined
-          ? undefined
-          : subscriber.global
-            ? {
-                directory: record.directory,
-                project: record.directory,
-                payload: {
-                  id: `evt_${record.id}`,
-                  ...record.v1,
-                  properties: {
-                    ...record.v1.properties,
-                    ...(record.v1.type === "session.created" ||
-                    record.v1.type === "session.updated" ||
-                    record.v1.type === "session.deleted"
-                      ? { sessionID: record.v1.properties.info.id }
-                      : {}),
-                  },
-                },
-              }
-            : record.v1;
+    if (subscriber.directory !== undefined && subscriber.directory !== record.directory) return true;
+    const data = record.v2;
     if (data === undefined) return true;
-    const frame =
-      subscriber.flavor === "v1" && !subscriber.global
-        ? `data: ${JSON.stringify(data)}\n\n`
-        : `id: ${record.id}\ndata: ${JSON.stringify(data)}\n\n`;
+    const frame = `id: ${record.id}\ndata: ${JSON.stringify(data)}\n\n`;
     return this.writeSSE(res, frame);
   }
 }

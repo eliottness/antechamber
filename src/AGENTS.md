@@ -9,8 +9,9 @@ This file exists because `src` scores 14: 37 files and the repo's highest export
 cli.ts (parseArgs, lazy import per command; no command framework)
  -> commands/serve.ts (unsafe-bind/auth guard, signals)
  -> server.ts AdapterServer (Http + SSE + SessionManager + catalog cache)
-    /event, /global/event -> v1 SSE      /api/event -> v2 SSE
-    /api/* -> routes-v2.ts               else -> routes-v1.ts   (both take RouteServices)
+    /api/event, /api/global/event -> v2 SSE
+    /api/* -> routes-v2.ts               else -> retained routes-v1.ts compatibility probes
+                                        (both take RouteServices)
  -> sessions.ts SessionManager -> pi-rpc.ts PiRpcClient (spawn `--mode rpc`, JSONL stdio)
 ```
 

@@ -57,8 +57,7 @@ another executable (see [docs/configuration.md](docs/configuration.md)).
 
 | OpenChamber | API | Status |
 |---|---|---|
-| >= 2.0.4 | v2 (`@opencode-ai/sdk/v2`) | primary target; antechamber advertises `opencode v2.1.0` on `--version` (OpenChamber 2.5.2 requires 2.1.0) |
-| 1.24.x | v1 | supported |
+| >= 2.3.2 | v2 (`/api/*`) | supported; antechamber advertises `opencode v2.1.0` on `--version` |
 | other versions | - | not tested |
 
 OpenChamber changes which OpenCode API calls it makes between releases. If a
@@ -223,7 +222,7 @@ attached to every GitHub release. None is required to run sessions.
 |---|---|---|---|
 | [OmO Graph](#omo-graph) (`extensions/omo-dag`) | a rail panel drawing the session's OmO sub-agents as a live graph | 1.22 or newer | sessions, local service |
 | [OmO Work](#omo-work) (`extensions/omo-work`) | a Work Status section with the session's todo phases, monitors, eval cells, background sessions and goal timer | 2.3.2 or newer | local service |
-| [OmO Compatibility](#omo-compatibility) (`extensions/omo-compat`) | headers for OmO tool cards, such as `JS Eval` on eval cells | 1.24 or newer | nothing |
+| [OmO Compatibility](#omo-compatibility) (`extensions/omo-compat`) | headers for OmO tool cards, such as `JS Eval` on eval cells | 2.3.2 or newer | nothing |
 
 All three run on OpenChamber web and desktop; VS Code and mobile load no
 extensions.

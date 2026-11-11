@@ -32,31 +32,30 @@ test("owned routes return real listings or truthful neutral and unsupported resp
       ignored: false,
     },
   ]);
-  assert.deepEqual((await get("/find/file?query=match&dirs=false")).body, ["nested/match.txt"]);
-  assert.deepEqual((await get("/find/file?query=&limit=0")).body, []);
+  assert.deepEqual(
+    ((await get("/api/fs/find?query=match&dirs=false")).body as { data: Array<{ path: string }> }).data.map(
+      (entry) => entry.path,
+    ),
+    ["nested/match.txt"],
+  );
+  assert.deepEqual(((await get("/api/fs/find?query=&limit=0")).body as { data: unknown }).data, []);
   for (const route of [
     "/file?path=../",
     "/file?path=escape",
-    "/find/file?query=../secret",
-    "/find/file?path=../",
-    `/find/file?query=${encodeURIComponent(base)}`,
+    "/api/fs/find?query=../secret",
+    "/api/fs/find?path=../",
+    `/api/fs/find?query=${encodeURIComponent(base)}`,
   ]) {
     assert.equal((await get(route)).status, 400, route);
   }
   assert.ok(!((await get("/file")).body as Array<{ name: string }>).some((entry) => entry.name === "escape"));
-  for (const path of ["/skill", "/lsp", "/formatter", "/experimental/tool/ids"]) {
+  for (const path of ["/skill", "/formatter"]) {
     assert.deepEqual(await get(path), { status: 200, body: [] });
   }
-  assert.deepEqual(await get("/provider/auth"), { status: 200, body: {} });
   for (const [method, path] of [
-    ["PUT", "/auth/anthropic"],
-    ["POST", "/provider/anthropic/oauth/authorize"],
-    ["POST", "/provider/anthropic/oauth/callback"],
-    ["PATCH", "/config"],
     ["POST", "/mcp/qa/connect"],
     ["POST", "/mcp/qa/disconnect"],
     ["DELETE", "/mcp/qa/auth"],
-    ["POST", "/experimental/control-plane/move-session"],
   ] as const) {
     const response = await fetch(server.url + path, {
       method,

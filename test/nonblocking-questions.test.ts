@@ -223,32 +223,24 @@ async function setup(t: test.TestContext) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(5000),
     });
-  const created = await request("/session", "POST", {});
-  const session = (await created.json()) as { id: string };
+  const session = await server["sessions"].create(root);
   return { server, session, start, request };
 }
 
 for (const mode of ["idle", "busy"]) {
   test(`HTTP and SSE structured replies deliver once when ${mode}`, { timeout: 20000 }, async (t) => {
     const h = await setup(t);
-    const v1 = await stream(`${h.server.url}/event`);
     const v2 = await stream(`${h.server.url}/api/event`);
-    t.after(() => v1.close());
     t.after(() => v2.close());
-    const asked = v1.next("question.asked");
     const formCreated = v2.next("form.created");
     const managed = h.server["sessions"].get(h.session.id);
     assert.ok(managed?.pi);
     const turn = waitEvent(managed.pi, "event");
-    assert.equal(
-      (await h.request(`/session/${h.session.id}/prompt_async`, "POST", { parts: [{ type: "text", text: mode }] }))
-        .status,
-      204,
-    );
-    await Promise.all([asked, formCreated, turn]);
+    assert.equal((await h.request(`/api/session/${h.session.id}/prompt`, "POST", { text: mode })).status, 200);
+    await Promise.all([formCreated, turn]);
     // A round trip is a deterministic barrier after all prompt lifecycle frames.
     const before = await managed.pi.command<{ pendingQuestions: Array<{ id: string }> }>({ type: "get_state" });
-    const pending = (await (await h.request("/question")).json()) as Array<{ id: string; sessionID: string }>;
+    const pending = h.server["sessions"].questions(h.session.id);
     assert.equal(pending.length, 1);
     assert.equal(managed.hasPendingInteraction(), true);
     assert.equal(managed.status.type, mode === "idle" ? "idle" : "busy");
@@ -266,11 +258,17 @@ for (const mode of ["idle", "busy"]) {
       ).status,
       400,
     );
-    assert.equal((await h.request(`/question/${card.id}/reply`, "POST", { answers: [] })).status, 409);
+    assert.equal(
+      (await h.request(`/api/session/${h.session.id}/question/${card.id}/reply`, "POST", { answers: [] })).status,
+      409,
+    );
     await managed.pi.command({ type: "refuse_next" });
-    assert.equal((await h.request(`/question/${card.id}/reply`, "POST", { answers: [["A"], []] })).status, 409);
-    assert.equal((await h.request("/question")).status, 200);
-    const replied = v1.next("question.replied");
+    assert.equal(
+      (await h.request(`/api/session/${h.session.id}/question/${card.id}/reply`, "POST", { answers: [["A"], []] }))
+        .status,
+      409,
+    );
+    assert.equal((await h.request("/api/question/request")).status, 200);
     const formReplied = v2.next("form.replied");
     const delivered = new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -290,9 +288,12 @@ for (const mode of ["idle", "busy"]) {
         ? await h.request(`/api/session/${h.session.id}/form/${form.id}/reply`, "POST", {
             answer: { q1: ["A", "B"], q2: "custom", comment: "overall" },
           })
-        : await h.request(`/question/${card.id}/reply`, "POST", { answers: [[], ["custom"]], comment: "overall" });
-    assert.equal(reply.status, mode === "idle" ? 204 : 200);
-    const [, formEvent, delivery] = await Promise.all([replied, formReplied, delivered]);
+        : await h.request(`/api/session/${h.session.id}/question/${card.id}/reply`, "POST", {
+            answers: [[], ["custom"]],
+            comment: "overall",
+          });
+    assert.equal(reply.status, 204);
+    const [formEvent, delivery] = await Promise.all([formReplied, delivered]);
     assert.equal(delivery.disposition, mode === "idle" ? "followUp" : "steer");
     assert.equal((formEvent.data as { id: string }).id, form.id);
     const state = await managed.pi.command<{ prompts: number; responses: Array<Record<string, unknown>> }>({
@@ -309,16 +310,17 @@ for (const mode of ["idle", "busy"]) {
         ? { q1: { selected: ["A", "B"] }, q2: { selected: [], text: "custom" } }
         : { q2: { selected: [], text: "custom" } },
     );
-    const messages = (await (await h.request(`/session/${h.session.id}/message`)).json()) as Array<{
-      info: { role: string };
-    }>;
+    const messages = h.server["sessions"].messages(h.session.id) ?? [];
     assert.equal(
       messages.filter((m) => m.info.role === "user").length,
       2,
       "prompt and one injected answer are visible",
     );
-    assert.deepEqual(await (await h.request("/question")).json(), []);
-    assert.equal((await h.request(`/question/${card.id}/reply`, "POST", { answers: [["A"]] })).status, 404);
+    assert.deepEqual(h.server["sessions"].questions(h.session.id), []);
+    assert.equal(
+      (await h.request(`/api/session/${h.session.id}/question/${card.id}/reply`, "POST", { answers: [["A"]] })).status,
+      404,
+    );
     assert.equal((await h.request(`/api/session/${h.session.id}/form/${form.id}`, "DELETE")).status, 404);
   });
 }
@@ -362,32 +364,25 @@ test("legacy questions become forms without changing native labels", () => {
   assert.deepEqual(h.responses, [{ type: "extension_ui_response", id: "legacy", value: "A" }]);
 });
 
-for (const action of ["v1-reject", "v2-delete", "timed_out"]) {
-  test(`structured question cancellation via ${action} settles both SSE surfaces`, { timeout: 20000 }, async (t) => {
+for (const action of ["v2-delete", "timed_out"]) {
+  test(`structured question cancellation via ${action} settles the form SSE surface`, { timeout: 20000 }, async (t) => {
     const h = await setup(t);
-    const v1 = await stream(`${h.server.url}/event`);
     const v2 = await stream(`${h.server.url}/api/event`);
-    t.after(() => v1.close());
     t.after(() => v2.close());
-    const asked = v1.next("question.asked");
     const created = v2.next("form.created");
-    await h.request(`/session/${h.session.id}/prompt_async`, "POST", { parts: [{ type: "text", text: "idle" }] });
-    await Promise.all([asked, created]);
+    await h.request(`/api/session/${h.session.id}/prompt`, "POST", { text: "idle" });
+    await created;
     const manager = h.server["sessions"];
     const card = manager.questions(h.session.id)[0];
     const pi = manager.get(h.session.id)?.pi;
     assert.ok(card && pi);
-    const rejected = v1.next("question.rejected");
     const cancelled = v2.next("form.cancelled");
     if (action === "timed_out") await pi.command({ type: "resolve_question", outcome: "timed_out" });
     else {
-      const reply =
-        action === "v1-reject"
-          ? await h.request(`/question/${card.id}/reject`, "POST")
-          : await h.request(`/api/session/${h.session.id}/form/${toQuestionForm(card).id}`, "DELETE");
-      assert.equal(reply.status, action === "v1-reject" ? 200 : 204);
+      const reply = await h.request(`/api/session/${h.session.id}/form/${toQuestionForm(card).id}`, "DELETE");
+      assert.equal(reply.status, 204);
     }
-    await Promise.all([rejected, cancelled]);
+    await cancelled;
     const state = await pi.command<{ responses: Array<Record<string, unknown>> }>({ type: "get_state" });
     if (action !== "timed_out") assert.equal(state.data?.responses[0]?.cancelled, true);
     assert.deepEqual(manager.questions(h.session.id), []);

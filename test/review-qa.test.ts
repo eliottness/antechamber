@@ -64,23 +64,12 @@ function assertSuccess(response: Response, label: string) {
 
 test("R-080: catalog discovery does not publish a session", async (t) => {
   const { root, url } = await startServer(t, catalogFixture);
-  const bootstrap = await fetch(`${url}/config/providers`);
+  const bootstrap = await fetch(`${url}/api/provider`);
   assert.equal(bootstrap.status, 200);
 
-  const listed = await fetch(`${url}/session?directory=${encodeURIComponent(root)}`);
+  const listed = await fetch(`${url}/api/session?directory=${encodeURIComponent(root)}`);
   assert.equal(listed.status, 200);
-  assert.deepEqual(await listed.json(), []);
-});
-
-test("R-081: v1 shell returns message info and parts", async (t) => {
-  const { url } = await startServer(t);
-  const sessionID = await createSession(url);
-
-  const response = await postJson(url, `/session/${sessionID}/shell`, { command: "printf review-qa" });
-  assert.equal(response.status, 200);
-  const body = record(await response.json(), "v1 shell response");
-  assert.ok(isRecord(body.info), "v1 shell response must contain info");
-  assert.ok(Array.isArray(body.parts), "v1 shell response must contain parts");
+  assert.deepEqual(((await listed.json()) as { data: unknown }).data, []);
 });
 
 test("R-082: encoded directory headers select the real worktree", async (t) => {
@@ -149,7 +138,7 @@ test("R-089: malformed shell results return a typed gateway error", async (t) =>
   const { url } = await startServer(t, turnFixture);
   const sessionID = await createSession(url);
 
-  const response = await postJson(url, `/session/${sessionID}/shell`, { command: "printf review-qa" });
+  const response = await postJson(url, `/api/session/${sessionID}/shell`, { command: "printf review-qa" });
   assert.equal(response.status, 502);
   const body = record(await response.json(), "shell error response");
   assert.equal(body.name, "UpstreamProtocolError");

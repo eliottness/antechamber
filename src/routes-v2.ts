@@ -546,7 +546,7 @@ export async function handleV2(
     const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
     const limit = numberParam(url.searchParams.get("limit"));
     let infos = (dir !== null && dir !== "" ? services.sessions.list(dir) : services.sessions.listAll()).filter(
-      // OmO monitors are a child session only for v1 clients; 2.x shows them in the OmO Work section.
+      // Synthetic monitor sessions stay internal; 2.x shows them in the OmO Work section.
       (session) => !services.sessions.monitors.owns(session.id),
     );
     if (search) infos = infos.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()));

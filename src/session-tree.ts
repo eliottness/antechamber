@@ -419,8 +419,8 @@ function entryForMessage(s: ManagedSession, tree: Entries, messageID: string): T
 
 /**
  * The last entry of an assistant reply: the reply, or the latest result of its own tool calls.
- * OpenChamber 2.x /btw names a final reply (no tool calls); 1.24's /btw can name any completed
- * step, whose tool results belong to the same OpenChamber message.
+ * A final reply has no tool calls. When an API caller selects a tool-bearing
+ * reply, its completed tool results belong to the same message.
  */
 function replyEnd(tree: Entries, reply: TreeEntry, leafId: string | null): string {
   const content = reply.message?.content;

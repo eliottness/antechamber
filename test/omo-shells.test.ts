@@ -58,8 +58,8 @@ const extensionEvent = (name: string, data: unknown) => ({ type: "extension_even
 
 test("OmO background work is listed and announced as OpenCode shells, readable, and stoppable where OmO allows", async (t) => {
   const { manager, url } = await startServer(t);
-  const created = await fetch(`${url}/session`, { method: "POST", body: "{}" });
-  const { id, directory } = (await created.json()) as { id: string; directory: string };
+  const created = await fetch(`${url}/api/session`, { method: "POST", body: "{}" });
+  const { id, directory } = ((await created.json()) as { data: { id: string; directory: string } }).data;
   const s = manager.get(id);
   assert.ok(s?.pi && s.piPath && s.piSessionId);
   const v2 = await openEvents(`${url}/api/event`);
@@ -207,7 +207,9 @@ test("a session whose agent antechamber stops, or that is removed, ends every sh
   const v2 = await openEvents(`${url}/api/event`);
   t.after(() => v2.close());
   const started = async () => {
-    const { id } = (await (await fetch(`${url}/session`, { method: "POST", body: "{}" })).json()) as { id: string };
+    const { id } = (
+      (await (await fetch(`${url}/api/session`, { method: "POST", body: "{}" })).json()) as { data: { id: string } }
+    ).data;
     const s = manager.get(id);
     assert.ok(s?.pi);
     const shellID = terminalShellId(s.pi.startedAtMs, "bash_7");
@@ -229,7 +231,7 @@ test("a session whose agent antechamber stops, or that is removed, ends every sh
 
   const removed = await started();
   const removedEnded = exited(removed.shellID);
-  assert.equal((await fetch(`${url}/session/${removed.id}`, { method: "DELETE" })).status, 200);
+  assert.equal((await fetch(`${url}/api/session/${removed.id}`, { method: "DELETE" })).status, 204);
   assert.deepEqual((await removedEnded).data, { id: removed.shellID, status: "killed" });
   const after = (await (await fetch(`${url}/api/shell`)).json()) as { data: OCShellInfo[] };
   assert.deepEqual(after.data, []);
@@ -237,7 +239,9 @@ test("a session whose agent antechamber stops, or that is removed, ends every sh
 
 test("a watch's output keeps its header once and every matched line in order past the kept 200", async (t) => {
   const { manager, url } = await startServer(t);
-  const { id } = (await (await fetch(`${url}/session`, { method: "POST", body: "{}" })).json()) as { id: string };
+  const { id } = (
+    (await (await fetch(`${url}/api/session`, { method: "POST", body: "{}" })).json()) as { data: { id: string } }
+  ).data;
   const s = manager.get(id);
   assert.ok(s?.pi);
   const shellID = terminalShellId(s.pi.startedAtMs, "bash_7");

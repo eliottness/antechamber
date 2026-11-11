@@ -22,7 +22,7 @@ async function startServer(t: TestContext) {
   return server.url;
 }
 
-test("V124-012: decodes form-list directory headers", { timeout: 10_000 }, async (t) => {
+test("decodes v2 form-list directory headers", { timeout: 10_000 }, async (t) => {
   const url = await startServer(t);
   const response = await fetch(`${url}/api/form`, { headers: { "x-opencode-directory": "%2Ftmp%2Fworkspace" } });
   assert.equal(response.status, 200);

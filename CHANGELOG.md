@@ -21,6 +21,60 @@ and this project uses [Semantic Versioning](https://semver.org/).
   Configure these thresholds with `ANTECHAMBER_EVENT_LOOP_LAG_MS` and `ANTECHAMBER_SLOW_REQUEST_MS`.
   Request warnings use route patterns and omit query strings and path identifiers.
 
+### Removed
+
+- **Breaking:** OpenChamber 1.x frontend support. OpenChamber **2.3.2+** is now required.
+  The following legacy routes now use the ordinary 404 response; `/global/health`,
+  the 2.x event streams, retained uncertain compatibility probes and the CLI
+  `--version` / `upgrade` commands remain available:
+  - `GET /session`
+  - `POST /session`
+  - `GET /session/status`
+  - `GET /project/current`
+  - `GET /project`
+  - `GET /config`
+  - `GET /global/config`
+  - `GET /provider`
+  - `GET /config/providers`
+  - `GET /experimental/session`
+  - `GET /question`
+  - `GET /permission`
+  - `GET /lsp`
+  - `GET /experimental/tool/ids`
+  - `GET /provider/auth`
+  - `GET /command`
+  - `GET /path`
+  - `GET /vcs`
+  - `GET /agent`
+  - `GET /find/file`
+  - `PATCH /config`
+  - `POST /experimental/control-plane/move-session`
+  - `GET /global/event`
+  - `GET /session/{sessionID}`
+  - `PATCH /session/{sessionID}`
+  - `DELETE /session/{sessionID}`
+  - `GET /session/{sessionID}/message`
+  - `GET /session/{sessionID}/todo`
+  - `POST /session/{sessionID}/prompt_async`
+  - `POST /session/{sessionID}/message`
+  - `POST /session/{sessionID}/abort`
+  - `POST /session/{sessionID}/fork`
+  - `POST /session/{sessionID}/revert`
+  - `POST /session/{sessionID}/unrevert`
+  - `POST /session/{sessionID}/summarize`
+  - `POST /session/{sessionID}/shell`
+  - `POST /session/{sessionID}/command`
+  - `POST /session/{sessionID}/share`
+  - `DELETE /session/{sessionID}/share`
+  - `POST /question/{requestID}/reply`
+  - `POST /question/{requestID}/reject`
+  - `POST /permission/{requestID}/reply`
+  - `PUT /auth/{providerID}`
+  - `POST /provider/{providerID}/oauth/authorize`
+  - `POST /provider/{providerID}/oauth/callback`
+  - `POST /global/upgrade`
+  - `GET /event`
+
 ### Changed
 
 - **Breaking:** the `omo-graph`, `omo-work` and `omo-compat` extensions and their `extension/omo-*` branches are
@@ -29,9 +83,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - **Breaking:** the antechamber npm package depends on `omo-ai` at an exact version, and antechamber runs that OmO by
   default. `ANTECHAMBER_PI_BINARY` still selects another agent, and `omo` on PATH is used only when the pinned one is
   not installed.
-- When the extension launches antechamber (`ANTECHAMBER_MANAGED=openchamber-extension`), `POST /global/upgrade`,
-  `antechamber upgrade` and `ANTECHAMBER_AUTO_UPDATE` refuse to touch npm and say to update the extension instead,
-  and `antechamber doctor` gives the same advice.
+- When the extension launches antechamber (`ANTECHAMBER_MANAGED=openchamber-extension`), `antechamber upgrade` and
+  `ANTECHAMBER_AUTO_UPDATE` refuse to touch npm and say to update the extension instead, and `antechamber doctor`
+  gives the same advice.
 - Move the session registry to SQLite with WAL and row-level writes. Existing `sessions.json` registries migrate
   automatically and remain on disk as timestamped backups.
 - **Breaking:** antechamber now runs on Bun 1.4+ instead of Node.js. OmO already requires Bun, and under Bun the

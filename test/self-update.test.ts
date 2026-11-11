@@ -171,49 +171,6 @@ test("fetchLatestVersion rejects bad answers without echoing registry credential
   );
 });
 
-async function upgradeServer(t: TestContext, update: () => Promise<SelfUpdateResult>) {
-  const directory = fs.mkdtempSync(join(tmpdir(), "antechamber-upgrade-route-"));
-  const previous = process.env.ANTECHAMBER_STATE_DIR;
-  process.env.ANTECHAMBER_STATE_DIR = join(directory, "state");
-  const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory, selfUpdate: update });
-  t.after(async () => {
-    await server.stop();
-    if (previous === undefined) delete process.env.ANTECHAMBER_STATE_DIR;
-    else process.env.ANTECHAMBER_STATE_DIR = previous;
-    fs.rmSync(directory, { recursive: true, force: true });
-  });
-  await server.start();
-  return (body: unknown) =>
-    fetch(`${server.url}/global/upgrade`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-}
-
-test("POST /global/upgrade returns the installed antechamber version and ignores the OpenCode target", async (t) => {
-  const post = await upgradeServer(t, async () => ({ updated: true, from: "0.2.2", to: "0.2.3", method: "npm" }));
-  const response = await post({ target: "1.18.23" });
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { success: true, version: "0.2.3", updated: true });
-});
-
-test("POST /global/upgrade maps unsupported installs to 409 and failures to 500", async (t) => {
-  const unsupported = await upgradeServer(t, async () => {
-    throw new SelfUpdateUnsupportedError("not global");
-  });
-  const refused = await unsupported({});
-  assert.equal(refused.status, 409);
-  assert.equal(((await refused.json()) as { name: string }).name, "UnsupportedError");
-
-  const failing = await upgradeServer(t, async () => {
-    throw new Error("npm install -g antechamber@0.2.3 failed");
-  });
-  const failed = await failing({});
-  assert.equal(failed.status, 500);
-  assert.equal(((await failed.json()) as { name: string }).name, "UnknownError");
-});
-
 test("upgrade prints both versions and the package manager", async () => {
   const lines: string[] = [];
   await upgrade(
