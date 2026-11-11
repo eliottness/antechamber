@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-11
+
+- test: remove two races the v2 release run hit
+
 ## [2.0.0] - 2026-11-11
 
 ### Added
