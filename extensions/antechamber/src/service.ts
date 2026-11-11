@@ -3,6 +3,7 @@ import type http from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import { join } from "node:path";
 import { createServer as createGraphServer } from "./graph/routes.ts";
+import { activateLauncher, configuredBinary, openchamberSettingsPath } from "./runtime/activate.ts";
 import {
   defaultDeps,
   ensureRuntime,
@@ -21,6 +22,8 @@ export interface ServiceOptions {
   readonly deps?: InstallDeps;
   /** Install the runtime as soon as the service starts, so OpenChamber's first launch finds it ready. */
   readonly prewarm?: boolean;
+  /** Overrides where OpenChamber's settings.json is looked up (tests). */
+  readonly settingsPath?: string;
 }
 
 export interface RuntimeStatus {
@@ -32,6 +35,10 @@ export interface RuntimeStatus {
   readonly omo?: string;
   readonly dir?: string;
   readonly error?: string;
+  /** OpenChamber's settings.json, when the install location reveals it; `null` for folder installs. */
+  readonly settings: string | null;
+  /** Whether Settings -> OpenCode CLI already names this launcher. */
+  readonly active: boolean;
 }
 
 /**
@@ -53,13 +60,18 @@ export function createService(options: ServiceOptions): http.Server {
       });
     return installing;
   };
+  const launcher = join(options.extensionDir, "bin", "opencode-antechamber");
+  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
   const status = (): RuntimeStatus => {
+    const settingsPath = findSettings();
     const current = runtimeState(options.paths, deps);
     const base = {
       state: installing && current.state !== "ready" ? "installing" : current.state,
       spec: options.paths.spec,
-      launcher: join(options.extensionDir, "bin", "opencode-antechamber"),
+      launcher,
       bun: options.bun ?? null,
+      settings: settingsPath ?? null,
+      active: settingsPath !== undefined && configuredBinary(settingsPath) === launcher,
     } as const;
     if (current.state === "ready")
       return {
@@ -92,6 +104,18 @@ export function createService(options: ServiceOptions): http.Server {
       req.resume();
       if (options.bun) void install();
       return send(res, 202, status());
+    }
+    if (pathname === "/runtime/activate" && req.method === "POST") {
+      req.resume();
+      const settingsPath = findSettings();
+      if (settingsPath === undefined)
+        return send(res, 409, {
+          error: "settings-not-found",
+          detail: "Set Settings -> OpenCode CLI to the launcher by hand.",
+        });
+      if (runtimeState(options.paths, deps).state !== "ready") return send(res, 409, { error: "runtime-not-ready" });
+      const activated = activateLauncher(settingsPath, launcher);
+      return send(res, 200, { ...status(), ...activated });
     }
     return send(res, 404, { error: "not-found" });
   });

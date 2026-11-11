@@ -77,11 +77,10 @@ Needs [Bun](https://bun.sh) 1.4+ on the machine OpenChamber runs on.
 1. In OpenChamber 2.3.2 or newer, open **Settings → Extensions → Add → URL** and
    enter `https://github.com/eliottness/antechamber`.
 2. Approve **sessions** and the **local service** (it runs `bun`).
-3. Open the **OmO** rail panel's settings: the **Runtime** block shows the
-   install and the launcher path,
-   `<OpenChamber data dir>/extensions/antechamber/extensions/antechamber/bin/opencode-antechamber`
-   for the repository URL.
-4. Paste that path into **Settings → OpenCode CLI**.
+3. Open the **OmO** rail panel's settings (the sliders icon). Once the **Runtime** block
+   says antechamber is installed, click **Use as OpenCode CLI**, then **Reload OpenCode**
+   in OpenChamber's OpenCode settings. A folder install shows the launcher path to paste
+   into **Settings → OpenCode CLI** instead.
 
 The launcher installs the antechamber release named by the extension's version,
 and the OmO it pins, into `~/.antechamber/runtime/<version>` the first time it

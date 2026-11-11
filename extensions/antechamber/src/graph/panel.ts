@@ -426,6 +426,8 @@ type RuntimeStatus = {
   antechamber?: string;
   omo?: string;
   error?: string;
+  settings: string | null;
+  active: boolean;
 };
 
 function runtimeLine(status: RuntimeStatus): string {
@@ -436,24 +438,31 @@ function runtimeLine(status: RuntimeStatus): string {
   return `antechamber ${status.spec} is not installed yet.`;
 }
 
-async function showRuntime(install = false) {
+async function showRuntime(action: "status" | "install" | "activate" = "status") {
   const box = $<HTMLElement>("#runtime");
   try {
     const response = await host.serviceRequest({
-      method: install ? "POST" : "GET",
-      path: install ? "/runtime/install" : "/runtime",
+      method: action === "status" ? "GET" : "POST",
+      path: action === "status" ? "/runtime" : `/runtime/${action}`,
     });
     const status = JSON.parse(response.body) as RuntimeStatus;
     box.dataset.state = status.state;
     const retry = el("button", "", status.state === "failed" ? "Retry install" : "Install now");
     retry.type = "button";
-    retry.addEventListener("click", () => void showRuntime(true));
-    const children: HTMLElement[] = [
-      el("strong", "", "Runtime"),
-      el("span", "", runtimeLine(status)),
-      el("span", "", "OpenCode CLI path for Settings → OpenCode CLI:"),
-      el("code", "", status.launcher),
-    ];
+    retry.addEventListener("click", () => void showRuntime("install"));
+    const children: HTMLElement[] = [el("strong", "", "Runtime"), el("span", "", runtimeLine(status))];
+    if (status.active) children.push(el("span", "", "Settings → OpenCode CLI is set to this launcher."));
+    else if (status.state === "ready" && status.settings) {
+      const use = el("button", "", "Use as OpenCode CLI");
+      use.type = "button";
+      use.addEventListener("click", () => void showRuntime("activate"));
+      const row = el("div", "row");
+      row.append(use);
+      children.push(row);
+    } else
+      children.push(el("span", "", "OpenCode CLI path for Settings → OpenCode CLI:"), el("code", "", status.launcher));
+    if (action === "activate" && status.active)
+      children.push(el("span", "", "Saved. Reload OpenCode (Settings → OpenCode) to switch to it."));
     if (status.state === "missing" || status.state === "failed") {
       const row = el("div", "row");
       row.append(retry);

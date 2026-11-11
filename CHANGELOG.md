@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Use as OpenCode CLI** in the OmO panel's Runtime block: once the runtime is installed, one click points
+  OpenChamber's OpenCode CLI setting at the extension's launcher (a backup of `settings.json` is kept), and Reload
+  OpenCode switches to it. Folder installs keep the path to paste.
+
 ## [2.0.1] - 2026-11-11
 
 - test: remove two races the v2 release run hit

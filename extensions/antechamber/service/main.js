@@ -1,6 +1,6 @@
 // extensions/antechamber/src/service-main.ts
-import { chmodSync, readFileSync as readFileSync4 } from "node:fs";
-import { dirname, join as join5, resolve as resolve4 } from "node:path";
+import { chmodSync as chmodSync2, readFileSync as readFileSync5 } from "node:fs";
+import { dirname as dirname2, join as join6, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // extensions/antechamber/src/runtime/runtime.ts
@@ -190,7 +190,7 @@ function defaultDeps() {
 // extensions/antechamber/src/service.ts
 import { timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 
 // extensions/antechamber/src/graph/routes.ts
 import http from "node:http";
@@ -668,21 +668,50 @@ function createServer(token2, makeStore = (r) => new TaskStore(r)) {
   });
 }
 
+// extensions/antechamber/src/runtime/activate.ts
+import { chmodSync, copyFileSync, existsSync as existsSync2, readFileSync as readFileSync3, renameSync as renameSync2, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename, dirname, join as join3 } from "node:path";
+function openchamberSettingsPath(extensionDir2) {
+  for (let dir = extensionDir2; dirname(dir) !== dir; dir = dirname(dir)) {
+    if (basename(dirname(dir)) !== "extensions") continue;
+    const settings = join3(dirname(dirname(dir)), "settings.json");
+    if (existsSync2(settings)) return settings;
+  }
+  return void 0;
+}
+function configuredBinary(settings) {
+  const value = JSON.parse(readFileSync3(settings, "utf8")).opencodeBinary;
+  return typeof value === "string" ? value : void 0;
+}
+function activateLauncher(settings, launcher, now = /* @__PURE__ */ new Date()) {
+  const data = JSON.parse(readFileSync3(settings, "utf8"));
+  if (data.opencodeBinary === launcher) return {};
+  const backup = `${settings}.bak-antechamber-${now.toISOString().replace(/\D/g, "").slice(0, 14)}`;
+  if (!existsSync2(backup)) copyFileSync(settings, backup);
+  const mode = statSync3(settings).mode & 511;
+  const temporary = `${settings}.antechamber-${process.pid}.tmp`;
+  writeFileSync2(temporary, `${JSON.stringify({ ...data, opencodeBinary: launcher }, null, 2)}
+`, { mode });
+  chmodSync(temporary, mode);
+  renameSync2(temporary, settings);
+  return { backup };
+}
+
 // extensions/antechamber/src/work/routes.ts
 import { timingSafeEqual } from "node:crypto";
 import http2 from "node:http";
 import { resolve as resolve3 } from "node:path";
 
 // extensions/antechamber/src/work/discovery.ts
-import { readdirSync as readdirSync3, readFileSync as readFileSync3 } from "node:fs";
+import { readdirSync as readdirSync3, readFileSync as readFileSync4 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 function expandHome2(path) {
   if (path === "~") return homedir3();
-  return path.startsWith("~/") ? join3(homedir3(), path.slice(2)) : path;
+  return path.startsWith("~/") ? join4(homedir3(), path.slice(2)) : path;
 }
 function defaultStateDirs(home = homedir3()) {
-  return [join3(home, ".config", "antechamber"), join3(home, ".config", "openchamber-pi-connector")];
+  return [join4(home, ".config", "antechamber"), join4(home, ".config", "openchamber-pi-connector")];
 }
 function alive(pid) {
   try {
@@ -700,14 +729,14 @@ function discoverServers(stateDirs, isAlive = alive) {
   for (const dir of stateDirs) {
     let names;
     try {
-      names = readdirSync3(join3(dir, "run"));
+      names = readdirSync3(join4(dir, "run"));
     } catch {
       continue;
     }
     for (const name of names) {
       if (!/^\d+\.json$/.test(name)) continue;
       try {
-        const record = JSON.parse(readFileSync3(join3(dir, "run", name), "utf8"));
+        const record = JSON.parse(readFileSync4(join4(dir, "run", name), "utf8"));
         if (record === null || typeof record !== "object") continue;
         const { pid, url, token: token2, started } = record;
         if (typeof pid !== "number" || typeof url !== "string" || typeof token2 !== "string") continue;
@@ -821,13 +850,18 @@ function createService(options) {
     });
     return installing;
   };
+  const launcher = join5(options.extensionDir, "bin", "opencode-antechamber");
+  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
   const status = () => {
+    const settingsPath = findSettings();
     const current = runtimeState(options.paths, deps);
     const base = {
       state: installing && current.state !== "ready" ? "installing" : current.state,
       spec: options.paths.spec,
-      launcher: join4(options.extensionDir, "bin", "opencode-antechamber"),
-      bun: options.bun ?? null
+      launcher,
+      bun: options.bun ?? null,
+      settings: settingsPath ?? null,
+      active: settingsPath !== void 0 && configuredBinary(settingsPath) === launcher
     };
     if (current.state === "ready")
       return {
@@ -860,6 +894,18 @@ function createService(options) {
       if (options.bun) void install();
       return send(res, 202, status());
     }
+    if (pathname === "/runtime/activate" && req.method === "POST") {
+      req.resume();
+      const settingsPath = findSettings();
+      if (settingsPath === void 0)
+        return send(res, 409, {
+          error: "settings-not-found",
+          detail: "Set Settings -> OpenCode CLI to the launcher by hand."
+        });
+      if (runtimeState(options.paths, deps).state !== "ready") return send(res, 409, { error: "runtime-not-ready" });
+      const activated = activateLauncher(settingsPath, launcher);
+      return send(res, 200, { ...status(), ...activated });
+    }
     return send(res, 404, { error: "not-found" });
   });
 }
@@ -871,9 +917,9 @@ if (!port || !token) {
   console.error("OPENCHAMBER_SERVICE_PORT and OPENCHAMBER_SERVICE_TOKEN are required");
   process.exit(1);
 }
-var extensionDir = resolve4(dirname(fileURLToPath(import.meta.url)), "..");
-var { version } = JSON.parse(readFileSync4(join5(extensionDir, "package.json"), "utf8"));
-chmodSync(join5(extensionDir, "bin", "opencode-antechamber"), 493);
+var extensionDir = resolve4(dirname2(fileURLToPath(import.meta.url)), "..");
+var { version } = JSON.parse(readFileSync5(join6(extensionDir, "package.json"), "utf8"));
+chmodSync2(join6(extensionDir, "bin", "opencode-antechamber"), 493);
 var env = defaultEnv();
 createService({
   token,
