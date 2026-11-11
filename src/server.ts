@@ -24,6 +24,7 @@ import { FileWatchRegistry } from "./file-watch.js";
 import { getCommands } from "./session-commands.js";
 import type { PiRpcClient } from "./pi-rpc.js";
 import { TextGeneration } from "./text-generation.js";
+import { LatencyMonitor } from "./latency.js";
 
 export { isLoopbackHost, serverPassword } from "./http.js";
 
@@ -57,6 +58,7 @@ export class AdapterServer {
   private readonly fileWatches = new FileWatchRegistry((directory, event) => this.broadcast(directory, event));
   private readonly pendingRefreshes = new Set<Promise<void>>();
   private readonly textGeneration = new TextGeneration();
+  private readonly latency = new LatencyMonitor();
   private stopping = false;
   private actualPort: number | undefined;
   /** Bearer token for the `/antechamber/work-status` routes, published in the run record for the OmO Work extension. */
@@ -210,6 +212,7 @@ export class AdapterServer {
     });
     const addr = this.server.address();
     this.actualPort = typeof addr === "object" && addr !== null ? addr.port : this.options.port;
+    this.latency.start();
   }
 
   get url(): string {
@@ -223,6 +226,7 @@ export class AdapterServer {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.latency.stop();
     await this.textGeneration.dispose();
     await Promise.all([...this.pendingRefreshes]);
     const branchWatchers = [...this.branchWatchers.values()];
@@ -399,7 +403,7 @@ export class AdapterServer {
 
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     debugLog(`[http] ${req.method} ${(req.url ?? "/").split("?")[0]}`);
-    await this.http.route(req, res, () => this.handle(req, res));
+    await this.latency.request(req, res, () => this.http.route(req, res, () => this.handle(req, res)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -11,7 +11,7 @@ inputs and do not have `ANTECHAMBER_` or `OCPI_` aliases.
 
 | Variable | Legacy name | Default | Description |
 |---|---|---|---|
-| `ANTECHAMBER_PI_BINARY` | `OCPI_PI_BINARY` | `omo` (resolved on `PATH`) | Agent executable antechamber spawns per session. OmO is the supported default; set `pi` (or a path to it) to use plain pi on a best-effort basis. |
+| `ANTECHAMBER_PI_BINARY` | `OCPI_PI_BINARY` | the `omo-ai` antechamber depends on (`node_modules/omo-ai/bin/omo.js`), else `omo` on `PATH` | Agent executable antechamber spawns per session. OmO is the supported default, and each antechamber release pins the `omo-ai` version it was tested with; set `pi` (or a path to it) to use plain pi on a best-effort basis, or a path to another OmO to run that one |
 | `ANTECHAMBER_PI_ARGS` | `OCPI_PI_ARGS` | (none) | Extra arguments passed to the agent binary, split on whitespace. |
 | `ANTECHAMBER_STATE_DIR` | `OCPI_STATE_DIR` | `~/.config/antechamber` | Directory for the session registry, archived child transcripts, and inline prompt attachments the agent RPC cannot carry natively (`attachments/`, such as uploaded PDFs; not cleaned up automatically). Falls back to `~/.config/openchamber-pi-connector` automatically when only that legacy directory exists, so existing session mappings survive an upgrade. `serve` also writes `run/<pid>.json` here (0600): its version and URL for `antechamber doctor`, and the token the OmO Work extension uses. Extension services do not see this variable; enter a custom value in the OmO Work and OmO Graph data-path settings. |
 | `ANTECHAMBER_AGENT` | `OCPI_AGENT` | detected | Agent name antechamber advertises to OpenChamber. If unset, detected from `oh-my-pi.jsonc` next to the agent directory (`orchestrator.agentName`; `//` and `/* */` comments allowed), then `OmO` if `omo.jsonc` sits next to the agent directory (a standard OmO install), then `oh-my-pi` if that package is listed in `<agent dir>/settings.json`, then `build`. |
@@ -19,7 +19,12 @@ inputs and do not have `ANTECHAMBER_` or `OCPI_` aliases.
 | `ANTECHAMBER_MAX_LIVE` | `OCPI_MAX_LIVE` | `8` | Maximum number of concurrently live agent processes. Must be a positive integer. |
 | `ANTECHAMBER_DEBUG` | `OCPI_DEBUG` | unset (disabled) | Any non-empty value enables request/event debug logging. |
 | `ANTECHAMBER_DEBUG_LOG` | `OCPI_DEBUG_LOG` | `<os tmpdir>/antechamber-debug-<uid>.log` (created mode `0600`) | Path for the debug log when `ANTECHAMBER_DEBUG` is set. A write failure disables logging for the rest of the process and prints one warning; it never crashes the server. |
+| `ANTECHAMBER_EVENT_LOOP_LAG_MS` | `OCPI_EVENT_LOOP_LAG_MS` | `250` | Event loop delay threshold in milliseconds. A timer samples drift every 100 ms and prints one warning to stderr per delayed sample above the threshold. Must be a positive finite number; invalid values use the default. |
+| `ANTECHAMBER_SLOW_REQUEST_MS` | `OCPI_SLOW_REQUEST_MS` | `1000` | HTTP handler duration threshold in milliseconds. Slower requests print a warning to stderr with method, route pattern, status and duration. Query strings and path identifiers are omitted; unknown routes use `unmatched`. SSE measures stream setup rather than connection lifetime. Must be a positive finite number; invalid values use the default. |
 | `ANTECHAMBER_AUTO_UPDATE` | `OCPI_AUTO_UPDATE` | unset | `1` makes `serve` check npm for a newer antechamber after it starts listening and install it in the background with the package manager that owns the global install; the new version runs from the next start. Failures and unsupported installs (source checkout, `npx`) are logged to stderr and never stop the server. The launcher written by `antechamber setup --auto-update` sets it, and also puts the directory of the Bun that ran `setup` on PATH for the CLI's `bun` shebang. The installer is the `npm` beside the running `bun` (else `npm` on PATH) or `$BUN_INSTALL/bin/bun` (default `~/.bun`, else `bun` on PATH), so a service PATH without those directories still works. The version lookup reads `npm_config_registry` (credentials in it are stripped) but not `.npmrc`. |
+| `ANTECHAMBER_MANAGED` | `OCPI_MANAGED` | unset | Set to `openchamber-extension` by the OpenChamber extension's launcher. Self-update (`POST /global/upgrade`, `antechamber upgrade`, `ANTECHAMBER_AUTO_UPDATE`) then refuses to run npm or bun and points at the extension's Update, and `antechamber doctor` gives the same advice. |
+| `ANTECHAMBER_RUNTIME_DIR` | none | `~/.antechamber/runtime` | Read by the OpenChamber extension's launcher (`extensions/antechamber/bin/opencode-antechamber`), not by the server: where it installs each antechamber runtime, one directory per version. The extension's service does not see OpenChamber's environment and always uses the default. |
+| `ANTECHAMBER_RUNTIME_SPEC` | none | unset | Read by the extension's launcher: a local antechamber tarball (`npm pack`) or folder to install and run instead of the release the extension pins. For development and CI. |
 | `ANTECHAMBER_OPENCODE_COMPAT_VERSION` | `OCPI_OPENCODE_COMPAT_VERSION` | unset | Overrides the OpenCode version antechamber reports in `GET /global/health` and `GET /api/info`. Unset, `/global/health` omits `version`, so OpenChamber 1.x's update checker reports no available update, and `/api/info` reports `2.1.0`, the minimum OpenCode version OpenChamber 2.5.2 accepts. OpenChamber 2.3.2 compares that value with the latest OpenCode release and can show an "OpenCode update" notice whose Update button upgrades antechamber; see [Upgrade, uninstall and rollback](../README.md#upgrade-uninstall-and-rollback). |
 | `OMO_CODING_AGENT_DIR` | `SENPI_CODING_AGENT_DIR`, `PI_CODING_AGENT_DIR` (read directly, in that order, matching OmO; no `ANTECHAMBER_`/`OCPI_` prefix) | `~/.omo/agent` (`~/.pi/agent` when the backend binary is `pi`) | Agent state directory: sessions, child transcripts, and config discovery (agent name, models). |
 | `OMO_RPC_CLIENT_CAPABILITIES` | none | inherited, then adapter additions | Comma-separated RPC client capabilities inherited from the environment. Antechamber merges this list first with `SENPI_RPC_CLIENT_CAPABILITIES`, trims and deduplicates entries, then adds `auto_title_sessions` and `question`; it writes the combined list to both variables for the agent process. |
@@ -28,6 +33,27 @@ inputs and do not have `ANTECHAMBER_` or `OCPI_` aliases.
 Non-prefixed CLI flags (`--port`, `--host`/`--hostname`, `--directory`) are
 set on the command line, not through environment variables; see the README's
 Quick start section and `antechamber --help`.
+
+## Session registry
+
+The state directory stores adapter metadata in `sessions.sqlite`, using SQLite WAL
+files `sessions.sqlite-wal` and `sessions.sqlite-shm`. The directory has mode `0700`
+and database files have mode `0600`. Each session is a row; a batch commits only its
+changed rows in one transaction. Other adapter processes using the same directory
+see committed changes on their next read.
+
+On first use, an empty database imports valid records from `sessions.json` in one
+transaction. After commit, the original file is renamed to
+`sessions.json.migrated-<timestamp>-<pid>` and retained with mode `0600`.
+A durable migration marker prevents a second import, including after all sessions
+are removed, and lets a restart finish a rename interrupted after commit.
+Malformed JSON stays untouched so it can be repaired. Native OmO transcripts remain
+JSONL files in the agent directory.
+
+For backups of a running adapter, use SQLite's backup facility or stop every adapter
+sharing the state directory before copying the database. Copying only the main file
+while WAL writers are active can omit committed changes. Retain the migrated JSON
+backup if you need to inspect the original metadata.
 
 ## OpenChamber setup
 
@@ -114,5 +140,5 @@ If you have an existing deployment:
    default) is picked up automatically as long as `~/.config/antechamber`
    doesn't exist yet. Once you're ready to drop the legacy path entirely,
    move the directory: `mv ~/.config/openchamber-pi-connector ~/.config/antechamber`.
-4. There is no change needed to session data or registry file formats; the
-   rename only affects names, not content.
+4. Native session data needs no changes. The adapter automatically imports the
+   legacy JSON registry into SQLite as described above.

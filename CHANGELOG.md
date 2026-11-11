@@ -17,6 +17,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
   that release pins, into `~/.antechamber/runtime/<version>`; the extension's service installs it ahead of time when a
   panel opens. Updating the extension in Settings → Extensions updates antechamber and OmO together, and OpenChamber's
   own Update action points there. `ANTECHAMBER_RUNTIME_DIR` and `ANTECHAMBER_RUNTIME_SPEC` move or replace the runtime.
+- Warn when the event loop is blocked for more than 250 ms or an HTTP request takes more than 1000 ms.
+  Configure these thresholds with `ANTECHAMBER_EVENT_LOOP_LAG_MS` and `ANTECHAMBER_SLOW_REQUEST_MS`.
+  Request warnings use route patterns and omit query strings and path identifiers.
 
 ### Changed
 
@@ -29,6 +32,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - When the extension launches antechamber (`ANTECHAMBER_MANAGED=openchamber-extension`), `POST /global/upgrade`,
   `antechamber upgrade` and `ANTECHAMBER_AUTO_UPDATE` refuse to touch npm and say to update the extension instead,
   and `antechamber doctor` gives the same advice.
+- Move the session registry to SQLite with WAL and row-level writes. Existing `sessions.json` registries migrate
+  automatically and remain on disk as timestamped backups.
 - **Breaking:** antechamber now runs on Bun 1.4+ instead of Node.js. OmO already requires Bun, and under Bun the
   server starts about 3 times faster and idles at about half the memory. `dist/cli.js` has a `bun` shebang,
   `bin/opencode-antechamber` finds Bun on PATH, in `$BUN_INSTALL/bin` or in `~/.bun/bin`, and `antechamber doctor`
