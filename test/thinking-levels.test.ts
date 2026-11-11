@@ -84,9 +84,7 @@ test("v2 session record follows the applied thinking level", async (t) => {
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
   t.after(() => server.stop());
   await server.start();
-  const session = (await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
-    id: string;
-  };
+  const session = await server["sessions"].create(directory);
   // OpenChamber 2.x restores a reopened session's effort from this record and resends it.
   const recordAfter = async (model: { providerID: string; id: string; variant: string }) => {
     const selected = await fetch(`${server.url}/api/session/${session.id}/model`, {
@@ -118,9 +116,7 @@ test("a cold-restored v2 session record reports the model and level its file las
   await first.start();
   const ids: string[] = [];
   for (let i = 0; i < 2; i++) {
-    const session = (await (await fetch(`${first.url}/session`, { method: "POST", body: "{}" })).json()) as {
-      id: string;
-    };
+    const session = await first["sessions"].create(directory);
     const selected = await fetch(`${first.url}/api/session/${session.id}/model`, {
       method: "POST",
       body: JSON.stringify({ model: { providerID: "fake", id: "mapped", variant: "high" } }),
@@ -171,9 +167,7 @@ test("a revived session's v2 record reports the level OmO resumed with", async (
   let firstStopped = false;
   t.after(() => (firstStopped ? undefined : first.stop()));
   await first.start();
-  const session = (await (await fetch(`${first.url}/session`, { method: "POST", body: "{}" })).json()) as {
-    id: string;
-  };
+  const session = await first["sessions"].create(directory);
   await first.stop();
   firstStopped = true;
 
@@ -187,11 +181,7 @@ test("a revived session's v2 record reports the level OmO resumed with", async (
   };
   // The fake's file records no level, so the dormant record has none until OmO resumes the session.
   assert.deepEqual(await record(), { id: "fake-model", providerID: "fake", variant: "default" });
-  const prompted = await fetch(`${second.url}/session/${session.id}/message`, {
-    method: "POST",
-    body: JSON.stringify({ parts: [{ type: "text", text: "REVIVE" }] }),
-  });
-  assert.equal(prompted.status, 200);
+  await second["sessions"].prompt(session.id, "REVIVE");
   assert.deepEqual(await record(), { id: "fake-model", providerID: "fake", variant: "medium" });
 });
 
@@ -327,41 +317,29 @@ test("user messages carry the applied thinking level live and after a cold resta
   const { directory } = setup(t);
   // OpenChamber restores its effort picker from the latest user message's `model.variant`;
   // without it every reopened session falls back to the agent default and resends it.
-  const userVariants = async (url: string, id: string): Promise<Array<string | undefined>> => {
-    const response = await fetch(`${url}/session/${id}/message`);
-    assert.equal(response.status, 200);
-    const messages = (await response.json()) as Array<{ info: { role: string; model?: { variant?: string } } }>;
-    return messages.filter((m) => m.info.role === "user").map((m) => m.info.model?.variant);
-  };
+  const userVariants = (manager: SessionManager, id: string): Array<string | undefined> =>
+    (manager.messages(id) ?? []).flatMap((message) =>
+      message.info.role === "user" ? [message.info.model.variant] : [],
+    );
   const first = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
   let firstStopped = false;
   t.after(() => (firstStopped ? undefined : first.stop()));
   await first.start();
-  const session = (await (await fetch(`${first.url}/session`, { method: "POST", body: "{}" })).json()) as {
-    id: string;
-  };
+  const session = await first["sessions"].create(directory);
   for (const [text, variant] of [
     ["FIRST", "low"],
     ["SECOND", "high"],
   ] as const) {
-    const response = await fetch(`${first.url}/session/${session.id}/message`, {
-      method: "POST",
-      body: JSON.stringify({
-        model: { providerID: "fake", modelID: "fake-model" },
-        variant,
-        parts: [{ type: "text", text }],
-      }),
-    });
-    assert.equal(response.status, 200);
+    await first["sessions"].prompt(session.id, text, { providerID: "fake", modelID: "fake-model", variant });
   }
-  assert.deepEqual(await userVariants(first.url, session.id), ["low", "high"]);
+  assert.deepEqual(await userVariants(first["sessions"], session.id), ["low", "high"]);
   await first.stop();
   firstStopped = true;
 
   const second = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
   t.after(() => second.stop());
   await second.start();
-  assert.deepEqual(await userVariants(second.url, session.id), ["low", "high"]);
+  assert.deepEqual(await userVariants(second["sessions"], session.id), ["low", "high"]);
 });
 
 test("injected and compaction user messages carry the applied thinking level", { timeout: 15_000 }, async (t) => {
@@ -391,28 +369,17 @@ test("injected and compaction user messages carry the applied thinking level", {
 
 for (const [route, body] of [
   ["api-model", { model: { providerID: "fake", id: "fake-model", variant: "low" } }],
-  [
-    "v1-message",
-    {
-      model: { providerID: "fake", modelID: "fake-model" },
-      variant: "low",
-      parts: [{ type: "text", text: "V1_SELECTION" }],
-    },
-  ],
-  ["v1-variant-only", { variant: "low", parts: [{ type: "text", text: "VARIANT_ONLY" }] }],
 ] as const) {
   test(`${route} forwards the selected thinking level`, async (t) => {
     const { directory } = setup(t);
     const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
     t.after(() => server.stop());
     await server.start();
-    const session = (await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
-      id: string;
-    };
-    const path = route === "api-model" ? `/api/session/${session.id}/model` : `/session/${session.id}/message`;
+    const session = await server["sessions"].create(directory);
+    const path = `/api/session/${session.id}/model`;
     const response = await fetch(server.url + path, { method: "POST", body: JSON.stringify(body) });
-    assert.equal(response.status, route === "api-model" ? 204 : 200);
-    const messages = await fetch(`${server.url}/session/${session.id}/message`);
+    assert.equal(response.status, 204);
+    const messages = await fetch(`${server.url}/api/session/${session.id}/message`);
     assert.equal(messages.status, 200);
     // Use the same fake's session JSONL to observe the RPC command, not UI state.
     const files = readdirSync(directory).filter((file) => file.endsWith(".jsonl"));

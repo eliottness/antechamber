@@ -36,11 +36,23 @@ interface ErrorBody {
   data: { message: string };
 }
 const errorOf = async (response: Response) => (await response.json()) as ErrorBody;
-const listOf = async (response: Response) => (await response.json()) as string[];
+const listOf = async (response: Response): Promise<unknown[]> => {
+  const body: unknown = await response.json();
+  if (Array.isArray(body)) return body;
+  assert.ok(body !== null && typeof body === "object" && "data" in body && Array.isArray(body.data));
+  return body.data;
+};
 
 const basic = (user: string, password: string) => `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
 
-for (const path of ["/global/health", "/event", "/global/event", "/api/event", "/session/missing/shell", "/api/info"]) {
+for (const path of [
+  "/global/health",
+  "/api/global/event",
+  "/api/global/event",
+  "/api/event",
+  "/session/missing/shell",
+  "/api/info",
+]) {
   test(`password protects ${path} before routing`, async (t) => {
     setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
     const { server } = await start(t);
@@ -159,14 +171,14 @@ test("allowlist and authorized preflight use explicit CORS origins", async (t) =
   setting(t, "ANTECHAMBER_ALLOWED_ORIGINS", " https://trusted.example, https://second.example ");
   setting(t, "OPENCODE_SERVER_PASSWORD", "secret");
   const { server } = await start(t);
-  const response = await fetch(`${server.url}/event`, {
+  const response = await fetch(`${server.url}/api/event`, {
     method: "OPTIONS",
     headers: { Origin: "https://trusted.example", Authorization: basic("opencode", "secret") },
   });
   assert.equal(response.status, 204);
   assert.equal(response.headers.get("access-control-allow-origin"), "https://trusted.example");
   assert.match(response.headers.get("access-control-allow-headers") ?? "", /Authorization/i);
-  assert.equal((await fetch(`${server.url}/event`, { method: "OPTIONS" })).status, 401);
+  assert.equal((await fetch(`${server.url}/api/event`, { method: "OPTIONS" })).status, 401);
 });
 
 test("requests without Origin do not get wildcard CORS", async (t) => {
@@ -175,10 +187,10 @@ test("requests without Origin do not get wildcard CORS", async (t) => {
 });
 
 for (const body of ["{", "null", "[]", "true", '"text"', "42"]) {
-  for (const path of ["/session", "/api/project/example"]) {
+  for (const path of ["/api/session", "/api/project/example"]) {
     test(`invalid object body ${body} returns 400 at ${path}`, async (t) => {
       const { server } = await start(t);
-      const response = await fetch(server.url + path, { method: path === "/session" ? "POST" : "PATCH", body });
+      const response = await fetch(server.url + path, { method: path === "/api/session" ? "POST" : "PATCH", body });
       assert.equal(response.status, 400);
       const error = await errorOf(response);
       assert.deepEqual(Object.keys(error).sort(), ["data", "name"]);
@@ -253,7 +265,7 @@ test("SSE caps all protocol subscriptions and releases disconnected slots", { ti
   const streams: Response[] = [];
   const clients = server["sseClients"];
   for (let i = 0; i < 64; i++) {
-    const path = i % 2 === 0 ? "/event" : "/api/event";
+    const path = i % 2 === 0 ? "/api/global/event" : "/api/event";
     const response = await fetch(server.url + path, { signal: AbortSignal.timeout(10_000) });
     assert.equal(response.status, 200);
     streams.push(response);
@@ -262,7 +274,7 @@ test("SSE caps all protocol subscriptions and releases disconnected slots", { ti
     assert.ok(res);
     responses.push(res);
   }
-  const overflow = await fetch(`${server.url}/global/event`);
+  const overflow = await fetch(`${server.url}/api/global/event`);
   assert.equal(overflow.status, 503);
   const first = responses[0];
   assert.ok(first);
@@ -276,7 +288,7 @@ test("SSE caps all protocol subscriptions and releases disconnected slots", { ti
   await Promise.all(streams.slice(1).map((stream) => stream.body?.cancel()));
 });
 
-for (const path of ["/event", "/api/event"]) {
+for (const path of ["/api/global/event", "/api/event"]) {
   test(`SSE ${path} drops a blocked subscriber beyond the pending byte cap`, async (t) => {
     const { server, directory } = await start(t);
     const response = await fetch(server.url + path);
@@ -303,7 +315,7 @@ for (const path of ["/event", "/api/event"]) {
 
 test("SSE drops a subscriber when HTTP framing takes its pending bytes over the cap", async (t) => {
   const { server } = await start(t);
-  const response = await fetch(`${server.url}/event`);
+  const response = await fetch(`${server.url}/api/event`);
   assert.equal(response.status, 200);
   const res = [...server["sseClients"].keys()][0];
   assert.ok(res);
@@ -323,8 +335,8 @@ test("file search stops beyond the maximum directory depth", async (t) => {
     mkdirSync(nested);
   }
   writeFileSync(join(nested, "too-deep.txt"), "");
-  const response = await fetch(`${server.url}/find/file?query=too-deep&dirs=false`);
-  assert.deepEqual(await response.json(), []);
+  const response = await fetch(`${server.url}/api/fs/find?query=too-deep&dirs=false`);
+  assert.deepEqual(await listOf(response), []);
 });
 
 test("directory listing and requested file search results are capped", async (t) => {
@@ -332,7 +344,7 @@ test("directory listing and requested file search results are capped", async (t)
   for (let i = 0; i < 1010; i++) writeFileSync(join(directory, `match-${i}.txt`), "");
   const listing = await listOf(await fetch(`${server.url}/file`));
   assert.equal(listing.length, 1000);
-  const matches = await listOf(await fetch(`${server.url}/find/file?query=match&limit=99999`));
+  const matches = await listOf(await fetch(`${server.url}/api/fs/find?query=match&limit=99999`));
   assert.equal(matches.length, 1000);
 });
 
@@ -347,14 +359,14 @@ test("file search bounds visited directories even when the result cap is not rea
       writeFileSync(join(child, "needle.txt"), "");
     }
   }
-  const matches = await listOf(await fetch(`${server.url}/find/file?query=needle&dirs=false&limit=1000`));
+  const matches = await listOf(await fetch(`${server.url}/api/fs/find?query=needle&dirs=false&limit=1000`));
   assert.ok(matches.length > 0);
   assert.ok(matches.length < 1000);
 });
 
 for (const [method, path, status, name] of [
-  ["POST", "/global/upgrade", 409, "UnsupportedError"],
-  ["PATCH", "/config", 400, "UnsupportedError"],
+  ["POST", "/global/upgrade", 404, "NotFoundError"],
+  ["PATCH", "/config", 404, "NotFoundError"],
   ["GET", "/missing", 404, "NotFoundError"],
   ["GET", "/api/session/missing", 404, "NotFoundError"],
 ] as const) {

@@ -1,13 +1,9 @@
 # OpenCode API surface implemented by antechamber
 
-The SDK call-site notes below are based on `reference/openchamber` (shallow
-clone of `main`, 2026-09-20). Route behavior is checked against the current
-adapter source and the maintained inventory below. Sources:
-
-- `packages/ui/src/sync/event-reducer.ts`: authoritative SSE event contract.
-- `packages/ui/src/sync/session-actions.ts`, `bootstrap.ts`,
-  `stores/globalSessions.ts`, `lib/api/`: SDK call sites via
-  `@opencode-ai/sdk/v2`.
+Supported frontend: **OpenChamber 2.3.2+**. The caller audit uses the 2.3.2 and
+2.7.0 source trees and installed 2.5.3 build. OpenChamber 2.x uses the
+`@opencode/client` `/api/*` contract; unprefixed routes listed here remain
+only for verified compatibility probes or uncertain callers.
 
 The HTTP inventory below is maintained against `src/routes-v1.ts`,
 `src/routes-v2.ts`, `src/misc-routes.ts`, and `src/server.ts`. Each row gives
@@ -28,34 +24,11 @@ invented resource IDs.
 | Route | Success | Response or behavior |
 |---|---:|---|
 | `GET /global/health` | 200 | JSON `{healthy: true}` and optional configured compatibility `version`. |
-| `GET /global/upgrade` | 409 | `UnsupportedError`; upgrades use `POST`. Static-only. |
-| `GET /session` | 200 | `OCSession[]`; accepts `directory` and `archived` filters. |
-| `POST /session` | 200 | Created `OCSession`. |
-| `GET /session/status` | 200 | Map of session IDs to status objects. |
-| `GET /project/current` | 200 | Current `OCProject`. |
-| `GET /project` | 200 | Array containing the current `OCProject`. |
-| `GET /config` | 200 | OpenCode-compatible configuration object. |
-| `GET /global/config` | 200 | Same configuration object as `/config`. |
-| `GET /provider` | 200 | `{all, default, connected}` provider catalog. |
-| `GET /config/providers` | 200 | `{providers, default}` provider catalog. |
-| `GET /experimental/session` | 200 | Sessions sorted by update time; supports directory, roots, cursor, and limit. `archived=false` excludes archived sessions; `archived=true` does not filter to archived-only. |
-| `GET /question` | 200 | Pending v1 question cards. |
-| `GET /permission` | 200 | Pending v1 permission cards. |
+| `GET /global/upgrade` | 409 | `UnsupportedError`; use the `upgrade` CLI command. static-only. |
 | `GET /skill` | 200 | Empty array; skill inventory is unavailable. |
-| `GET /lsp` | 200 | Empty array; LSP status is unavailable. |
 | `GET /formatter` | 200 | Empty array; formatter inventory is unavailable. |
-| `GET /experimental/tool/ids` | 200 | Empty array; experimental tool inventory is unavailable. |
-| `GET /provider/auth` | 200 | Empty object; provider authentication state is unavailable. |
 | `GET /mcp` | 200 | `{name: McpStatus}` from RPC `get_loaded_surfaces` on the most recently used live session in the directory, else on the most recently used live session in any directory, else on a short-lived `--no-session` agent started for the read (cached 30 s); empty object only when that agent cannot start or OmO has no such RPC. |
-| `GET /command` | 200 | Agent slash-command descriptors. |
-| `GET /path` | 200 | Home, state, config, worktree, and directory paths. |
-| `GET /vcs` | 200 | `{branch, default_branch}` for the selected directory. |
-| `GET /agent` | 200 | Supported agent descriptors. |
 | `GET /file` | 200 | Directory entries confined to the selected session directory. |
-| `GET /find/file` | 200 | Matching relative paths, confined to the selected session directory. |
-| `PATCH /config` | 400 | `UnsupportedError`; configure providers in OmO. Unsupported. |
-| `POST /experimental/control-plane/move-session` | 400 | `UnsupportedError`; configure session directories in OmO. Unsupported. |
-| `GET /global/event` | 200 | Global v1 SSE stream; see [SSE and WebSocket streams](#sse-and-websocket-streams). |
 | `GET /api/info` | 200 | OpenCode API version, process ID, server URL, and temporary path. |
 | `GET /api/location` | 200 | Current directory and project location. |
 | `GET /api/config` | 200 | Bare `ConfigEntry[]` (OpenCode 2.x contract): one `{type: "document", path: "antechamber", info: {default_agent}}` entry that OpenChamber folds with `mergeConfigDocuments`. |
@@ -104,36 +77,13 @@ invented resource IDs.
 
 | Method | Path | Success | Response or behavior |
 |---|---|---:|---|
-| GET | `/session/{sessionID}` | 200 | Session record; 404 if unknown. |
-| PATCH | `/session/{sessionID}` | 200 | Updated session record; supports title, archive time, and metadata. |
-| DELETE | `/session/{sessionID}` | 200 | Session removal result. |
-| GET | `/session/{sessionID}/message` | 200 | Message list; optional `limit` returns the newest bounded page. When older messages remain, the `x-next-cursor` header carries the page's oldest message ID; pass it back as `before` to fetch the page that precedes it. A page extends back to the user parents referenced by its replies, even when it already contains a compaction turn. A page with no non-compaction user prompt otherwise extends back to the preceding non-compaction prompt, preserving the whole native turn even when it spans several compaction display turns. Either extension can exceed `limit`. An unknown `before` returns `[]`. |
 | GET | `/session/{sessionID}/message/{messageID}` | 200 | One message; 404 if unknown. |
 | GET | `/session/{sessionID}/children` | 200 | Direct child sessions. |
-| GET | `/session/{sessionID}/todo` | 200 | Session todo items. |
 | GET | `/session/{sessionID}/diff` | 200 | Unified diff for the session. |
-| POST | `/session/{sessionID}/prompt_async` | 204 | Admits a prompt asynchronously; requires an array of text, file, and agent parts, optional `delivery: "steer" \| "queue"`, and a client message ID. Missing/non-array `parts` or an empty native prompt (no non-whitespace text, file content, image, or agent mention) returns 400 `{name: "InvalidRequestError", data: {message}}` before admission or agent activity, including with `noReply: true`. `noReply: true` admits the message into the native conversation without a turn, like v2 synthetic context. |
-| POST | `/session/{sessionID}/message` | 200 | Message record after prompt admission; requires the same rich v1 parts and returns the same typed 400 for missing/non-array `parts` or an empty native prompt, including with `noReply: true`. |
-| POST | `/session/{sessionID}/abort` | 200 | Boolean abort result. |
-| POST | `/session/{sessionID}/fork` | 200 | Forked session record; optional `messageID` selects the fork boundary (a user message is excluded, an assistant reply is kept). |
-| POST | `/session/{sessionID}/revert` | 200 | Session record with staged revert state; requires a user-message `messageID`. |
-| POST | `/session/{sessionID}/unrevert` | 200 | Session record after restoring the saved leaf. |
-| POST | `/session/{sessionID}/summarize` | 200 | Boolean success after compaction; 400 if compaction cannot run. A compaction OmO cancels without a user abort (e.g. its tool set changed while MCP servers connected) is retried up to twice. |
-| POST | `/session/{sessionID}/shell` | 200 | Shell message; 400 for invalid input and 409 if the session is busy. |
-| POST | `/session/{sessionID}/command` | 200 | Slash-command message envelope; 400 if the command is missing. |
-| POST | `/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
-| DELETE | `/session/{sessionID}/share` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/question/{requestID}/reply` | 200 | `true` after native acknowledgment; 404 unknown/settled, 409 native refusal. |
-| POST | `/question/{requestID}/reject` | 200 | `true` after native acknowledgment; 404 unknown/settled, 409 native refusal. |
-| POST | `/permission/{requestID}/reply` | 200 | `true` after reply; 404 unknown or invalid request. |
-| PUT | `/auth/{providerID}` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/provider/{providerID}/oauth/authorize` | 400 | `UnsupportedError`. Unsupported. |
-| POST | `/provider/{providerID}/oauth/callback` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/mcp/{name}/auth` | 200 | `{authorizationUrl, oauthState}` announced by OmO's native `/mcp auth {name}` in the directory's live session, else in an agent started for this flow alone; the flow then finishes inside OmO (loopback callback, token exchange, reconnect). 400 when that agent cannot start, on an OmO error or when no URL appears within 30 s; 404 for an unknown server. |
 | POST | `/mcp/{name}/auth/authenticate` | 200 | `McpStatus` after the same native flow completes (OmO opens the browser itself); joins a flow already running for that server. Same errors as `/mcp/{name}/auth`, plus 400 when OmO parked the flow for a pasted code. Both routes return 409 while a different auth flow for the server is running in the same agent; concurrent identical requests share one flow. |
 | POST or DELETE | `/mcp/{name}/connect`, `/mcp/{name}/disconnect`, DELETE `/mcp/{name}/auth` | 400 | `UnsupportedError`. Unsupported. |
 | POST | `/mcp/{name}/auth/callback` | 200 | `McpStatus` once `{code}` (a bare code or the whole redirect URL) finishes the pending flow. A flow still waiting on OmO's loopback listener receives the redirect there; a parked flow (`mcp.oauthCallbackUrl` set) is finished with `/mcp auth-complete {name} {redirect}`. A bare code is rebuilt from the authorization request's `redirect_uri` and `state`. 400 when nothing is pending or OmO rejects the response. |
-| POST | `/global/upgrade` | 200 | Upgrades antechamber itself to the latest npm release (the OpenCode `target` is ignored) and returns `{success: true, version, updated}`; OpenChamber 1.x then restarts the process. 409 `UnsupportedError` when this is not a global npm/bun install or `npm root -g` cannot run; registry and installer failures are `UnknownError` 500 without installer output or registry credentials. |
 | GET | `/api/agent/{agentID}` | 200 | `{location, data: Agent}`; 404 for an unknown agent. |
 | PATCH | `/api/project/{projectID}` | 400 | `UnsupportedError`; project updates are unavailable with OmO. Unsupported. |
 | DELETE | `/api/credential/{credentialID}` | 204 | Idempotent no-op; no credentials are retained. |
@@ -203,17 +153,13 @@ invented resource IDs.
 
 | Method | Path | Success | Response or behavior |
 |---|---|---:|---|
-| GET | `/event` | 200 | Directory-scoped v1 SSE; events keep their raw v1 shape. |
-| GET | `/global/event` | 200 | Global v1 SSE; broadcast event frames wrap events as `{directory, project, payload}`. |
 | GET | `/api/event` | 200 | v2 SSE envelopes with `location` and `data`. Without a directory selector the stream is global (OpenChamber 2.3.2 opens it that way), live and on `Last-Event-ID` replay; `?directory=` or `x-opencode-directory` scopes it. `permission.asked` carries the same v2 card as `GET /api/permission/request`; `session.created` includes the session's `model` and precedes any model-selection event; OmO's `compaction_progress` fragments arrive as `session.compaction.delta {sessionID, text}` (none when OmO sends no partial text). Catalog changes are pushed when they really happen: `project.updated` when a session opens in a new directory; `provider.updated` and `model.updated` when the catalog changes; `command.updated` when a directory's OmO commands change; `vcs.branch.updated {branch?}` when a read directory's Git HEAD moves (watched, no polling). A finished turn re-reads providers, models and commands through that session's running agent; with no live agent only reads of `/api/provider`, `/api/model` or `/api/command` refresh, at most once a minute, so no OmO process is started on a timer. |
+| GET | `/api/global/event` | 200 | Alias of `/api/event`, with the same scope and replay contract. |
 | WebSocket | `/api/global/event/ws` | 101 | Global event stream; sends `ready`, then event frames with directory and payload; `lastEventId` replays retained events. |
 
-The v1 local `/event` stream is not wrapped and remains data-only. The global
-v1 stream wraps its initial connection event and subsequent events; subsequent
-event frames carry an `id:` line and nested payload. The v2 SSE stream carries
-event IDs and replays retained events after `Last-Event-ID`. Replay storage is
-bounded to the most recent 1,024 records in process memory; reconnectable
-global v1 and v2 frames use event IDs, while local v1 frames do not. V2 event
+The SSE streams `/api/event` and `/api/global/event` carry event IDs and
+replay retained events after `Last-Event-ID`. Replay storage is bounded to
+the most recent 1,024 records in process memory. V2 event
 frames whose `data` has a top-level `sessionID` include
 `durable: {aggregateID, seq, version: 1}` metadata. This is event identity and
 sequence metadata, not an on-disk event log. The global WebSocket endpoint
@@ -224,7 +170,7 @@ checks as HTTP routes.
 
 ### antechamber routes (not OpenCode)
 
-Served for the OmO Work extension service (`extensions/omo-work`). They accept
+Served for the OmO Work section of the OpenChamber extension (`extensions/antechamber`, `src/work/`). They accept
 the server password like every route, or `Authorization: Bearer <token>` with
 the token `serve` writes into `<state dir>/run/<pid>.json`; that token opens
 nothing else.
@@ -236,7 +182,7 @@ nothing else.
 | POST | `/antechamber/work-status/{sessionID}/eval/{cellID}/stop` | 200 | OmO `eval_cells.stop`; returns the stopped cell. Same errors as peek. |
 | POST | `/antechamber/work-status/{sessionID}/goal/fire` | 204 | OmO `goal_continuation_fire_now`. 409 when the agent is not running or OmO refuses. |
 
-OmO monitor child sessions are a v1-only projection: `GET /api/session`,
+OmO monitor child sessions are an internal compatibility projection: `GET /api/session`,
 `GET /api/session/active` and `GET /api/event` omit them.
 
 ### Shared status behavior
@@ -247,64 +193,23 @@ OmO monitor child sessions are a v1-only projection: `GET /api/session`,
 - Native permission/question refusals return 409. A shell request against a
   busy session also returns 409.
 - Unknown top-level routes return 404 `NotFoundError` (`no route: ...`) on
-  both v1 and v2, including `/api/*`. Unrecognized subpaths beneath an
-  existing `/session/{sessionID}` or `/api/session/{sessionID}` return 501
+  both retained compatibility and v2 routes, including `/api/*`. Retired
+  routes use this same 404 response. Unrecognized subpaths beneath an
+  existing `/api/session/{sessionID}` return 501
   `NotImplemented`; unknown session IDs return 404 instead. The explicit v2
   `GET /api/session/{sessionID}/context` route also returns 501.
 - Passwordless requests with a disallowed browser origin return 403;
   configured Basic authentication failures return 401.
 
-## OpenChamber SDK methods used
+## Native questions and forms
 
-### Sessions (core)
+Pending native questions share one registry. Structured questions retain
+ordered selections, custom text, comments, drafts and deadlines. A
+nonblocking request survives tool completion and agent idle without
+changing the session status. Native settlement is authoritative; the adapter
+sends a correlated `extension_ui_response`, never another answer prompt.
 
-| SDK method | Purpose in OpenChamber | pi counterpart |
-|---|---|---|
-| `session.list` | session list per directory | scan pi `--session-dir` JSONL files. `Session.cost` is the session's own spend: the sum of its assistant messages' OmO `usage.cost.total`, restored before metadata is returned and refreshed on each assistant `message_end` (announced with `session.updated`, translated to cumulative `session.usage.updated` on v2). Subagent sessions carry their own cost and `parentID`; OpenChamber's work-status rollup sums the subtree, so a parent never includes child spend. |
-| `session.create` | new session | spawn `pi --mode rpc` (fresh session) |
-| `session.get` | session detail | RPC `get_state` |
-| `session.update` | rename/archive/metadata | adapter-side title + `time.archived` (persisted in the registry; `archived=true/false` list filtering honored on `/session` and `/experimental/session`) |
-| `session.delete` | delete session | kill process + remove session file |
-| `session.messages` | load message history | RPC `get_messages` |
-| `session.promptAsync` | send prompt (async) | RPC `prompt`. Reuses the client's optimistic `messageID` and emits the user message and parts so the optimistic insert reconciles in place. V1 text, file, and agent parts are retained in history; inline image data becomes native image input, inline text files become prompt text, and agent mentions become `@name` text. |
-| `session.abort` | stop generation | RPC `abort` |
-| `session.fork` | fork from a message | RPC `fork` / `get_fork_messages`; conversation-only fork backed by the agent's session tree (see docs/architecture.md) |
-| `session.revert` / `session.unrevert` | undo/redo conversation context | backed by the agent's native session-tree navigation; conversation-only, never touches files on disk |
-| `session.summarize` | compact context | RPC `compact`, which answers only after the summary is written (timeout 31 min, above OmO's 30 min cap). `compaction_start` sets `time.compacting` and marks an idle session busy; `compaction_end` adds a user message with a `compaction` part (shown as `/compact`) and an assistant `summary: true` message with the summary text. History rebuilds the same pair from `compaction` entries, keyed by `firstKeptEntryId`. |
-| `session.status` | busy/idle map | derive from RPC events |
-| `session.todo` | todo list rendering | bridged from the agent's todo tool (`src/todo-bridge.ts`) |
-| `session.shell` | run shell in session ctx | RPC `bash`, with cancellation via `abort_bash` |
-| `session.command` | slash commands | RPC `prompt` with `/cmd` or `get_commands`. File parts are retained and adapted like ordinary v1 prompts. OmO skips native title generation for a first prompt starting with `/`, so any `/cmd args` prompt also sends `sessionTitlePrompt: args`. |
-| `session.share` / `session.unshare` | share links | unsupported, returns `400 UnsupportedError`, no pi/OmO equivalent |
-
-### Permissions & questions
-
-| SDK method | pi counterpart |
-|---|---|
-| `permission.list` / `permission.reply` | extension-UI sub-protocol (`select`/`confirm` requests) |
-| `question.list` / `question.reply` / `question.reject` | structured extension-UI `question` requests plus legacy `input`/`select`/`confirm`/`editor` dialogs |
-| v2 `form.list` / `form.get` / `form.reply` / `form.cancel` | same pending question registry, projected to native FormInfo |
-
-#### Structured questions (OpenChamber 1.24.2)
-
-`GET /question` returns pending v1 question cards. `POST /question/{id}/reply`
-accepts ordered `answers: string[][]` and an optional `comment`. Known option
-labels become native selections; custom answers become text. Empty arrays
-leave questions unanswered. A comment alone can settle a request.
-`POST /question/{id}/reject` cancels it. Replies return `200 true` only after
-the native acknowledgment; unknown or settled IDs return 404, refused native
-responses return 409, and malformed answers return 400.
-
-The v1 stream emits `question.asked`, then exactly one `question.replied` or
-`question.rejected` when the native question resolves. A nonblocking request
-survives tool completion, turn completion, and agent idle; its presence keeps
-the process from idle eviction but does not change the session's busy/idle
-status. Native `question_updated` frames refresh stored deadlines and drafts.
-Deadlines do not cause adapter-local settlement: native timeout is authoritative.
-The native extension delivers the later answer to the agent; the adapter sends
-only a correlated `extension_ui_response`, never another answer prompt.
-
-#### Forms (OpenChamber 2.x)
+### Forms (OpenChamber 2.x)
 
 | Route | Result |
 |---|---|
@@ -345,33 +250,12 @@ The native runtime currently skips a tool ID with an `ask-user:resumed` marker
 even after a second crash. Repeated-crash recovery needs a companion native
 fix; this adapter does not invent a reply target absent from native state.
 
-### Project / config / misc
-
-| SDK method | pi counterpart |
-|---|---|
-| `project.current` / `project.list` | adapter directory registry |
-| `config.get` | adapter config and selected agent name; `PATCH /config` is unsupported |
-| `config.providers` | RPC `get_available_models` (translated) |
-| `command.list` | RPC `get_commands` |
-| `app.agents` | static pi agent descriptors: `build` plus pi's own agent name |
-| `path.get`, `vcs.get`, `lsp.status`, `find.*`, `file.*` | filesystem/git direct (adapter-side) |
-| `mcp.status` | RPC `get_loaded_surfaces` on the newest live session in the directory, else any live session, else a short-lived `--no-session` agent |
-| `mcp.auth.start`, `mcp.auth.authenticate` | RPC `prompt` `/mcp auth {name}` sent outside the conversation queue, to the live session or a `--no-session` agent for the flow |
-| `mcp.auth.callback` | loopback redirect to OmO's waiting listener, or RPC `prompt` `/mcp auth-complete {name} {redirect}` |
-| v2 `mcp.list`, `integration.*` for `mcp_*` | `get_loaded_surfaces`; `/mcp auth-start` + `/mcp auth-complete`; `/mcp reconnect {name}` in the other live sessions and `mcp.status.changed` after a sign-in |
-| `mcp.status.changed` (no server name) | an agent started, stopped or announced `loaded_surfaces_changed`; sent to every directory whose MCP status a client has read |
-| `auth.set`, `provider.oauth`, `mcp.connect/disconnect`, `mcp.auth.remove` | unsupported with OmO; configure providers and MCP in OmO |
-
 ## SSE event contract
 
-V1 `/event` carries raw OpenCode v1 events scoped to the selected directory.
-V1 `/global/event` carries broadcast events in `{directory, project, payload}`
-envelopes; its initial `server.connected` frame is `{directory, payload}`.
-V2 `/api/event` carries `{id, created, type, location, data}`
-envelopes; it is global unless a directory selector scopes it. These are distinct wire shapes; the global wrapper is not used on
-the directory-scoped v1 stream.
+`/api/event` and `/api/global/event` carry `{id, created, type, location, data}`
+envelopes, global unless a directory selector scopes the subscription.
 
-The adapter emits the supported v1 lifecycle, message/part, permission,
+Internally the adapter emits the canonical lifecycle, message/part, permission,
 question, todo, and diff events. Text and reasoning deltas use a dedicated
 `message.part.delta` event before the updated-part snapshot; the snapshot does
 not repeat that append delta. This ordering lets clients apply the delta once
@@ -415,41 +299,10 @@ state object (verified against the locally installed
 `toolcall_end {toolCall:{id, name, arguments}}` →
 `turn_end {toolResults:[{toolCallId, content:[{type:"text",text}], isError}]}`.
 
-## Open items
+## Client and lifecycle compatibility
 
-- [x] How OpenChamber launches the agent backend: it spawns
-      `$OPENCODE_BINARY serve --hostname H --port P` (managed lifecycle in
-      `packages/web/server/lib/opencode/lifecycle.js`), parses the stdout line
-      `opencode server listening on <url>`, then health-checks
-      `GET /global/health`. `settings.opencodeBinary` (settings.json) is the
-      reliable override; combine with `OPENCHAMBER_DATA_DIR` for an isolated
-      test profile.
-- [ ] Payload field-level schemas for each event type (from
-      `@opencode-ai/sdk/v2` types).
-- [x] The UI uses `@opencode-ai/sdk/v2`; note the v2 surface differs from v1
-      (`question.list` → `GET /question`, `permission.list` →
-      `GET /permission`, session list → `GET /experimental/session`,
-      `GET /path`, `GET /vcs` are all probed during bootstrap and must exist).
-
-## Bootstrap probes observed live (OpenChamber 1.21.0)
-
-These are called at startup and 404s surface as console errors or blocked
-send ("provider or model not selected"):
-
-| Endpoint | Minimum viable response |
-|---|---|
-| `GET /provider` | `{all: Provider[], default: {providerID: modelID}, connected: string[]}` |
-| `GET /config/providers` | `{providers: Provider[], default: {...}}` |
-| `GET /question` | `[]` |
-| `GET /permission` | `[]` |
-| `GET /lsp` | `[]` |
-| `GET /formatter` | `[]` |
-| `GET /experimental/session` | `Session[]` (all directories) |
-| `GET /path` | `{home, state, config, worktree, directory}` |
-| `GET /vcs` | `{}` or `{branch}` |
-| `GET /agent` | primary agents: `build` + pi's own name (aliases for the same pi agent, so OpenChamber's `build` default resolves and the picker has options) |
-| `GET /global/health` | any 200 JSON |
-
-Gotcha: OpenChamber's model picker ignores `default` when it can't match it
-and silently falls back to the **first listed provider/model**, so antechamber
-sorts pi's active model to the front for this reason.
+OpenChamber launches the configured binary with `serve --hostname H --port P`,
+checks `--version`, and reads `/api/info`. Its external compatibility probe
+still falls back to `/global/health` when the info probe fails. Update actions
+execute the binary's `upgrade` CLI command. These CLI contracts and health
+probe remain supported.

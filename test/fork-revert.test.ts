@@ -1874,17 +1874,17 @@ test("unknown and malformed messageIDs return 400 without changing session or tr
     else process.env.ANTECHAMBER_STATE_DIR = previous;
   });
   await server.start();
-  const created = await fetch(`${server.url}/session`, { method: "POST" });
-  const session = (await created.json()) as { id: string };
-  const url = `${server.url}/session/${session.id}`;
+  const created = await fetch(`${server.url}/api/session`, { method: "POST", body: "{}" });
+  const session = ((await created.json()) as { data: { id: string } }).data;
+  const url = `${server.url}/api/session/${session.id}`;
   const before = await (await fetch(url)).json();
   for (const body of [{ messageID: "nope" }, {}, { messageID: 12 }]) {
-    const response = await fetch(`${url}/revert`, { method: "POST", body: JSON.stringify(body) });
+    const response = await fetch(`${url}/revert/stage`, { method: "POST", body: JSON.stringify(body) });
     assert.equal(response.status, 400);
     const error = (await response.json()) as { data: { message: string } };
     assert.ok(error.data.message.length > 0);
   }
   assert.deepEqual(await (await fetch(url)).json(), before);
-  const redo = await fetch(`${url}/unrevert`, { method: "POST" });
-  assert.equal(redo.status, 200);
+  const redo = await fetch(`${url}/revert`, { method: "DELETE" });
+  assert.equal(redo.status, 204);
 });

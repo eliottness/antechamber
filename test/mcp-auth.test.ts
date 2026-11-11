@@ -54,8 +54,8 @@ const named = (value: unknown, name: string): unknown =>
   (Array.isArray(value) ? value : []).find((entry: unknown) => at(entry, "name") === name);
 
 async function liveSession(server: AdapterServer, url: string): Promise<{ id: string; pi: PiRpcClient }> {
-  const created = await call(url, "POST", "/session");
-  const id = at(created.body, "id") as string;
+  const created = await call(url, "POST", "/api/session", {});
+  const id = at(created.body, "data", "id") as string;
   const pi = server["sessions"].get(id)?.pi;
   assert.ok(pi, "session must have a running agent");
   return { id, pi };
@@ -396,7 +396,7 @@ test("clients reading a directory's MCP status are told when an agent starts", a
   const { url, root } = await startServer(t);
   await call(url, "GET", "/api/mcp");
   const { changed } = await nextMcpStatusChange(t, url, root);
-  assert.equal((await call(url, "POST", "/session")).status, 200);
+  assert.equal((await call(url, "POST", "/api/session", {})).status, 200);
   await changed;
 });
 

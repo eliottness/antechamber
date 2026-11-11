@@ -62,9 +62,9 @@ const extensionEvent = (name: string, data: unknown) => ({ type: "extension_even
 test("the work-status route reports todo phases, monitors, eval cells, background sessions and the goal timer", async (t) => {
   const { server, manager, url } = await startServer(t, "secret");
   const basic = `Basic ${Buffer.from("opencode:secret").toString("base64")}`;
-  const created = await fetch(`${url}/session`, { method: "POST", body: "{}", headers: { Authorization: basic } });
+  const created = await fetch(`${url}/api/session`, { method: "POST", body: "{}", headers: { Authorization: basic } });
   assert.equal(created.status, 200);
-  const { id } = (await created.json()) as { id: string };
+  const { id } = ((await created.json()) as { data: { id: string } }).data;
   const s = manager.get(id);
   assert.ok(s?.pi && s.piPath && s.piSessionId);
 
@@ -155,7 +155,7 @@ test("the work-status route reports todo phases, monitors, eval cells, backgroun
   assert.equal((await fetch(route)).status, 401);
   assert.equal((await fetch(route, { headers: { Authorization: "Bearer wrong" } })).status, 401);
   assert.equal(
-    (await fetch(`${url}/session`, { headers: bearer })).status,
+    (await fetch(`${url}/api/session`, { headers: bearer })).status,
     401,
     "the token opens only antechamber routes",
   );
@@ -213,8 +213,8 @@ test("the work-status route reports todo phases, monitors, eval cells, backgroun
 
 test("without codemode the section still shows the cells the wake source names", async (t) => {
   const { server, manager, url } = await startServer(t);
-  const created = await fetch(`${url}/session`, { method: "POST", body: "{}" });
-  const { id } = (await created.json()) as { id: string };
+  const created = await fetch(`${url}/api/session`, { method: "POST", body: "{}" });
+  const { id } = ((await created.json()) as { data: { id: string } }).data;
   const s = manager.get(id);
   assert.ok(s?.pi);
   await emit(
@@ -233,25 +233,18 @@ test("without codemode the section still shows the cells the wake source names",
   assert.deepEqual(status.evalCells, [{ cellId: "cell_9", state: "running", startedAtMs: 5, summary: "long build" }]);
 });
 
-test("monitor child sessions stay on v1 and are hidden from v2 lists and events", async (t) => {
+test("monitor child sessions are hidden from v2 lists and events", async (t) => {
   const { manager, url } = await startServer(t);
-  const created = await fetch(`${url}/session`, { method: "POST", body: "{}" });
-  const { id } = (await created.json()) as { id: string };
+  const created = await fetch(`${url}/api/session`, { method: "POST", body: "{}" });
+  const { id } = ((await created.json()) as { data: { id: string } }).data;
   const s = manager.get(id);
   assert.ok(s?.pi);
-  const v1 = await openEvents(`${url}/event`);
   const v2 = await openEvents(`${url}/api/event`);
   t.after(async () => {
-    await v1.close();
     await v2.close();
   });
   const childID = ocIdFor(`${id}/monitor/bash_7`);
-  const v1Created = v1.wait(
-    (event) =>
-      event.type === "session.created" && (event.properties as { info?: { id?: string } }).info?.id === childID,
-  );
   await emit(s, extensionEvent(MONITOR_STATE_EVENT, { activeCount: 1, monitors: [monitor] }));
-  await v1Created;
 
   // Events are written in order: once a later session reaches v2, the monitor's frames would have too.
   const marker = v2.wait((event) => event.type === "session.created");
@@ -260,10 +253,8 @@ test("monitor child sessions stay on v1 and are hidden from v2 lists and events"
   await marker;
   const mentionsChild = (event: Record<string, unknown>) => JSON.stringify(event).includes(childID);
   assert.equal(v2.frames.filter(mentionsChild).length, 0);
-  assert.ok(v1.frames.some(mentionsChild));
 
-  const v1List = (await (await fetch(`${url}/session`)).json()) as Array<{ id: string }>;
-  assert.ok(v1List.some((session) => session.id === childID));
+  assert.ok(manager.list().some((session) => session.id === childID));
   const v2List = (await (await fetch(`${url}/api/session`)).json()) as { data: Array<{ id: string }> };
   assert.ok(v2List.data.some((session) => session.id === id));
   assert.ok(!v2List.data.some((session) => session.id === childID));

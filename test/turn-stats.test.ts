@@ -78,35 +78,30 @@ test("v2 session updates publish restored usage without starting a step", () => 
   );
 });
 
-test("v1 and v2 HTTP history agree with completion SSE before and after restart", { timeout: 15000 }, async (t) => {
+test("canonical state and v2 HTTP history agree with completion SSE before and after restart", {
+  timeout: 15000,
+}, async (t) => {
   const h = bugHarness(t);
   let server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: h.root });
   await server.start();
-  const v1 = await openEvents(`${server.url}/event`);
   const v2 = await openEvents(`${server.url}/api/event`);
   t.after(async () => {
-    await v1.close();
     await v2.close();
     await server.stop();
   });
-  const session = (await (await fetch(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
-    id: string;
-  };
-  const completed1 = v1.wait(
-    (e) =>
-      e.type === "message.updated" &&
-      (e.properties as { info: { role: string; time: { completed?: number } } }).info.role === "assistant" &&
-      (e.properties as { info: { time: { completed?: number } } }).info.time.completed !== undefined,
-  );
+  const session = await server["sessions"].create(h.root);
   const completed2 = v2.wait((e) => e.type === "session.step.ended");
-  const response = await fetch(`${server.url}/session/${session.id}/message`, {
+  const response = await fetch(`${server.url}/api/session/${session.id}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ messageID: "msg_http", parts: [{ type: "text", text: "normal" }] }),
+    body: JSON.stringify({ id: "msg_http", text: "normal" }),
   });
   assert.equal(response.status, 200);
-  const event1 = await completed1;
   const event2 = await completed2;
-  const assistant = (event1.properties as { info: OCMessageWithParts["info"] }).info;
+  const assistant = server["sessions"]
+    .messages(session.id)
+    ?.map((message) => message.info)
+    .findLast((info) => info.role === "assistant");
+  assert.ok(assistant);
   assert.equal(assistant.role, "assistant");
   if (assistant.role !== "assistant") return;
   const step = event2.data as Record<string, unknown>;
@@ -115,15 +110,12 @@ test("v1 and v2 HTTP history agree with completion SSE before and after restart"
   assert.deepEqual(step.tokens, assistant.tokens);
   for (const restored of [false, true]) {
     if (restored) {
-      await v1.close();
       await v2.close();
       await server.stop();
       server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: h.root });
       await server.start();
     }
-    const history1 = (await (
-      await fetch(`${server.url}/session/${session.id}/message`)
-    ).json()) as OCMessageWithParts[];
+    const history1 = server["sessions"].messages(session.id) ?? [];
     const history2 = (await (await fetch(`${server.url}/api/session/${session.id}/message?order=asc`)).json()) as {
       data: V2Message[];
     };

@@ -245,7 +245,7 @@ test("V232-023: staging emits a revert event", async (t) => {
     (event) => event.type === "session.revert.staged" && event.data?.sessionID === sessionID,
     "staged revert",
   );
-  const response = await postJson(url, `/session/${sessionID}/revert`, { messageID: "msg_v232_boundary" });
+  const response = await postJson(url, `/api/session/${sessionID}/revert/stage`, { messageID: "msg_v232_boundary" });
   assert.equal(response.status, 200);
   assert.deepEqual((await staged).data?.revert, { messageID: "msg_v232_boundary" });
 });
@@ -257,14 +257,14 @@ test("V232-024: clearing emits a revert event", async (t) => {
   await stream.wait((event) => event.type === "server.connected", "v2 connection");
   const sessionID = await createSession(url);
   await promptAndWait(url, sessionID, stream, "first");
-  const staged = await postJson(url, `/session/${sessionID}/revert`, { messageID: "msg_v232_boundary" });
+  const staged = await postJson(url, `/api/session/${sessionID}/revert/stage`, { messageID: "msg_v232_boundary" });
   assert.equal(staged.status, 200);
   const cleared = stream.wait(
     (event) => event.type === "session.revert.cleared" && event.data?.sessionID === sessionID,
     "cleared revert",
   );
-  const response = await postJson(url, `/session/${sessionID}/unrevert`, {});
-  assert.equal(response.status, 200);
+  const response = await fetch(`${url}/api/session/${sessionID}/revert`, { method: "DELETE" });
+  assert.equal(response.status, 204);
   await cleared;
 });
 
@@ -275,7 +275,7 @@ test("V232-025: committing emits a revert event", async (t) => {
   await stream.wait((event) => event.type === "server.connected", "v2 connection");
   const sessionID = await createSession(url);
   await promptAndWait(url, sessionID, stream, "first");
-  const response = await postJson(url, `/session/${sessionID}/revert`, { messageID: "msg_v232_boundary" });
+  const response = await postJson(url, `/api/session/${sessionID}/revert/stage`, { messageID: "msg_v232_boundary" });
   assert.equal(response.status, 200);
   assert.equal(
     stream.history.some((event) => event.type === "session.revert.committed"),
@@ -330,24 +330,4 @@ test("V232-027: emits shell lifecycle frames", async (t) => {
     shellEvents.map((event) => event.type).filter((type) => type.startsWith("session.shell.")),
     ["session.shell.started", "session.shell.ended"],
   );
-});
-
-test("V232-034: legacy global events wrap payloads and local events retain v1 framing", async (t) => {
-  const { root, url } = await startServer(t);
-  const event = openSse(t, url, "/event");
-  const global = openSse(t, url, "/global/event");
-  await Promise.all([event.ready, global.ready]);
-  const [eventConnected, globalConnected] = await Promise.all([
-    event.wait((frame) => frame.type === "server.connected", "legacy event connection"),
-    global.wait(
-      (frame) => isRecord(frame.payload) && frame.payload.type === "server.connected",
-      "legacy global connection",
-    ),
-  ]);
-  assert.deepEqual(eventConnected, { type: "server.connected", properties: {} });
-  assert.equal(globalConnected.directory, root);
-  assert.ok(isRecord(globalConnected.payload));
-  assert.equal(globalConnected.payload.type, "server.connected");
-  assert.deepEqual(globalConnected.payload.properties, {});
-  assert.equal(typeof globalConnected.payload.id, "string");
 });

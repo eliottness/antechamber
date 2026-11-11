@@ -56,21 +56,10 @@ export async function miscRoute(
   url: URL,
   directory: string,
 ): Promise<RouteResult | undefined> {
-  if (method === "GET" && ["/skill", "/lsp", "/formatter", "/experimental/tool/ids"].includes(path)) {
+  if (method === "GET" && ["/skill", "/formatter"].includes(path)) {
     return { status: 200, body: [] };
   }
-  if (method === "GET" && path === "/provider/auth") return { status: 200, body: {} };
-  if (
-    (method === "PUT" && /^\/auth\/[^/]+$/.test(path)) ||
-    (method === "POST" && /^\/provider\/[^/]+\/oauth\/(authorize|callback)$/.test(path)) ||
-    (method === "PATCH" && path === "/config")
-  ) {
-    return unsupported("Not supported with OmO; configure providers in OmO");
-  }
-  if (
-    (["POST", "DELETE"].includes(method) && /^\/mcp\/[^/]+\/(connect|disconnect|auth)$/.test(path)) ||
-    (method === "POST" && path === "/experimental/control-plane/move-session")
-  ) {
+  if (["POST", "DELETE"].includes(method) && /^\/mcp\/[^/]+\/(connect|disconnect|auth)$/.test(path)) {
     return unsupported("Not supported with OmO; configure MCP and session directories in OmO");
   }
   if (method !== "GET" || !["/file", "/find/file"].includes(path)) return undefined;

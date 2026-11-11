@@ -42,30 +42,7 @@ It uses Node built-ins only. The launcher runs the TypeScript files with
 
    `OPENCODE_MITM_LOG` is required. Its parent directory must already exist.
 
-## OpenChamber 1.24.2
-
-Set `settings.opencodeBinary` to the absolute launcher path in the
-OpenChamber Settings UI, or place the same property in the instance settings:
-
-```json
-{
-  "opencodeBinary": "/absolute/path/to/antechamber/contrib/opencode-mitm/opencode-mitm"
-}
-```
-
-Export `OPENCODE_MITM_LOG` in the environment that starts OpenChamber, then
-restart its server. Version 1.24.2 invokes:
-
-```text
-<opencodeBinary> serve --hostname H --port P
-```
-
-It recognizes `opencode server listening on http://…` on stdout and then
-polls `GET /global/health` until the proxied real server reports
-`{"healthy":true}`. The wrapper advertises the proxy address, so those polls
-and all later API traffic are captured.
-
-## OpenChamber 2.3.2
+## OpenChamber 2.3.2+
 
 Use the same `settings.opencodeBinary` value and inherited environment:
 
@@ -78,8 +55,7 @@ Use the same `settings.opencodeBinary` value and inherited environment:
 OpenChamber 2.3.2 first calls `opencodeBinary --version`; the wrapper passes
 that through unchanged. It requires real OpenCode 2.0.20 or newer. During
 startup it accepts the wrapper's listener banner and polls `GET /api/info`,
-which must identify a supported OpenCode 2.x server. A real OpenCode 1.x
-binary remains usable with OpenChamber 1.24.2 only.
+which must identify a supported OpenCode 2.x server.
 
 ## Standalone launch
 

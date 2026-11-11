@@ -29,6 +29,11 @@ const rpc = readFileSync("test/fixtures/omo-rpc/run1.jsonl", "utf8")
   .split("\n")
   .map((line) => JSON.parse(line) as Record<string, unknown>);
 
+async function responseData(response: Response): Promise<unknown> {
+  assert.equal(response.status, 200);
+  return ((await response.json()) as { data: unknown }).data;
+}
+
 function put(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, typeof value === "string" ? value : JSON.stringify(value));
@@ -726,9 +731,9 @@ test("saved startup failure survives restart through the message route without a
   await server.start();
   t.after(() => server.stop());
 
-  const response = await fetch(`${server.url}/session/${ocIdFor("st_failed")}/message`);
+  const response = await fetch(`${server.url}/api/session/${ocIdFor("st_failed")}/message`);
   assert.equal(response.status, 200);
-  const messages = (await response.json()) as OCMessageWithParts[];
+  const messages = server["sessions"].messages(ocIdFor("st_failed")) ?? [];
   const reply = messages.find((message) => message.info.role === "assistant");
   assert.ok(reply?.info.role === "assistant");
   assert.equal(reply.info.error?.data.message, error);
@@ -1071,7 +1076,7 @@ test("a failed restoration batch returns a persistence error instead of a succes
   await server.start();
   t.after(() => server.stop());
 
-  const response = await fetch(`${server.url}/experimental/session`);
+  const response = await fetch(`${server.url}/api/session`);
   assert.equal(response.status, 500);
   const error = (await response.json()) as { name: string; data: { message: string } };
   assert.equal(error.name, "UnknownError");
@@ -1095,37 +1100,38 @@ test("restart resolves archived children by id through real session and message 
   await server.start();
   t.after(() => server.stop());
   const childID = ocIdFor("st_child");
-  const listed = (await fetch(`${server.url}/session?directory=${encodeURIComponent(directory)}`).then((response) =>
-    response.json(),
+  const listed = (await fetch(`${server.url}/api/session?directory=${encodeURIComponent(directory)}`).then(
+    responseData,
   )) as Array<{ id: string; cost?: number; tokens?: { input: number; output: number } }>;
   const child = listed.find((session) => session.id === childID);
   assert.equal(child?.cost, 2.5, "the first list includes archived spend without opening child history");
   assert.equal(child.tokens?.input, 11);
   assert.equal(child.tokens?.output, 7);
   assert.equal(parent.info.cost ?? 0, 0, "child spend is not folded into its parent");
-  const info = (await fetch(`${server.url}/session/${childID}`).then((response) => response.json())) as {
+  const info = (await fetch(`${server.url}/api/session/${childID}`).then(responseData)) as {
     parentID?: string;
     cost?: number;
   };
   assert.equal(info.parentID, parent.info.id);
   assert.equal(info.cost, 2.5);
-  const history = (await fetch(`${server.url}/session/${childID}/message`).then((response) =>
-    response.json(),
+  const history = (await fetch(`${server.url}/api/session/${childID}/message`).then(
+    responseData,
   )) as OCMessageWithParts[];
-  assert.match(texts(history), /survives eviction/);
-  const roots = (await fetch(`${server.url}/experimental/session?roots=true`).then((response) =>
-    response.json(),
-  )) as Array<{ id: string }>;
-  const all = (await fetch(`${server.url}/experimental/session?roots=false`).then((response) =>
-    response.json(),
-  )) as Array<{ id: string; parentID?: string }>;
+  assert.match(JSON.stringify(history), /survives eviction/);
+  const roots = (await fetch(`${server.url}/api/session?parentID=null`).then(responseData)) as Array<{
+    id: string;
+  }>;
+  const all = (await fetch(`${server.url}/api/session`).then(responseData)) as Array<{
+    id: string;
+    parentID?: string;
+  }>;
   assert.ok(!roots.some((session: { id: string }) => session.id === childID));
   assert.ok(
     all.some(
       (session: { id: string; parentID?: string }) => session.id === childID && session.parentID === parent.info.id,
     ),
   );
-  const refreshed = (await fetch(`${server.url}/session/${childID}`).then((response) => response.json())) as {
+  const refreshed = (await fetch(`${server.url}/api/session/${childID}`).then(responseData)) as {
     cost?: number;
   };
   assert.equal(refreshed.cost, 2.5, "history reads do not add the same spend again");
@@ -1141,24 +1147,25 @@ test("a child archived through the session route stays archived after a restart"
   const query = `directory=${encodeURIComponent(directory)}`;
   const first = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
   await first.start();
-  const patched = await fetch(`${first.url}/session/${childID}?${query}`, {
+  t.after(() => first.stop());
+  const patched = await fetch(`${first.url}/api/session/${childID}?${query}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ time: { archived: 1234 } }),
   });
-  assert.equal(patched.status, 200);
+  assert.equal(patched.status, 204);
   await first.stop();
   const second = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
   await second.start();
   t.after(() => second.stop());
-  const listed = (await fetch(`${second.url}/session?${query}`).then((response) => response.json())) as Array<{
+  const listed = (await fetch(`${second.url}/api/session?${query}`).then(responseData)) as Array<{
     id: string;
     time: { archived?: number };
   }>;
   assert.equal(listed.find((session) => session.id === childID)?.time.archived, 1234);
-  const active = (await fetch(`${second.url}/session?${query}&archived=false`).then((response) =>
-    response.json(),
-  )) as Array<{ id: string }>;
+  const active = (await fetch(`${second.url}/api/session?${query}&archived=false`).then(responseData)) as Array<{
+    id: string;
+  }>;
   assert.ok(!active.some((session) => session.id === childID));
 });
 
@@ -1272,24 +1279,24 @@ test("a deleted child stays deleted after a parent history read and a restart", 
   const childID = ocIdFor("st_01a12ba2");
   const query = `directory=${encodeURIComponent(directory)}`;
   const ids = async (url: string) =>
-    ((await fetch(`${url}/session?${query}`).then((response) => response.json())) as Array<{ id: string }>).map(
+    ((await fetch(`${url}/api/session?${query}`).then(responseData)) as Array<{ id: string }>).map(
       (session) => session.id,
     );
   const first = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
   await first.start();
-  await fetch(`${first.url}/session/${parent.info.id}/message?${query}`).then((response) => response.json());
+  await fetch(`${first.url}/api/session/${parent.info.id}/message?${query}`).then(responseData);
   assert.ok((await ids(first.url)).includes(childID));
-  const deleted = await fetch(`${first.url}/session/${childID}?${query}`, { method: "DELETE" });
-  assert.equal(deleted.status, 200);
-  await fetch(`${first.url}/session/${parent.info.id}/message?${query}`).then((response) => response.json());
+  const deleted = await fetch(`${first.url}/api/session/${childID}?${query}`, { method: "DELETE" });
+  assert.equal(deleted.status, 204);
+  await fetch(`${first.url}/api/session/${parent.info.id}/message?${query}`).then(responseData);
   assert.ok(!(await ids(first.url)).includes(childID));
   await first.stop();
   const second = new AdapterServer({ port: 0, host: "127.0.0.1", defaultDirectory: directory });
   await second.start();
   t.after(() => second.stop());
-  await fetch(`${second.url}/session/${parent.info.id}/message?${query}`).then((response) => response.json());
+  await fetch(`${second.url}/api/session/${parent.info.id}/message?${query}`).then(responseData);
   assert.ok(!(await ids(second.url)).includes(childID));
-  assert.equal((await fetch(`${second.url}/session/${childID}?${query}`)).status, 404);
+  assert.equal((await fetch(`${second.url}/api/session/${childID}?${query}`)).status, 404);
 });
 
 test("dormant parent rebuilds batch children and applies trailing wake results", (t) => {

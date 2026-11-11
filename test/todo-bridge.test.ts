@@ -203,7 +203,7 @@ test("live result-before-state event order updates the completed card and route 
   assert.deepEqual(part.state.input.todos, flattenTodos("ses_test", state("completed").data));
 });
 
-test("both HTTP flavors return dormant JSONL state after restart and empty sessions return 200", async (t) => {
+test("v2 HTTP returns dormant JSONL state after restart and empty sessions return 200", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "antechamber-todo-route-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const previous = process.env.PI_CODING_AGENT_DIR;
@@ -237,7 +237,7 @@ test("both HTTP flavors return dormant JSONL state after restart and empty sessi
     server["sessions"] = new SessionManager(() => {}, store, dir);
     await server.start();
     try {
-      for (const prefix of ["", "/api"]) {
+      for (const prefix of ["/api"]) {
         for (const [piID, expected] of [
           ["pi-todo", flattenTodos(ocIdFor("pi-todo"), state("completed").data)],
           ["pi-empty", []],
@@ -245,7 +245,7 @@ test("both HTTP flavors return dormant JSONL state after restart and empty sessi
           const response = await fetch(`${server.url}${prefix}/session/${ocIdFor(piID)}/todo`);
           assert.equal(response.status, 200);
           const body = (await response.json()) as { data: unknown };
-          assert.deepEqual(prefix === "" ? body : body.data, expected);
+          assert.deepEqual(body.data, expected);
         }
       }
     } finally {
@@ -254,51 +254,24 @@ test("both HTTP flavors return dormant JSONL state after restart and empty sessi
   }
 });
 
-test("HTTP SSE subscribers receive v1 properties and v2 data todo events", async () => {
+test("HTTP SSE subscribers receive v2 todo events", async () => {
+  const todos: TodoUpdated["properties"]["todos"] = [
+    { id: "1", content: "Review", status: "pending", priority: "medium" },
+  ];
   const server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: "/tmp/test" });
   await server.start();
-  const controllers: AbortController[] = [];
+  const controller = new AbortController();
+  const deadline = AbortSignal.timeout(5000);
   try {
-    for (const path of ["/event", "/api/event"]) {
-      const controller = new AbortController();
-      controllers.push(controller);
-      const response = await fetch(`${server.url}${path}`, {
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
-      });
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const readEvent = async () => {
-        while (!buffer.includes("\n\n")) {
-          const chunk = await reader.read();
-          assert.equal(chunk.done, false, "SSE stream ended before its event");
-          buffer += decoder.decode(chunk.value, { stream: true });
-        }
-        const boundary = buffer.indexOf("\n\n");
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const data = frame
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trimStart())
-          .join("\n");
-        return JSON.parse(data);
-      };
-      assert.equal((await readEvent()).type, "server.connected"); // subscribe before triggering the entry
-      const s = session("/nonexistent");
-      server["sessions"]["onPiEvent"](s, { type: "entry_appended", entry: state() });
-      const event = await readEvent();
-      assert.equal(event.type, "todo.updated");
-      assert.deepEqual(path === "/event" ? event.properties : event.data, {
-        sessionID: "ses_test",
-        todos: flattenTodos("ses_test", state().data),
-      });
-      if (path === "/api/event") assert.deepEqual(event.location, { directory: "/tmp/test" });
-      await reader.cancel();
-      controller.abort();
-    }
+    const response = await fetch(`${server.url}/api/event`, { signal: AbortSignal.any([controller.signal, deadline]) });
+    const reader = response.body!.getReader();
+    assert.match(new TextDecoder().decode((await reader.read()).value), /server.connected/);
+    server["broadcast"]("/tmp/test", { type: "todo.updated", properties: { sessionID: "ses_test", todos } });
+    const payload = JSON.parse(new TextDecoder().decode((await reader.read()).value).split("data: ")[1]!);
+    assert.equal(payload.type, "todo.updated");
+    assert.deepEqual(payload.data.todos, todos);
   } finally {
-    controllers.forEach((controller) => controller.abort());
+    controller.abort();
     await server.stop();
   }
 });

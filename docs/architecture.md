@@ -130,8 +130,7 @@ would make the UI report a failed reply. An assistant boundary is kept instead
 (`position: "at"` on the reply, or on the last result of its own tool calls):
 OpenChamber 2.x names an assistant message only from `/btw`, which passes the
 last completed reply (`finish: "stop"`, installed 2.5.0 bundle) so the side
-thread starts from a settled conversation; OpenChamber 1.24's `/btw` can name any
-completed step, whose tool results stay with it. OpenCode's strictly exclusive
+thread starts from a settled conversation. OpenCode's strictly exclusive
 `before` would drop that reply (dated 2026-10-25, reported fork
 `ses_a7f8...`). With no messageID, `position: "at"`
 includes the complete active leaf. Fork returns `{cancelled}` (and sometimes `text`), not
@@ -177,7 +176,7 @@ summary. Subsequent replies use that marker as their display parent until a new
 user prompt, both live and in restored history. The native `clientMessageId` and
 active input identity still refer to the real prompt. Otherwise OpenChamber
 groups the continuation under the earlier prompt and moves older compaction
-markers below newer output. Evidence: the installed OpenChamber 1.24.2
+markers below newer output. Historical evidence: the installed OpenChamber 1.24.2
 `useAppFontEffects-DcdrFv2Z.js` parent-based turn projector and copied-session
 desktop/phone replay on 2026-10-18.
 
@@ -376,9 +375,9 @@ that start an agent turn still use the agent lifecycle events for completion.
 This is a connector-only mapping of the installed OmO protocol, not a change
 to OmO or its settings.
 
-### Background monitors
+### Background monitors (historical child-session projection)
 
-OpenChamber 1.24 has no surface for an agent's background watches, but it
+The original OpenChamber 1.24 integration had no surface for an agent's background watches, but it
 already lists child sessions under Subagents and gives each sidebar row a live
 dot. For v1 clients the connector therefore shows each OmO terminal monitor as
 a read-only child session of the session that started it: `busy` while the watch is live, `idle`
@@ -458,8 +457,10 @@ process exits, its watches are marked ended.
 OpenChamber 2.x clients do not see these children: `/api/session`,
 `/api/session/active` and the `/api/event` stream leave them out, and the
 watches are reported as OpenCode shells instead (next section). The
-`/api/global/event/ws` socket keeps them, because it carries v1-shaped events
-for OpenChamber 1.24.
+`/api/global/event/ws` socket retains its existing frame contract conservatively.
+The unprefixed v1 HTTP and SSE routes are retired; supported frontends start
+at OpenChamber 2.3.2. Monitor data still feeds the OmO Work section and the
+OpenCode shell projection.
 
 ### OmO background work as OpenCode shells
 
@@ -552,7 +553,7 @@ and the stop note naming one is refused before it reaches the agent.
 
 ### OmO Work status section
 
-`extensions/omo-work` is an OpenChamber 2.x Work Status section
+The OmO Work part of `extensions/antechamber` is an OpenChamber 2.x Work Status section
 (`contributes.statusSection`) for the session's work OpenChamber has no surface
 for: the todo list, the goal continuation timer and other wake sources.
 Monitors, eval cells and background terminal sessions are OpenChamber's own

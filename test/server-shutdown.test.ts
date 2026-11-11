@@ -105,25 +105,23 @@ test("busy shutdown completes while the SSE client tries to reconnect during dis
 
   // Given a busy real RPC fixture and a connected, consuming SSE client.
   await server.start();
-  const info: { id: string } = (await fetch(`${server.url}/session`, {
+  const info = (
+    (await fetch(`${server.url}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).then((response) => response.json())) as { data: { id: string } }
+  ).data;
+  const prompt = await fetch(`${server.url}/api/session/${info.id}/prompt`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: "{}",
-  }).then((response) => response.json())) as { id: string };
-  const prompt = await fetch(`${server.url}/session/${info.id}/message`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ parts: [{ type: "text", text: "pending-turn" }] }),
+    body: JSON.stringify({ text: "pending-turn" }),
   });
   await prompt.json();
-  const statuses = (await fetch(`${server.url}/session/status`).then((response) => response.json())) as Record<
-    string,
-    { type: string }
-  >;
-  assert.equal(statuses[info.id]!.type, "busy");
+  assert.equal(server["sessions"].get(info.id)?.status.type, "busy");
   const connect = (): Promise<IncomingMessage> =>
     new Promise((resolveClient, reject) => {
-      const request = get(`${server.url}/event`, { agent: false }, (response) => {
+      const request = get(`${server.url}/api/event`, { agent: false }, (response) => {
         clients.push(response);
         response.resume();
         resolveClient(response);

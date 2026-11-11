@@ -89,7 +89,7 @@ function openGlobalEventWebSocket(baseUrl: string): Promise<{ status: number; fr
   });
 }
 
-test("V124-013: upgrades the global event WebSocket", { timeout: 10_000 }, async (t) => {
+test("upgrades the retained global event WebSocket", { timeout: 10_000 }, async (t) => {
   const url = await startServer(t);
   const response = await openGlobalEventWebSocket(url);
   assert.equal(response.status, 101);

@@ -244,7 +244,7 @@ test("real RPC transport forwards blocking requests without auto-cancellation", 
   }
 });
 
-test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout: 20000 }, async (t) => {
+test("HTTP v2 lists replies malformed input unknown IDs and interrupt", { timeout: 20000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "approval-http-"));
   const keys = ["ANTECHAMBER_PI_BINARY", "ANTECHAMBER_STATE_DIR", "PI_CODING_AGENT_DIR"] as const;
   const previous = keys.map((key) => process.env[key]);
@@ -260,10 +260,8 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
   });
   try {
     await bounded(server.start(), "HTTP server startup");
-    const session = (await (await request(`${server.url}/session`, { method: "POST", body: "{}" })).json()) as {
-      id: string;
-    };
-    const stream = await bounded(fetch(`${server.url}/event`, { signal: signal.signal }), "SSE connection");
+    const session = await server["sessions"].create(root);
+    const stream = await bounded(fetch(`${server.url}/api/event`, { signal: signal.signal }), "SSE connection");
     const reader = stream.body?.getReader();
     assert.ok(reader);
     let buffer = "";
@@ -279,8 +277,9 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
           while ((end = buffer.indexOf("\n\n")) !== -1) {
             const frame = buffer.slice(0, end);
             buffer = buffer.slice(end + 2);
-            if (frame.startsWith("data: ")) {
-              const event = JSON.parse(frame.slice(6)) as { type: string };
+            const data = frame.split("\n").find((line) => line.startsWith("data: "));
+            if (data) {
+              const event = JSON.parse(data.slice(6)) as { type: string };
               events.emit(event.type, event);
             }
           }
@@ -294,13 +293,13 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
     })();
     const asked = waitFor(events, "permission.asked");
     await Promise.all([
-      request(`${server.url}/session/${session.id}/prompt_async`, {
+      request(`${server.url}/api/session/${session.id}/prompt`, {
         method: "POST",
-        body: JSON.stringify({ parts: [{ type: "text", text: "permission" }] }),
+        body: JSON.stringify({ text: "permission" }),
       }),
       asked,
     ]);
-    const pending = (await (await request(`${server.url}/permission`)).json()) as Array<{ id: string }>;
+    const pending = server["sessions"].permissions(session.id);
     assert.equal(pending.length, 1);
     const v2 = (await (await request(`${server.url}/api/permission/request`)).json()) as {
       data: Array<{ action: string; resources: string[] }>;
@@ -308,12 +307,17 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
     assert.equal(v2.data[0]?.action, "read");
     assert.deepEqual(v2.data[0]?.resources, ["/tmp/fixture"]);
     assert.equal(
-      (await request(`${server.url}/permission/missing/reply`, { method: "POST", body: '{"reply":"once"}' })).status,
+      (
+        await request(`${server.url}/api/session/${session.id}/permission/missing/reply`, {
+          method: "POST",
+          body: '{"reply":"once"}',
+        })
+      ).status,
       404,
     );
     assert.equal(
       (
-        await request(`${server.url}/permission/${pending[0]?.id}/reply`, {
+        await request(`${server.url}/api/session/${session.id}/permission/${pending[0]?.id}/reply`, {
           method: "POST",
           body: '{"reply":"not-real"}',
         })
@@ -329,12 +333,12 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
       replied,
     ]);
     assert.equal(reply.status, 204);
-    assert.deepEqual(await (await request(`${server.url}/permission`)).json(), []);
-    const questionAsked = waitFor(events, "question.asked");
+    assert.deepEqual(server["sessions"].permissions(session.id), []);
+    const questionAsked = waitFor(events, "form.created");
     await Promise.all([
-      request(`${server.url}/session/${session.id}/prompt_async`, {
+      request(`${server.url}/api/session/${session.id}/prompt`, {
         method: "POST",
-        body: JSON.stringify({ parts: [{ type: "text", text: "question" }] }),
+        body: JSON.stringify({ text: "question" }),
       }),
       questionAsked,
     ]);
@@ -342,10 +346,13 @@ test("HTTP v1 v2 lists replies malformed input unknown IDs and abort", { timeout
       data: Array<{ id: string }>;
     };
     assert.equal(questions.data.length, 1);
-    const rejected = waitFor(events, "question.rejected");
-    await Promise.all([request(`${server.url}/session/${session.id}/abort`, { method: "POST" }), rejected]);
-    assert.deepEqual(await (await request(`${server.url}/question`)).json(), []);
-    assert.equal((await request(`${server.url}/question/missing/reject`, { method: "POST" })).status, 404);
+    const rejected = waitFor(events, "form.cancelled");
+    await Promise.all([request(`${server.url}/api/session/${session.id}/interrupt`, { method: "POST" }), rejected]);
+    assert.deepEqual(server["sessions"].questions(session.id), []);
+    assert.equal(
+      (await request(`${server.url}/api/session/${session.id}/question/missing/reject`, { method: "POST" })).status,
+      404,
+    );
     signal.abort();
     await bounded(reading, "SSE shutdown");
     assert.equal(streamError, undefined);
