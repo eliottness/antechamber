@@ -18,10 +18,10 @@ Bun 1.4+ to run the CLI (`npm run dev`, `dist/cli.js`). You don't need `pi` or `
 
 | Command | What it does |
 |---|---|
-| `npm run build` | compile `src/` to `dist/` with `tsc`, then bundle the OmO Graph (`extensions/omo-dag/`) and OmO Work (`extensions/omo-work/`) extensions with esbuild |
+| `npm run build` | compile `src/` to `dist/` with `tsc`, then bundle the OpenChamber extension (`extensions/antechamber/`) with esbuild |
 | `npm run dev` | run the CLI from source with Bun, no build step |
-| `npm run typecheck` | `tsc -p tsconfig.check.json && tsc -p extensions/omo-dag/tsconfig.json && tsc -p extensions/omo-work/tsconfig.json` |
-| `npm test` | run the unit/integration test suite (`test/*.test.ts` and `extensions/*/test/*.test.ts`) |
+| `npm run typecheck` | `tsc -p tsconfig.check.json && tsc -p extensions/antechamber/tsconfig.json` |
+| `npm test` | run the unit/integration test suite (`test/*.test.ts` and the extension's `extensions/*/test/**/*.test.ts`) |
 | `npm run smoke` | end-to-end smoke test against a real `pi` process |
 | `npm run omo-smoke` | end-to-end smoke test against a real `omo` process |
 | `npm run probe` | dump raw pi/OmO RPC events for protocol inspection |

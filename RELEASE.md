@@ -11,9 +11,9 @@ bumps versions or pushes tags by hand. The
 2. **Bump.** `scripts/release.ts` computes the next patch version (for example
    `1.0.1` -> `1.0.2`) and writes it to:
    - `package.json` and `package-lock.json`,
-   - `extensions/omo-dag/package.json`, `extensions/omo-work/package.json` and
-     `extensions/omo-compat/package.json` (the extensions always carry the same
-     version as the package),
+   - `extensions/antechamber/package.json`. The extension always carries the
+     package's version, and that version is also the antechamber release its
+     launcher installs, so the extension pins the release it ships with,
    - `CHANGELOG.md`: the `[Unreleased]` notes move under
      `## [X.Y.Z] - YYYY-MM-DD`, and an empty `[Unreleased]` heading is kept.
      If `[Unreleased]` was empty, the notes are the commit subjects since the
@@ -24,16 +24,16 @@ bumps versions or pushes tags by hand. The
    one atomic push.
 5. **Publish.** `npm publish --provenance` to npm.
 6. **GitHub release.** It creates release `vX.Y.Z` with the CHANGELOG section as
-   notes and attaches the extension zips: `antechamber-omo-graph.zip` (built by
-   `npm run pack:extension`), `antechamber-omo-work.zip` and
-   `antechamber-omo-compat.zip`.
-7. **Extension branches.** `scripts/publish-extension-branches.ts` commits each
-   zip's content to its branch, `extension/omo-graph`, `extension/omo-work` or
-   `extension/omo-compat`, as one commit on top of the previous release's, and
-   pushes them in one atomic push. OpenChamber installs
-   `https://github.com/eliottness/antechamber#extension/omo-graph` (and the
-   others) from these branches and offers an update whenever the `version` at
-   the branch tip is newer than the installed one. Nobody commits to them by
+   notes and attaches the extension zip `antechamber-openchamber.zip` (built by
+   `npm run pack:extension`).
+7. **Extension branch.** `scripts/publish-extension-branches.ts` commits the
+   zip's content to `extension/antechamber`, as one commit on top of the
+   previous release's, and pushes it. OpenChamber installs
+   `https://github.com/eliottness/antechamber#extension/antechamber` from this
+   branch and offers an update whenever the `version` at the branch tip is
+   newer than the installed one; updating the extension makes its launcher
+   install the matching antechamber and OmO on OpenChamber's next start. It
+   needs the npm package of the same version, which step 5 published. Nobody commits to them by
    hand. They hold no workflow files, so pushing them runs no CI.
 
 The release commit does not trigger another release. Pushes made with
@@ -64,11 +64,7 @@ release by hand:
 ```bash
 # move the [Unreleased] notes under "## [X.Y.0] - YYYY-MM-DD" in CHANGELOG.md, then:
 npm version X.Y.0 --no-git-tag-version           # package.json + package-lock.json
-npm pkg set version=X.Y.0 --prefix extensions/omo-dag
-npm pkg set version=X.Y.0 --prefix extensions/omo-work
-npm pkg set version=X.Y.0 --prefix extensions/omo-compat
-npm pkg set version=X.Y.0 --prefix extensions/omo-work
-npm pkg set version=X.Y.0 --prefix extensions/omo-compat
+npm pkg set version=X.Y.0 --prefix extensions/antechamber
 git commit -am "chore(release): vX.Y.0"
 git tag -a vX.Y.0 -m vX.Y.0
 git push --atomic origin HEAD:main vX.Y.0
@@ -83,11 +79,16 @@ The version printed by `antechamber version` comes from `package.json`.
 `antechamber --version` intentionally prints the OpenCode API version that
 OpenChamber checks for, not the antechamber version.
 
-The extensions are installed by URL from
-`https://github.com/eliottness/antechamber#extension/omo-graph` and
-`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-omo-graph.zip`
-(likewise for omo-work and omo-compat), so keep the branch and asset names
-stable.
+The extension is installed by URL from
+`https://github.com/eliottness/antechamber#extension/antechamber` and
+`https://github.com/eliottness/antechamber/releases/latest/download/antechamber-openchamber.zip`,
+so keep the branch and asset names stable. The `extension/omo-graph`,
+`extension/omo-work` and `extension/omo-compat` branches of antechamber 1.x are
+no longer published.
+
+To move OmO to a newer `omo-ai`, change its exact version in `package.json`
+(`npm install omo-ai@<version> --save-exact`) in an ordinary PR; the next
+release ships it to everyone who updates the extension.
 
 ## One-time repository setup
 

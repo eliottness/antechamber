@@ -1,5 +1,5 @@
 /**
- * Background work of one session for the OmO Work status section (extensions/omo-work):
+ * Background work of one session for the OmO Work status section (extensions/antechamber):
  * todo phases, terminal monitors, detached eval cells, background terminal sessions and the
  * goal continuation timer. OpenChamber 2.x has no native surface for any of these.
  *

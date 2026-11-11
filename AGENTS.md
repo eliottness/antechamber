@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 antechamber is an OpenCode-compatible HTTP/SSE server, so OpenChamber can drive the pi coding agent (default backend: OmO) over JSONL stdio RPC (`<agent> --mode rpc`), with one agent process per session.
-Built with TypeScript 7 and ESM/NodeNext. The published CLI runs on Bun >=1.4 (`#!/usr/bin/env bun`); the dev tooling (tsc, tsx tests, esbuild) runs on Node >=22. It has zero runtime dependencies; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (1.24, OmO Graph) and its 2.x alias `@openchamber/sdk-v2` (OmO Work) for the bundled extensions.
+Built with TypeScript 7 and ESM/NodeNext. The published CLI runs on Bun >=1.4 (`#!/usr/bin/env bun`); the dev tooling (tsc, tsx tests, esbuild) runs on Node >=22. Its one runtime dependency is `omo-ai`, pinned to an exact version so each release ships the OmO it was tested with; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (2.x) for the bundled extension.
 
 ```
 OpenChamber --HTTP/SSE (OpenCode v1 + v2 /api subset)--> antechamber --JSONL stdio--> omo|pi --mode rpc
@@ -19,11 +19,10 @@ antechamber/
 ├── test/      # hermetic node:test suite + fake-agent fixtures -> test/AGENTS.md
 ├── contrib/   # live-agent smokes/probes, cost tokens, not in CI -> contrib/AGENTS.md
 ├── bin/       # opencode-antechamber: OpenChamber launcher shim (serve, --version, upgrade); opencode-pi = deprecated alias
-├── extensions/omo-dag/  # OmO Graph OpenChamber extension: sandboxed panel + read-only service -> its README.md
-├── extensions/omo-work/ # OmO Work: OpenChamber 2.x Work Status section + relay service -> its README.md
+├── extensions/antechamber/ # the OpenChamber 2.x extension: runtime launcher, OmO Graph panel, OmO Work section, tool headers -> its README.md
 └── docs/      # architecture, api-surface (route contract), configuration (env), backends/omo.md
 ```
-Published package = `dist/` + `bin/` shims + the built OmO Graph and OmO Work extensions; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
+Published package = `dist/` + `bin/` shims + the built antechamber extension; the `antechamber` bin maps to `dist/cli.js`. There is no library `exports` field.
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
@@ -57,7 +56,7 @@ Centrality measured by counting relative imports across src/test/contrib.
   Do not "clean up" code toward those rules.
 - tsconfig is strict with `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes`, so build optional props conditionally (`...(x ? {k: x} : {})`).
 - Relative imports carry `.js` suffixes (NodeNext). Filenames are kebab-case.
-- `tsc` compiles only `src/`; `npm run build` then bundles `extensions/omo-dag` and `extensions/omo-work` with esbuild (own tsconfig, DOM + Node). `npm run typecheck` uses `tsconfig.check.json` and covers `src`, `test` and `contrib`.
+- `tsc` compiles only `src/`; `npm run build` then bundles `extensions/antechamber` with esbuild (own tsconfig, DOM + Node): panel and section as IIFEs, the service as Node ESM, the launcher as ESM for Bun. `npm run typecheck` uses `tsconfig.check.json` and covers `src`, `test` and `contrib`.
 - Env vars use the `ANTECHAMBER_` prefix; `OCPI_` is a deprecated fallback. The agent dir is resolved from `OMO_CODING_AGENT_DIR`, then `SENPI_`, then `PI_` (no prefix).
   Auth uses OpenCode's `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME`.
 - Commits follow Conventional Commits, scoped by area (`fix(session): ...`, `feat(tools): ...`). Add user-visible changes to `[Unreleased]` in `CHANGELOG.md`.
@@ -82,7 +81,7 @@ For every bug report:
 - Fabricating success for unsupported OpenCode capabilities (share, MCP, OAuth...). Return 400.
 - Killing processes by command-line pattern, or touching OmO's shared LSP daemon or other clients' task hosts.
 - Personal paths, hostnames or credentials in code, fixtures or docs (this is a PR checklist item).
-- Adding runtime dependencies. There are none today. The published package is `dist/`, the `bin/` shims and the built extensions (`files` in package.json).
+- Adding runtime dependencies. `omo-ai` (exact version) is the only one. The published package is `dist/`, the `bin/` shims and the built extension (`files` in package.json).
 
 ## UNIQUE STYLES
 - Protocol behavior claims in `docs/architecture.md` cite installed OmO bundle files and dated probes. Keep that evidence style when documenting new RPC semantics.
@@ -112,4 +111,4 @@ The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check
 - `reference/` (gitignored) holds shallow clones of openchamber and pi-mono for protocol lookups. It is not part of the build and Biome ignores it.
 - `.omo/` is gitignored and Biome-ignored.
 - The route smoke reads the maintained static route table in `docs/api-surface.md`; parameterized routes are documented separately.
-- `npm run typecheck` runs `tsc -p tsconfig.check.json`, `tsc -p extensions/omo-dag/tsconfig.json` and `tsc -p extensions/omo-work/tsconfig.json`.
+- `npm run typecheck` runs `tsc -p tsconfig.check.json` and `tsc -p extensions/antechamber/tsconfig.json`.
