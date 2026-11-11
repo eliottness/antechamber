@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { normalizeRegistry, normalizeTask, type Registry, type TaskRecord } from "./graph.ts";
 
 export interface StoreRoots {
@@ -82,10 +83,42 @@ class JsonCache<T> {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+/**
+ * antechamber's registry: `sessions.sqlite` (one row per session) since 2.0, `sessions.json` before. A read-only
+ * connection per database is kept, and rows are read again only when another connection committed.
+ */
+class RegistryReader {
+  private readonly databases = new Map<string, { db: DatabaseSync; version: unknown; value: Registry }>();
+  private readonly files = new JsonCache<Registry>();
+
+  read(dir: string): Registry | undefined {
+    const path = join(dir, "sessions.sqlite");
+    if (!isRegularFile(path)) {
+      this.databases.get(path)?.db.close();
+      this.databases.delete(path);
+      return this.files.read(join(dir, "sessions.json"), normalizeRegistry);
+    }
+    let open = this.databases.get(path);
+    if (!open) {
+      open = { db: new DatabaseSync(path, { readOnly: true }), version: undefined, value: {} };
+      this.databases.set(path, open);
+    }
+    const version = open.db.prepare("PRAGMA data_version").get()?.data_version;
+    if (version !== open.version) {
+      const rows: Record<string, unknown> = {};
+      for (const row of open.db.prepare("SELECT id, payload FROM sessions").all())
+        rows[String(row.id)] = JSON.parse(String(row.payload));
+      open.value = normalizeRegistry(rows) ?? {};
+      open.version = version;
+    }
+    return open.value;
+  }
+}
+
 export class TaskStore {
   private readonly tasks = new JsonCache<TaskRecord>();
   private readonly json = new JsonCache<Record<string, unknown>>();
-  private readonly registries = new JsonCache<Registry>();
+  private readonly registries = new RegistryReader();
 
   constructor(private readonly roots: StoreRoots) {}
 
@@ -116,7 +149,7 @@ export class TaskStore {
   loadRegistry(): Registry {
     const merged: Registry = {};
     for (const dir of [...this.roots.stateDirs].reverse()) {
-      const reg = this.registries.read(join(dir, "sessions.json"), normalizeRegistry);
+      const reg = this.registries.read(dir);
       if (reg) Object.assign(merged, reg);
     }
     return merged;

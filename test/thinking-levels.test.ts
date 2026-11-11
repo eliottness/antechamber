@@ -131,13 +131,11 @@ test("a cold-restored v2 session record reports the model and level its file las
   await first.stop();
   firstStopped = true;
   // A session that never ran through this adapter has no registry model; only its file records one.
-  const registryPath = join(directory, "state", "sessions.json");
-  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as Record<
-    string,
-    { model?: unknown; piPath: string }
-  >;
-  delete registry[ids[1]!]!.model;
-  writeFileSync(registryPath, JSON.stringify(registry));
+  const registry = new SessionStore(join(directory, "state"));
+  const secondEntry = registry.get(ids[1]!);
+  assert.ok(secondEntry);
+  const { model: _model, ...withoutModel } = secondEntry;
+  registry.set(ids[1]!, withoutModel);
 
   const second = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: directory });
   t.after(() => second.stop());
@@ -151,7 +149,9 @@ test("a cold-restored v2 session record reports the model and level its file las
   for (const id of ids) assert.deepEqual(await record(id), { id: "mapped", providerID: "fake", variant: "high" });
 
   // Another OmO client continues the dormant session and changes the level; resending the old one would undo it.
-  const piPath = registry[ids[0]!]!.piPath;
+  const firstEntry = registry.get(ids[0]!);
+  assert.ok(firstEntry);
+  const piPath = firstEntry.piPath;
   const lines = readFileSync(piPath, "utf8").trim().split("\n");
   const parentId = (JSON.parse(lines.at(-1)!) as { id: string }).id;
   const external = {

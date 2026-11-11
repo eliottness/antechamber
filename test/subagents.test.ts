@@ -477,7 +477,8 @@ test("single real RPC task creates a linked nested session and strips the suffix
 
 test("F2 B3 child registry save failure emits a visible session error", (t) => {
   const { manager, parent, events, state } = setup(t);
-  mkdirSync(join(state, "sessions.json"), { recursive: true });
+  rmSync(state, { recursive: true, force: true });
+  writeFileSync(state, "not a directory");
   start(manager, parent, { description: "save failure", prompt: "child job", category: "quick" });
   result(manager, parent, { task_id: "st_save_failure", status: "completed", final_response: "done" });
   assert.ok(

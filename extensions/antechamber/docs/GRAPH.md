@@ -25,7 +25,7 @@ does that in ~2 ms with an mtime cache and returns one JSON document.
    `description` / `name`, `agent_type` / `category`, `model`, the
    `created_at` / `started_at` / `terminal_at` timestamps,
    `final_response`, `error_message`, `run_stats`, `spawn_spec.prompt`.
-2. **Connector registry**: `<stateDir>/sessions.json`, mapping OpenChamber
+2. **Connector registry**: `<stateDir>/sessions.sqlite` (`sessions.json` before antechamber 2.0), mapping OpenChamber
    session ids to OmO session ids and titles.
 
 Task discovery reads regular `.json` files and skips directories and symlinks.
@@ -102,7 +102,7 @@ piling onto one point.
   and binds to `127.0.0.1` on the port the host assigns.
 - The optional `agentDir` / `stateDir` query parameters let the panel point
   it at other directories. It reads only `*.json` task records and
-  `sessions.json` under them. The service runs with the user's permissions
+  `sessions.sqlite` (or `sessions.json`) under them. The service runs with the user's permissions
   (OpenChamber's approval dialog says so), so this is not a sandbox. It just
   keeps the surface small.
 - Prompts and final responses stay local. They reach only the panel the user
