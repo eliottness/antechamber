@@ -1543,8 +1543,9 @@ test("a repeated omo.task.updated row only changing live progress emits and save
   const store = h.manager.subagents["store"];
   const set = store.set.bind(store);
   let saves = 0;
+  // Count only this task's row: the parent's own record can be saved meanwhile by unrelated agent events.
   store.set = (...args: Parameters<typeof set>) => {
-    saves++;
+    if (args[0] === ocIdFor("st_quiet")) saves++;
     return set(...args);
   };
   const before = h.events.length;

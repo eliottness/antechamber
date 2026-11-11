@@ -275,17 +275,26 @@ test("v2 session creation rejects invalid settings and concurrent duplicate iden
   assert.deepEqual(responses.map((response) => response.status).sort(), [200, 400]);
 });
 
+/** Prompts and returns once the turn has ended: v2 answers at admission, before the agent replies. */
 async function sendPrompt(url: string, sessionId: string, text: string): Promise<void> {
-  assert.equal(
-    (
-      await fetch(`${url}/api/session/${sessionId}/prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      })
-    ).status,
-    200,
-  );
+  const stream = startEvents(url);
+  try {
+    await stream.ready;
+    const idle = stream.waitFor("session.idle", (event) => event.data?.sessionID === sessionId);
+    assert.equal(
+      (
+        await fetch(`${url}/api/session/${sessionId}/prompt`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        })
+      ).status,
+      200,
+    );
+    await idle;
+  } finally {
+    stream.close();
+  }
 }
 
 for (const failure of ["rejected", "unsuccessful"])
