@@ -49,30 +49,23 @@ One line per module in `src/`:
 | `config.ts` | Environment variable reading (`ANTECHAMBER_`/`OCPI_` prefix fallback), state directory resolution |
 | `types.ts` | Shared OpenCode v1 type definitions |
 
-`extensions/omo-dag/` holds the OmO Graph OpenChamber extension: a sandboxed
-panel (`src/panel.ts`, `panel/index.html`) and a read-only local service
-(`src/service.ts`) that builds the sub-agent graph from OmO's task store and
-the session registry. It has its own `tsconfig.json` (DOM and Node), because
-the panel runs in a browser iframe. It shares the root toolchain:
-`npm run build` bundles it with esbuild (`npm run build:extension` alone), and
-`npm run typecheck`, `npm run lint` and `npm test` cover it. The bundles
-(`panel/main.js`, `service/main.js`) are gitignored but listed in the
-package's `files`. See [extensions/omo-dag/README.md](../extensions/omo-dag/README.md).
+`extensions/antechamber/` holds the OpenChamber 2.x extension, one package with:
 
-`extensions/omo-work/` holds the OmO Work extension for OpenChamber 2.x: a
-Work Status section (`src/status.ts`, `status/index.html`) and a local service
-(`src/service.ts`, `src/discovery.ts`) that finds the running antechamber
-through its run record and relays `/antechamber/work-status`. It imports the
-adapter's snapshot types, uses the 2.x SDK through the `@openchamber/sdk-v2`
-alias, and builds, typechecks and tests with the same root commands. See
-[extensions/omo-work/README.md](../extensions/omo-work/README.md).
+- the runtime: `bin/opencode-antechamber` (the program OpenChamber runs as its OpenCode CLI) and
+  `src/runtime/` (`runtime.ts` installs the antechamber release named by the extension's version with Bun into
+  `~/.antechamber/runtime/<version>`, behind a lock shared with the service; `launcher.ts` is its Bun entry);
+- OmO Graph: a sandboxed panel (`src/graph/panel.ts`, `panel/index.html`) and the `/graph` route
+  (`src/graph/routes.ts`, `store.ts`) that builds the sub-agent graph from OmO's task store and the session
+  registry (`sessions.sqlite`, read-only);
+- OmO Work: a Work Status section (`src/work/status.ts`, `status/index.html`) and the `/status` relay
+  (`src/work/routes.ts`, `discovery.ts`) to the running antechamber's `/antechamber/work-status` routes;
+- OmO tool headers: `contributes.tools` rules in `package.json` that read `metadata.evalTitle`/`agentTitle`;
+- one host service, `src/service.ts`, serving all of the routes above plus `/runtime`.
 
-`extensions/omo-compat/` holds the OmO Compatibility extension: a manifest with
-no code. It declares OpenChamber display rules (`contributes.tools`) for tool
-calls antechamber maps from OmO, such as the eval card header read from
-`metadata.evalTitle`/`evalSubtitle`. Display behavior that only an extension can
-add goes there, not in OmO Graph. See
-[extensions/omo-compat/README.md](../extensions/omo-compat/README.md).
+It has its own `tsconfig.json` (DOM and Node) and shares the root toolchain: `npm run build` bundles it with
+esbuild (`npm run build:extension` alone), and `npm run typecheck`, `npm run lint` and `npm test` cover it. The
+bundles (`panel/main.js`, `status/main.js`, `service/main.js`, `runtime/launcher.js`) are gitignored but listed in
+the package's `files`. See [extensions/antechamber/README.md](../extensions/antechamber/README.md).
 
 ## Testing
 
@@ -82,15 +75,15 @@ npm test
 npm run build
 ```
 
-`npm test` runs `test/*.test.ts` and `extensions/*/test/*.test.ts` under
+`npm test` runs `test/*.test.ts` and `extensions/*/test/**/*.test.ts` under
 Node's built-in test runner (`tsx --test`). The published CLI runs on Bun, but
 the suite stays on Node: its fake child processes and builtin-module mocks rely
 on Node internals that Bun does not expose. CI's `bun-runtime` job builds the
 package and serves a turn through `bin/opencode-antechamber` under Bun 1.4.x and
-the latest Bun. The extension's
-`connector-parity.test.ts` imports `ocIdFor` and `SessionRegistryEntry` from
+the latest Bun, and installs a locally packed runtime through the extension's launcher. The extension's
+`test/graph/connector-parity.test.ts` imports `ocIdFor`, `SessionRegistryEntry` and `SessionStore` from
 `src/session-store.ts`. Changing session ids or registry fields therefore
-means updating the extension in the same change. OmO Work's `src/model.ts`
+means updating the extension in the same change. OmO Work's `src/work/model.ts`
 imports its snapshot types from `src/work-status.ts`, so a snapshot change
 fails `npm run typecheck` until the section follows; `manifest.test.ts` runs
 the OpenChamber 2.x manifest parser on its `package.json`. These tests are hermetic: they don't require a real `pi` or
