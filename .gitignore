@@ -1,10 +1,5 @@
 node_modules/
 dist/
-# OpenChamber extension bundles (built by `npm run build`, shipped in the npm package)
-extensions/*/panel/main.js
-extensions/*/service/main.js
-extensions/*/status/main.js
-extensions/*/runtime/launcher.js
 .env
 *.log
 .DS_Store

@@ -11,7 +11,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 - **One OpenChamber extension for everything.** `extensions/antechamber` replaces OmO Graph, OmO Work and OmO
   Compatibility: the Graph rail panel and page, the Work Status section and the OmO tool-card headers come in one
-  package, behind one approval. Install it from `https://github.com/eliottness/antechamber#extension/antechamber`, then
+  package, behind one approval. Install it from `https://github.com/eliottness/antechamber` (the repository root is the
+  extension; `#extension/antechamber` also works), then
   set Settings → OpenCode CLI to its `bin/opencode-antechamber` (the Graph panel's settings show the path). On its
   first start the launcher installs, with Bun, the antechamber release the extension's version names and the OmO
   that release pins, into `~/.antechamber/runtime/<version>`; the extension's service installs it ahead of time when a
