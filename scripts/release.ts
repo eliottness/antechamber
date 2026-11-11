@@ -1,5 +1,5 @@
 // Prepares a patch release in the working tree: bumps package.json,
-// package-lock.json and the OmO Graph extension to the next patch version and
+// package-lock.json and the antechamber extension to the next patch version and
 // moves the CHANGELOG [Unreleased] notes under a new version heading. It does
 // not commit, tag or publish; the release workflow does that.
 //
@@ -86,12 +86,11 @@ function main(argv: readonly string[]): void {
   rootPackage.version = version;
   writeJson(lockPath, lock);
 
-  for (const extension of ["omo-dag", "omo-work", "omo-compat"]) {
-    const extPath = join(root, "extensions", extension, "package.json");
-    const ext = readJson(extPath);
-    ext.version = version;
-    writeJson(extPath, ext);
-  }
+  // The extension's version is also the antechamber release its launcher installs.
+  const extPath = join(root, "extensions", "antechamber", "package.json");
+  const ext = readJson(extPath);
+  ext.version = version;
+  writeJson(extPath, ext);
 
   const changelogPath = join(root, "CHANGELOG.md");
   const fallback = notesFromSubjects(subjectsSinceLastTag(root));

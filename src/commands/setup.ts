@@ -36,28 +36,13 @@ function writeAtomically(path: string, content: string, ctx: CommandContext): vo
   ctx.fs.renameSync(temporary, path);
 }
 
-/** The bundled OmO Graph extension folder, when this installation has its built files. */
-function omoGraphExtensionDir(ctx: CommandContext): string | undefined {
-  const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "omo-dag");
-  const built = ["package.json", "panel/main.js", "service/main.js"].every((file) =>
-    ctx.fs.existsSync(join(dir, file)),
+/** The bundled antechamber OpenChamber extension folder, when this installation has its built files. */
+function antechamberExtensionDir(ctx: CommandContext): string | undefined {
+  const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "antechamber");
+  const built = ["package.json", "panel/main.js", "status/main.js", "service/main.js", "runtime/launcher.js"].every(
+    (file) => ctx.fs.existsSync(join(dir, file)),
   );
   return built ? dir : undefined;
-}
-
-/** The bundled OmO Work status-section extension folder, when this installation has its built files. */
-function omoWorkExtensionDir(ctx: CommandContext): string | undefined {
-  const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "omo-work");
-  const built = ["package.json", "status/main.js", "service/main.js"].every((file) =>
-    ctx.fs.existsSync(join(dir, file)),
-  );
-  return built ? dir : undefined;
-}
-
-/** The bundled OmO Compatibility extension folder; it is a manifest only, so it needs no build. */
-function omoCompatExtensionDir(ctx: CommandContext): string | undefined {
-  const dir = resolve(dirname(ctx.cliPath), "..", "extensions", "omo-compat");
-  return ctx.fs.existsSync(join(dir, "package.json")) ? dir : undefined;
 }
 
 /** Plan all inputs before applying changes; dependencies are injected for hermetic tests. */
@@ -208,22 +193,10 @@ export function setup(options: SetupOptions, ctx: CommandContext = createContext
   if (options.profile !== undefined && options.settings === undefined) {
     report(`OPENCHAMBER_DATA_DIR=${shellQuote(resolve(ctx.cwd, options.profile))} openchamber serve`);
   }
-  const extension = omoGraphExtensionDir(ctx);
+  const extension = antechamberExtensionDir(ctx);
   if (extension !== undefined) {
     report(
-      `Optional OmO Graph extension: in OpenChamber, Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${extension}`,
-    );
-  }
-  const work = omoWorkExtensionDir(ctx);
-  if (work !== undefined) {
-    report(
-      `Optional OmO Work section (todo phases, monitors, eval cells; OpenChamber 2.x): Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${work}`,
-    );
-  }
-  const compat = omoCompatExtensionDir(ctx);
-  if (compat !== undefined) {
-    report(
-      `Optional OmO Compatibility extension (eval card headers): Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${compat}`,
+      `Optional antechamber extension (OmO Graph, OmO Work, OmO tool headers; OpenChamber 2.3.2+): Settings \u2192 Extensions \u2192 Add \u2192 Folder: ${extension}`,
     );
   }
   return lines;
