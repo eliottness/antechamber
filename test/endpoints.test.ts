@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -213,14 +213,16 @@ test("R-033: registry updates retain unrelated records and reject malformed meta
   assert.equal(restored.idFor("native"), "ses_custom");
   assert.equal(restored.get("ses_custom")?.title, "renamed");
   assert.deepEqual(restored.get("ses_custom")?.metadata, { openchamber: { work: { state: "active" } } });
+  const legacyState = join(root, "legacy");
+  mkdirSync(legacyState);
   writeFileSync(
-    join(root, "sessions.json"),
+    join(legacyState, "sessions.json"),
     JSON.stringify({
       ses_valid: entry,
       ses_invalid: { ...entry, metadata: [] },
     }),
   );
-  const parsed = new SessionStore(root);
+  const parsed = new SessionStore(legacyState);
   assert.ok(parsed.get("ses_valid"));
   assert.equal(parsed.get("ses_invalid"), undefined);
 });

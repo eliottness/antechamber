@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -51,7 +51,8 @@ test("R-027: registry paths are private under umask 022", (t) => {
   new SessionStore(state).set("ses_private", entry(root, "pi_private"));
 
   assert.equal(statSync(state).mode & 0o777, 0o700);
-  assert.equal(statSync(join(state, "sessions.json")).mode & 0o777, 0o600);
+  for (const name of ["sessions.sqlite", "sessions.sqlite-wal", "sessions.sqlite-shm"])
+    assert.equal(statSync(join(state, name)).mode & 0o777, 0o600);
 });
 
 test("R-028: malformed nested registry records are rejected", (t) => {
@@ -71,7 +72,9 @@ test("R-028: malformed nested registry records are rejected", (t) => {
 
   const store = new SessionStore(state);
   assert.equal(store.get("ses_bad"), undefined);
-  assert.deepEqual(JSON.parse(readFileSync(join(state, "sessions.json"), "utf8")).ses_bad.piSessionId, "pi_bad");
+  const backup = readdirSync(state).find((name) => name.startsWith("sessions.json.migrated-"));
+  assert.ok(backup);
+  assert.equal(JSON.parse(readFileSync(join(state, backup), "utf8")).ses_bad.piSessionId, "pi_bad");
 });
 
 const reviewFixture = resolve("test/fixtures/review-sessions-control.mjs");

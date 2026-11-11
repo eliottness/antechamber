@@ -6,7 +6,7 @@
  * so the adapter never needs its own transcript store — only:
  *
  *   1. a scan of that directory to rebuild the sidebar after a restart, and
- *   2. a small registry JSON for adapter-owned metadata that pi does not
+ *   2. a SQLite registry for adapter-owned metadata that pi does not
  *      keep (titles, conversation cursors and child-task metadata).
  *
  * OpenChamber session ids for restored sessions are derived deterministically
@@ -26,11 +26,10 @@ import {
   readdirSync,
   renameSync,
   statSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { piAgentDir } from "./agent-dir.js";
 import type { SessionTreeState } from "./session-tree.js";
 import { isPromptPart } from "./prompt-parts.js";
@@ -122,9 +121,6 @@ const TITLE_MAX_LINES = 200;
 const TITLE_MAX_CHARS = 60;
 const REGISTRY_DIRECTORY_MODE = 0o700;
 const REGISTRY_FILE_MODE = 0o600;
-const REGISTRY_LOCK_RETRY_MS = 10;
-const REGISTRY_LOCK_STALE_MS = 5_000;
-const registryLockWaiter = new Int32Array(new SharedArrayBuffer(4));
 
 function readHead(path: string, bytes = SNIFF_BYTES): string {
   const fd = openSync(path, "r");
@@ -444,7 +440,7 @@ export function scanPiSessions(directory: string): ScannedSession[] {
 
 /**
  * Persistent oc-session-id → metadata registry (title overrides, known pi
- * paths). Atomic writes, lazy load, corrupt file degrades to an empty map.
+ * paths). Legacy JSON records are validated at migration; SQLite writes are atomic.
  */
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -629,141 +625,193 @@ function errorCode(error: unknown): string | undefined {
 export class SessionStore {
   readonly stateDir: string;
   private readonly file: string;
-  private entries: Map<string, SessionRegistryEntry> | undefined;
-  /** The registry bytes `entries` was parsed from or last written as; equal bytes on disk mean the cache is current. */
-  private raw: Buffer | undefined;
+  private db: DatabaseSync | undefined;
+  private version: number | bigint | undefined;
+  private readonly entries = new Map<string, SessionRegistryEntry>();
   private batchState:
     | {
-        entries: Map<string, SessionRegistryEntry> | undefined;
-        /** Entries already cloned for this batch, so staged reads can be mutated without touching the cache. */
-        isolated: WeakSet<SessionRegistryEntry>;
-        changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean>;
+        entries: Map<string, SessionRegistryEntry | undefined>;
+        changes: Array<{
+          id: string;
+          apply: (previous: SessionRegistryEntry | undefined) => SessionRegistryEntry | undefined;
+        }>;
       }
     | undefined;
 
   constructor(stateDir?: string) {
     const dir = stateDir ?? envSetting("STATE_DIR") ?? defaultStateDir();
     this.stateDir = dir;
-    this.file = join(dir, "sessions.json");
+    this.file = join(dir, "sessions.sqlite");
   }
 
-  private load(): Map<string, SessionRegistryEntry> {
-    if (this.batchState !== undefined) {
-      // Shallow: changes replace whole entries, and get() clones an entry before handing it out.
-      this.batchState.entries ??= new Map(this.committed());
-      return this.batchState.entries;
-    }
-    return this.committed();
-  }
-
-  private committed(): Map<string, SessionRegistryEntry> {
-    if (this.entries !== undefined) return this.entries;
-    this.raw = this.readRaw();
-    this.entries = this.parseEntries(this.raw);
-    return this.entries;
-  }
-
-  private readRaw(): Buffer | undefined {
-    try {
-      return readFileSync(this.file);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private parseEntries(raw: Buffer | undefined): Map<string, SessionRegistryEntry> {
-    const entries = new Map<string, SessionRegistryEntry>();
-    if (raw === undefined) return entries;
-    try {
-      const parsed: unknown = JSON.parse(raw.toString("utf8"));
-      if (!record(parsed)) return entries;
-      for (const [id, value] of Object.entries(parsed)) if (registryEntry(value)) entries.set(id, value);
-    } catch {
-      /* corrupt — start empty */
-    }
-    return entries;
-  }
-
-  private withRegistryLock<T>(action: () => T): T {
-    const lock = `${this.file}.lock`;
-    let fd: number | undefined;
+  private database(write = false): DatabaseSync | undefined {
+    if (this.db !== undefined) return this.db;
+    const legacy = join(this.stateDir, "sessions.json");
+    if (!write && !existsSync(this.file) && !existsSync(legacy)) return undefined;
+    let db: DatabaseSync | undefined;
     try {
       mkdirSync(this.stateDir, { recursive: true, mode: REGISTRY_DIRECTORY_MODE });
       chmodSync(this.stateDir, REGISTRY_DIRECTORY_MODE);
-      for (;;) {
+      // SQLite inherits the database mode for WAL/SHM; set it before enabling WAL.
+      closeSync(openSync(this.file, "a", REGISTRY_FILE_MODE));
+      chmodSync(this.file, REGISTRY_FILE_MODE);
+      db = new DatabaseSync(this.file);
+      db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;");
+      db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY, payload TEXT NOT NULL, pi_session_id TEXT NOT NULL,
+        directory TEXT NOT NULL, parent_id TEXT, has_task INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS sessions_pi ON sessions(pi_session_id);
+      CREATE INDEX IF NOT EXISTS sessions_directory ON sessions(directory);
+      CREATE INDEX IF NOT EXISTS sessions_children ON sessions(parent_id) WHERE has_task = 1;
+      CREATE TABLE IF NOT EXISTS registry_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+      this.migrate(db, legacy);
+      for (const suffix of ["-wal", "-shm"]) {
+        const path = this.file + suffix;
+        if (existsSync(path)) chmodSync(path, REGISTRY_FILE_MODE);
+      }
+      this.db = db;
+      return db;
+    } catch (error) {
+      db?.close();
+      throw new SessionPersistenceError(this.file, error);
+    }
+  }
+
+  private migrate(db: DatabaseSync, legacy: string): void {
+    if (!existsSync(legacy)) return;
+    db.exec("BEGIN IMMEDIATE");
+    let backup: string | undefined;
+    try {
+      const imported = db.prepare("SELECT value FROM registry_meta WHERE key = 'legacy_backup'").get();
+      if (typeof imported?.value === "string") backup = imported.value;
+      else if (db.prepare("SELECT 1 FROM sessions LIMIT 1").get() === undefined && existsSync(legacy)) {
+        let parsed: unknown;
         try {
-          fd = openSync(lock, "wx", REGISTRY_FILE_MODE);
-          break;
+          parsed = JSON.parse(readFileSync(legacy, "utf8"));
         } catch (error) {
-          if (errorCode(error) !== "EEXIST") throw error;
-          try {
-            if (Date.now() - statSync(lock).mtimeMs >= REGISTRY_LOCK_STALE_MS) {
-              unlinkSync(lock);
-              continue;
-            }
-          } catch (staleLockError) {
-            if (errorCode(staleLockError) !== "ENOENT") throw staleLockError;
-            continue;
-          }
-          Atomics.wait(registryLockWaiter, 0, 0, REGISTRY_LOCK_RETRY_MS);
+          if (!(error instanceof SyntaxError)) throw error;
+          // Preserve malformed JSON untouched; a later repair can still be imported.
+        }
+        if (record(parsed)) {
+          const upsert = this.upsert(db);
+          for (const [id, entry] of Object.entries(parsed)) if (registryEntry(entry)) this.writeRow(upsert, id, entry);
+          backup = `${legacy}.migrated-${Date.now()}-${process.pid}`;
+          db.prepare("INSERT INTO registry_meta VALUES ('legacy_backup', ?)").run(backup);
         }
       }
-      return action();
+      db.exec("COMMIT");
     } catch (error) {
-      throw new SessionPersistenceError(this.file, error);
-    } finally {
-      if (fd !== undefined) {
-        closeSync(fd);
-        unlinkSync(lock);
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    // The durable marker handles a crash after COMMIT but before rename, including an empty import.
+    // Never overwrite an existing backup or import the same legacy file after sessions are deleted.
+    if (backup !== undefined && !existsSync(backup)) {
+      try {
+        chmodSync(legacy, REGISTRY_FILE_MODE);
+        renameSync(legacy, backup);
+      } catch (error) {
+        if (errorCode(error) !== "ENOENT") throw error;
       }
     }
   }
 
-  private persist(entries: Map<string, SessionRegistryEntry>): Buffer {
-    const obj = Object.fromEntries([...entries].map(([id, entry]) => [id, persistedEntry(entry)]));
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    const data = Buffer.from(JSON.stringify(obj));
-    writeFileSync(tmp, data, { mode: REGISTRY_FILE_MODE });
-    chmodSync(tmp, REGISTRY_FILE_MODE);
-    renameSync(tmp, this.file);
-    return data;
+  private upsert(db: DatabaseSync) {
+    return db.prepare(`INSERT INTO sessions (id, payload, pi_session_id, directory, parent_id, has_task)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+      payload=excluded.payload, pi_session_id=excluded.pi_session_id, directory=excluded.directory,
+      parent_id=excluded.parent_id, has_task=excluded.has_task`);
   }
 
-  private mutate(change: (entries: Map<string, SessionRegistryEntry>) => boolean): void {
-    if (this.batchState !== undefined) {
-      this.batchState.changes.push(change);
-      change(this.load());
-      return;
+  private writeRow(statement: ReturnType<SessionStore["upsert"]>, id: string, entry: SessionRegistryEntry): void {
+    statement.run(
+      id,
+      JSON.stringify(persistedEntry(entry)),
+      entry.piSessionId,
+      entry.directory,
+      entry.parentID ?? null,
+      entry.task === undefined ? 0 : 1,
+    );
+  }
+
+  private refresh(db: DatabaseSync): void {
+    const version = db.prepare("PRAGMA data_version").get()?.data_version;
+    if (typeof version !== "number" && typeof version !== "bigint") throw new Error("Invalid SQLite data_version");
+    if (this.version !== version) {
+      this.entries.clear();
+      this.version = version;
     }
-    this.withRegistryLock(() => {
-      // Another process may have written since; only parse again when the bytes differ.
-      const raw = this.readRaw();
-      const entries =
-        this.entries !== undefined && raw !== undefined && this.raw !== undefined && raw.equals(this.raw)
-          ? new Map(this.entries)
-          : this.parseEntries(raw);
-      const written = change(entries) ? this.persist(entries) : raw;
-      this.entries = entries;
-      this.raw = written;
-    });
   }
 
-  /** Synchronous restoration reads its own changes, then merges them under one short-lived write lock. */
+  private read(db: DatabaseSync, id: string): SessionRegistryEntry | undefined {
+    const cached = this.entries.get(id);
+    if (cached !== undefined) return cached;
+    const payload = db.prepare("SELECT payload FROM sessions WHERE id = ?").get(id)?.payload;
+    if (typeof payload !== "string") return undefined;
+    const entry: unknown = JSON.parse(payload);
+    if (!registryEntry(entry)) return undefined;
+    this.entries.set(id, entry);
+    return entry;
+  }
+
+  private persist(changes: NonNullable<SessionStore["batchState"]>["changes"]): void {
+    try {
+      mkdirSync(this.stateDir, { recursive: true, mode: REGISTRY_DIRECTORY_MODE });
+      chmodSync(this.stateDir, REGISTRY_DIRECTORY_MODE);
+      const db = this.database(true)!;
+      db.exec("BEGIN IMMEDIATE");
+      const changed = new Map<string, SessionRegistryEntry | undefined>();
+      try {
+        this.refresh(db);
+        for (const { id, apply } of changes) {
+          const previous = changed.has(id) ? changed.get(id) : this.read(db, id);
+          const next = apply(previous);
+          if (next !== undefined || previous !== undefined) changed.set(id, next);
+        }
+        const upsert = this.upsert(db);
+        const remove = db.prepare("DELETE FROM sessions WHERE id = ?");
+        for (const [id, entry] of changed) {
+          if (entry === undefined) remove.run(id);
+          else this.writeRow(upsert, id, entry);
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      for (const [id, entry] of changed) {
+        if (entry === undefined) this.entries.delete(id);
+        else this.entries.set(id, entry);
+      }
+    } catch (error) {
+      if (error instanceof SessionPersistenceError) throw error;
+      throw new SessionPersistenceError(this.file, error);
+    }
+  }
+
+  private mutate(
+    id: string,
+    apply: (previous: SessionRegistryEntry | undefined) => SessionRegistryEntry | undefined,
+  ): void {
+    const batch = this.batchState;
+    if (batch === undefined) this.persist([{ id, apply }]);
+    else {
+      const previous = this.get(id);
+      batch.changes.push({ id, apply });
+      batch.entries.set(id, apply(previous));
+    }
+  }
+
+  /** Stage only touched rows; replay partial updates against the latest rows under SQLite's write lock. */
   batch<T>(action: () => T): T {
     if (this.batchState !== undefined) return action();
-    const changes: Array<(entries: Map<string, SessionRegistryEntry>) => boolean> = [];
-    const batch = { entries: undefined, isolated: new WeakSet<SessionRegistryEntry>(), changes };
+    const batch: NonNullable<SessionStore["batchState"]> = { entries: new Map(), changes: [] };
     this.batchState = batch;
     try {
       const result = action();
       this.batchState = undefined;
-      if (batch.changes.length !== 0) {
-        this.mutate((entries) => {
-          let changed = false;
-          for (const change of batch.changes) if (change(entries)) changed = true;
-          return changed;
-        });
-      }
+      if (batch.changes.length !== 0) this.persist(batch.changes);
       return result;
     } finally {
       this.batchState = undefined;
@@ -771,53 +819,81 @@ export class SessionStore {
   }
 
   get(ocSessionId: string): SessionRegistryEntry | undefined {
-    const entries = this.load();
-    const entry = entries.get(ocSessionId);
-    if (this.batchState === undefined || entry === undefined || this.batchState.isolated.has(entry)) return entry;
-    const staged = structuredClone(entry);
-    entries.set(ocSessionId, staged);
-    this.batchState.isolated.add(staged);
+    const batch = this.batchState;
+    if (batch?.entries.has(ocSessionId)) return batch.entries.get(ocSessionId);
+    const db = this.database();
+    if (db === undefined) return undefined;
+    this.refresh(db);
+    const entry = this.read(db, ocSessionId);
+    if (batch === undefined) return entry;
+    const staged = entry === undefined ? undefined : structuredClone(entry);
+    batch.entries.set(ocSessionId, staged);
     return staged;
   }
 
   idFor(piSessionId: string): string | undefined {
-    return [...this.load()].find(([, entry]) => entry.piSessionId === piSessionId)?.[0];
+    return this.matching(
+      "SELECT id FROM sessions WHERE pi_session_id = ? ORDER BY rowid",
+      [piSessionId],
+      (entry) => entry.piSessionId === piSessionId,
+    )[0];
   }
 
   childIds(): string[] {
-    return [...this.load()]
-      .filter(([, entry]) => entry.task !== undefined && entry.parentID !== undefined)
-      .map(([id]) => id);
+    return this.matching(
+      "SELECT id FROM sessions WHERE has_task = 1 AND parent_id IS NOT NULL ORDER BY rowid",
+      [],
+      (entry) => entry.task !== undefined && entry.parentID !== undefined,
+    );
+  }
+
+  private matching(
+    query: string,
+    parameters: SQLInputValue[],
+    matches: (entry: SessionRegistryEntry) => boolean,
+  ): string[] {
+    const db = this.database();
+    if (db !== undefined) this.refresh(db);
+    const ids = new Set<string>();
+    for (const row of db?.prepare(query).all(...parameters) ?? []) if (typeof row.id === "string") ids.add(row.id);
+    if (this.batchState === undefined) return [...ids];
+    for (const id of this.batchState?.entries.keys() ?? []) ids.add(id);
+    return [...ids].filter((id) => {
+      const entry = this.get(id);
+      return entry !== undefined && matches(entry);
+    });
   }
 
   set(ocSessionId: string, entry: SessionRegistryEntry): void {
     const saved = this.batchState === undefined ? entry : structuredClone(entry);
-    this.mutate((entries) => {
-      entries.set(ocSessionId, this.batchState === undefined ? saved : structuredClone(saved));
-      return true;
-    });
+    this.mutate(ocSessionId, () => (this.batchState === undefined ? saved : structuredClone(saved)));
   }
 
   /** Merge a partial update (e.g. title override, updated timestamp). */
   update(ocSessionId: string, patch: Partial<SessionRegistryEntry>): void {
     const saved = this.batchState === undefined ? patch : structuredClone(patch);
-    this.mutate((entries) => {
-      const previous = entries.get(ocSessionId);
-      if (previous === undefined) return false;
-      entries.set(ocSessionId, {
-        ...previous,
-        ...(this.batchState === undefined ? saved : structuredClone(saved)),
-      });
-      return true;
-    });
+    this.mutate(ocSessionId, (previous) =>
+      previous === undefined
+        ? undefined
+        : {
+            ...previous,
+            ...(this.batchState === undefined ? saved : structuredClone(saved)),
+          },
+    );
   }
 
   remove(ocSessionId: string): void {
-    this.mutate((entries) => entries.delete(ocSessionId));
+    this.mutate(ocSessionId, () => undefined);
   }
 
   /** Every directory the registry knows about — used to resolve bare session ids. */
   directories(): string[] {
-    return [...new Set([...this.load().values()].map((e) => e.directory))];
+    const db = this.database();
+    const directories = new Set<string>();
+    for (const row of db?.prepare("SELECT DISTINCT directory FROM sessions").all() ?? [])
+      if (typeof row.directory === "string") directories.add(row.directory);
+    if (this.batchState === undefined) return [...directories];
+    const ids = this.matching("SELECT id FROM sessions", [], () => true);
+    return [...new Set(ids.map((id) => this.get(id)!.directory))];
   }
 }

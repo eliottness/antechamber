@@ -87,6 +87,39 @@ A stopped card keeps that output; a finished card gets OmO's full output.
 - Adapter owns a process pool keyed by session id, and a directory registry
   mapping OpenCode "project/directory" to pi working directory + session dir.
 
+### Session registry
+
+`SessionStore` uses `node:sqlite`'s `DatabaseSync`, available in both the Bun runtime
+and the Node test toolchain. `sessions.sqlite` holds one JSON payload per session,
+keyed by OpenChamber session ID. Separate indexes serve native session ID,
+directory and child-parent lookups. Transcript files remain OmO-owned JSONL.
+
+WAL mode permits readers alongside a writer. Mutations use `BEGIN IMMEDIATE`,
+per-row upserts/deletes, and a 5-second SQLite busy timeout. A synchronous batch
+stages only rows it reads or changes, then replays its ordered updates against
+the current committed rows inside one transaction. This preserves concurrent
+writers' unrelated rows and fields without serializing the whole registry.
+Read-only batches do not acquire a write lock or create a missing database.
+`PRAGMA data_version` invalidates the per-row cache when another connection
+commits; rows are parsed on demand. Child task `spawn_spec` stays available in
+the writing store's memory but is omitted from persisted payloads.
+
+When an empty database first finds `sessions.json`, it validates and imports the
+records in one transaction. A migration marker records the backup name before
+commit; the source is then renamed to `sessions.json.migrated-<timestamp>-<pid>`.
+Two processes serialize migration through SQLite, and a restart can complete a
+rename interrupted after commit without importing twice. The original bytes
+are retained, including invalid records; malformed JSON is left untouched.
+The state directory is mode `0700`; the database, WAL, shared-memory files and
+migrated backup are mode `0600`.
+
+`LatencyMonitor` samples monotonic timer drift every 100 ms and warns once for
+each sample delayed beyond `ANTECHAMBER_EVENT_LOOP_LAG_MS` (250 ms by default).
+Shared HTTP middleware warns for handlers slower than
+`ANTECHAMBER_SLOW_REQUEST_MS` (1000 ms), reporting method, route pattern, status
+and elapsed time without query strings or path identifiers. Streaming handlers
+measure setup only. Both diagnostics go to stderr independently of debug logging.
+
 ### OmO session tree
 
 Fork/revert/unrevert use `get_entries` (`entries`, `leafId`) and OmO's
