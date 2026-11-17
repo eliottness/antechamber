@@ -62,8 +62,7 @@ async function v2Agents(services: RouteServices): Promise<
   }));
 }
 
-function v2Session(services: RouteServices, info: OCSession): V2Session {
-  const managed = services.sessions.get(info.id);
+function v2Session(services: RouteServices, info: OCSession, managed = services.sessions.get(info.id)): V2Session {
   return toV2Session(info, { model: managed?.model, agent: info.agent ?? getAgentName() });
 }
 
@@ -554,7 +553,7 @@ export async function handleV2(
       infos = infos.filter((session) => session.parentID === (parentID === "null" ? undefined : parentID));
     if (archived === "true" || archived === "false")
       infos = infos.filter((session) => (session.time.archived !== undefined) === (archived === "true"));
-    let sessions = infos.map((info) => v2Session(services, info));
+    let sessions = infos.map((info) => v2Session(services, info, services.sessions.peek(info.id)));
     sessions.sort((left, right) => compareSessions(left, right, order));
     const cursor = decodeSessionCursor(url.searchParams.get("cursor"));
     if (cursor !== undefined) sessions = sessions.filter((session) => followsCursor(session, cursor, order));

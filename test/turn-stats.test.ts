@@ -27,8 +27,32 @@ for (const entrypoint of ["get", "list", "listAll"] as const) {
     assert.equal(restored?.cost, expected.cost);
     assert.deepEqual(restored?.tokens, expected.tokens);
     assert.equal(h.manager.liveSessions().length, 0);
+    if (entrypoint !== "get") assert.equal(h.manager["sessions"].get(session.id)?.messages, undefined);
   });
 }
+
+test("cold v2 session list serves usage without reading history", { timeout: 15000 }, async (t) => {
+  const h = bugHarness(t);
+  let server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: h.root });
+  await server.start();
+  t.after(() => server.stop());
+  const session = await server["sessions"].create(h.root);
+  await server["sessions"].prompt(session.id, "steps");
+  const expected = structuredClone(server["sessions"].get(session.id)?.info);
+  assert.ok(expected?.cost && expected.tokens);
+  await server.stop();
+  server = new AdapterServer({ host: "127.0.0.1", port: 0, defaultDirectory: h.root });
+  await server.start();
+
+  const listed = (await (await fetch(`${server.url}/api/session?limit=10`)).json()) as {
+    data: Array<{ id: string; cost: number; tokens: unknown }>;
+  };
+
+  const found = listed.data.find((s) => s.id === session.id);
+  assert.equal(found?.cost, expected.cost);
+  assert.deepEqual(found?.tokens, expected.tokens);
+  assert.equal(server["sessions"]["sessions"].get(session.id)?.messages, undefined);
+});
 
 test("v2 usage stays cumulative across steps and turns", { timeout: 15000 }, async (t) => {
   const h = bugHarness(t);

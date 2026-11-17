@@ -49,9 +49,12 @@ import { sessionDiff } from "./session-diff.js";
 import { waitForMcpServers } from "./mcp.js";
 import { announceSessionNotice, noticeMessage, skillCommandText, slashTitlePrompt } from "./session-commands.js";
 import {
+  emptyTokens,
   ocIdFor,
   piSessionDir,
   piSessionsRootMtime,
+  sameUsage,
+  sessionUsageEntry,
   scanAllPiSessions,
   scanPiSessions,
   SessionStore,
@@ -518,12 +521,10 @@ export class SessionManager {
       this.subagents.restoreAll();
       if (directory !== undefined) {
         this.ensureScanned(directory);
-        return [...this.sessions.values()]
-          .filter((s) => s.info.directory === directory)
-          .map((s) => this.sessionInfo(s));
+        return [...this.sessions.values()].filter((s) => s.info.directory === directory).map((s) => s.info);
       }
       // Unfiltered: keep the old semantics — live sessions only.
-      return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => this.sessionInfo(s));
+      return [...this.sessions.values()].filter((s) => s.restored === undefined).map((s) => s.info);
     });
   }
 
@@ -537,7 +538,8 @@ export class SessionManager {
       this.refreshNativeTitles();
       this.ensureAllScanned();
       this.subagents.restoreAll();
-      return [...this.sessions.values()].map((s) => this.sessionInfo(s));
+      // Dormant usage comes from the registry: parsing every transcript here stalled startup for minutes.
+      return [...this.sessions.values()].map((s) => s.info);
     });
   }
 
@@ -552,6 +554,11 @@ export class SessionManager {
   private sessionInfo(s: ManagedSession): OCSession {
     if (s.restored !== undefined) this.ensureMessages(s);
     return s.info;
+  }
+
+  /** A session `list` already loaded, without reading its history as `get` does. */
+  peek(sessionId: string): ManagedSession | undefined {
+    return this.disposed ? undefined : this.sessions.get(sessionId);
   }
 
   get(sessionId: string): ManagedSession | undefined {
@@ -1732,8 +1739,9 @@ export class SessionManager {
       if (s.lastStop !== undefined) this.replayStop(s, s.messages, s.lastStop);
       if (fileSize !== undefined) s.historyFileSize = fileSize;
       this.subagents.discover(s, s.messages);
-      if (admissions) this.persistMeta(s);
-      if (syncSessionCost(s)) this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
+      const costChanged = syncSessionCost(s);
+      if (admissions || !sameUsage(this.store.get(s.info.id)?.usage, s.info)) this.persistMeta(s);
+      if (costChanged) this.emit(s.info.directory, { type: "session.updated", properties: { info: s.info } });
     }
     return s.messages;
   }
@@ -1876,7 +1884,8 @@ export class SessionManager {
       slug: sc.piSessionId,
       path: "",
       summary: { additions: 0, deletions: 0, files: 0 },
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      tokens: reg?.usage !== undefined ? structuredClone(reg.usage.tokens) : emptyTokens(),
+      ...(reg?.usage !== undefined ? { cost: reg.usage.cost } : {}),
       ...(reg?.metadata !== undefined ? { metadata: reg.metadata } : {}),
       ...(reg?.parentID !== undefined ? { parentID: reg.parentID } : {}),
       ...(reg?.parentMessageID !== undefined ? { parentMessageID: reg.parentMessageID } : {}),
@@ -1988,6 +1997,7 @@ export class SessionManager {
       ...(s.info.parentMessageID !== undefined ? { parentMessageID: s.info.parentMessageID } : {}),
       ...(s.model !== undefined ? { model: { providerID: s.model.providerID, modelID: s.model.modelID } } : {}),
       ...(s.lastStop !== undefined ? { lastStop: s.lastStop } : {}),
+      ...sessionUsageEntry(s.info),
       created: s.info.time.created,
       updated: s.info.time.updated,
     });

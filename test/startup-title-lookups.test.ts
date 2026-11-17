@@ -39,7 +39,7 @@ test("v2 session projections refresh each dormant native title without rescannin
     new Map(page.data.map((session) => [session.id, session.title])),
     new Map(ids.map((id) => [ocIdFor(id), `${id} renamed`])),
   );
-  assert.equal(refresh.mock.callCount(), ids.length * 2, "one list refresh and one targeted lookup per session");
+  assert.equal(refresh.mock.callCount(), ids.length, "one list refresh per session and no per-session lookup");
 });
 
 test("cached get adopts only the requested native rename and a later list refreshes the others", (t) => {

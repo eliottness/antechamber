@@ -17,7 +17,7 @@ import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { piAgentDir } from "./agent-dir.js";
 import { syncSessionCost } from "./pi-event-translation.js";
-import { ocIdFor, SessionPersistenceError, SessionStore } from "./session-store.js";
+import { ocIdFor, SessionPersistenceError, SessionStore, sessionUsageEntry } from "./session-store.js";
 import type { ManagedSession } from "./sessions.js";
 import { type EvalAgent, mapTool, resultText, type ToolResult, toolMappers } from "./tool-map.js";
 import type { OCEvent, OCMessageWithParts, OCSession, OCToolPart } from "./types.js";
@@ -697,7 +697,8 @@ export class SubagentBridge {
     task: ChildTask,
     id = taskSessionId(task.id, task.parentPiId, this.store),
   ): Child {
-    const archived = this.store.get(id)?.archived;
+    const saved = this.store.get(id);
+    const archived = saved?.archived;
     const session = this.managedSession({
       id,
       parentID: parent.info.id,
@@ -706,6 +707,7 @@ export class SubagentBridge {
       title: typeof task.input.description === "string" ? task.input.description : task.id,
       version: parent.info.version,
       time: { ...parent.info.time, ...(archived !== undefined ? { archived } : {}) },
+      ...(saved?.usage !== undefined ? { cost: saved.usage.cost, tokens: structuredClone(saved.usage.tokens) } : {}),
     });
     const child: Child = {
       session,
@@ -735,7 +737,7 @@ export class SubagentBridge {
       if (entry.deleted || !entry.task || !entry.parentID) return undefined;
       const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task, id);
       child.session.info.title = entry.title ?? child.session.info.title;
-      this.refresh(child, false);
+      this.refresh(child, false, true, false);
       return child.session;
     });
   }
@@ -769,7 +771,7 @@ export class SubagentBridge {
       },
       id,
     );
-    this.refresh(child, false);
+    this.refresh(child, false, true, false);
     return child.session;
   }
 
@@ -874,7 +876,8 @@ export class SubagentBridge {
     }
   }
 
-  private refresh(child: Child, publish: boolean, useRecord = true): void {
+  /** `hydrate: false` leaves an idle child's transcript unread until its messages are asked for. */
+  private refresh(child: Child, publish: boolean, useRecord = true, hydrate = true): void {
     const archive = this.archive(child);
     const found = this.reconcileTaskRecord(child, useRecord);
     // OmO stops in-process workers with their parent and leaves them `running` but `persisted_only`
@@ -887,7 +890,10 @@ export class SubagentBridge {
       previousMessages: child.session.messages ?? [],
       previousStatus: child.session.status.type,
       running,
-      costChanged: this.hydrateTranscript(child, archive, running, child.session.status.type),
+      costChanged:
+        hydrate || running || child.loaded
+          ? this.hydrateTranscript(child, archive, running, child.session.status.type)
+          : false,
       updatedParts: this.reconcileRuntime(child, running),
     };
     if (state.costChanged)
@@ -1102,6 +1108,7 @@ export class SubagentBridge {
         parentID: info.parentID,
         ...(info.time.archived !== undefined ? { archived: info.time.archived } : {}),
         task: child.task,
+        ...sessionUsageEntry(info),
         created: info.time.created,
         updated: info.time.updated,
       });
