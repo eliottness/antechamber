@@ -67,6 +67,26 @@ export interface ScannedSession extends SessionSelection {
 
 export type TitleSource = "user" | "native" | "fallback" | "generated";
 
+export interface SessionUsage {
+  cost: number;
+  tokens: { input: number; output: number; reasoning: number; cache: { read: number; write: number } };
+}
+
+type UsageSource = { cost?: number; tokens?: SessionUsage["tokens"] };
+
+export function emptyTokens(): SessionUsage["tokens"] {
+  return { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+}
+
+export function sessionUsageEntry(info: UsageSource): { usage?: SessionUsage } {
+  return info.tokens === undefined ? {} : { usage: { cost: info.cost ?? 0, tokens: structuredClone(info.tokens) } };
+}
+
+export function sameUsage(saved: SessionUsage | undefined, info: UsageSource): boolean {
+  const current = sessionUsageEntry(info).usage;
+  return JSON.stringify(saved) === JSON.stringify(current);
+}
+
 export interface InstructionEntryState {
   value: unknown;
   removed?: true;
@@ -102,6 +122,8 @@ export interface SessionRegistryEntry {
   model?: { providerID: string; modelID: string; variant?: string };
   /** Why the agent last stopped on its own, shown again after a restart until the session runs again. */
   lastStop?: { message: string; at: number };
+  /** Spend from the last parsed transcript, so a cold listing does not parse every transcript to show it. */
+  usage?: SessionUsage;
   created: number;
   updated: number;
 }
@@ -550,6 +572,23 @@ function childTask(value: unknown): value is ChildTask {
   );
 }
 
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function sessionUsage(value: unknown): value is SessionUsage {
+  if (!record(value) || !finite(value.cost) || !record(value.tokens)) return false;
+  const { tokens } = value;
+  return (
+    finite(tokens.input) &&
+    finite(tokens.output) &&
+    finite(tokens.reasoning) &&
+    record(tokens.cache) &&
+    finite(tokens.cache.read) &&
+    finite(tokens.cache.write)
+  );
+}
+
 function titleSource(value: unknown): value is TitleSource {
   return value === "user" || value === "native" || value === "fallback" || value === "generated";
 }
@@ -604,6 +643,7 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
       !Number.isFinite(value.lastStop.at))
   )
     return false;
+  if (value.usage !== undefined && !sessionUsage(value.usage)) return false;
   return true;
 }
 

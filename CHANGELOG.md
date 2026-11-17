@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A cold session list no longer parses every transcript on disk. With about 1,900 sessions it stalled the adapter for
+  27 s and grew it past 9 GB, long enough for OpenChamber to crash and stop it on every launch. The list now reads
+  each session's cost and tokens from the registry, and idle subagents load their transcript when first opened.
+  Sessions saved by an older version show their usage once they are opened again.
+
 ## [2.0.2] - 2026-11-11
 
 ### Added

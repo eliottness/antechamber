@@ -1058,6 +1058,7 @@ for (const global of [false, true]) {
     const children = listed.filter((session) => session.parentID === parent.info.id);
     assert.equal(children.length, 4);
     assert.ok(persist.mock.callCount() <= 1, `listing rewrote the whole registry ${persist.mock.callCount()} times`);
+    for (const child of children) assert.equal(restarted["subagents"]["children"].get(child.id)?.loaded, false);
     for (const child of children) {
       assert.match(texts(restarted.messages(child.id)), /retained result/);
       assert.equal(new SessionStore(state).get(child.id)?.parentID, parent.info.id);
@@ -1080,7 +1081,7 @@ test("a failed restoration batch returns a persistence error instead of a succes
   assert.equal(response.status, 500);
   const error = (await response.json()) as { name: string; data: { message: string } };
   assert.equal(error.name, "UnknownError");
-  assert.match(error.data.message, /ENOTDIR/);
+  assert.match(error.data.message, /Failed to persist session registry .*EEXIST/);
 });
 
 test("restart resolves archived children by id through real session and message routes", async (t) => {

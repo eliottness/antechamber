@@ -42,11 +42,11 @@ function setup(t: TestContext, parse: (session: ManagedSession) => OCMessageWith
     else process.env.PI_CODING_AGENT_DIR = previous;
     rmSync(dir, { recursive: true, force: true });
   });
-  function task(id: string, parentId = "parent", root = tasks) {
+  function task(id: string, parentId = "parent", root = tasks, status = "completed") {
     const data = {
       task_id: id,
       parent_session_id: parentId,
-      status: "completed",
+      status,
       created_at: "2026-10-12T00:00:00.000Z",
       spawn_spec: { prompt: id },
     };
@@ -62,7 +62,8 @@ test("restoration shares task reads and identity enumeration across nested disco
     context.bridge.discover(session, []);
     return [];
   });
-  for (let index = 0; index < 8; index++) context.task(`st_${index}`);
+  // Restoration only reads the transcripts of running children; idle ones load on first view.
+  for (let index = 0; index < 8; index++) context.task(`st_${index}`, "parent", context.tasks, "running");
   const reads = t.mock.method(fs, "readFileSync");
   const scans = t.mock.method(fs, "readdirSync");
   const identities = t.mock.method(context.store, "childIds");
@@ -146,7 +147,7 @@ test("a throwing nested restoration releases lookups before the next request", (
     if (fail) throw failure;
     return [];
   });
-  task("st_first");
+  task("st_first", "parent", tasks, "running");
   assert.throws(() => bridge.restoreAll(), failure);
   fail = false;
   task("st_second");
@@ -179,7 +180,7 @@ test("nested restoration adds a newly registered bookmark to the active identity
     );
     return [];
   });
-  context.task("st_0trigger");
+  context.task("st_0trigger", "parent", context.tasks, "running");
   context.task("st_bookmarked");
 
   context.bridge.restore(ocIdFor("st_0trigger"));
