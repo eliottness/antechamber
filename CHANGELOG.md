@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-11-17
+
 ### Fixed
 
 - A cold session list no longer parses every transcript on disk. With about 1,900 sessions it stalled the adapter for
