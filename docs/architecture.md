@@ -230,6 +230,14 @@ replacement prompt retain these cards; they are never matched to OmO JSONL
 entries or sent to the model. This retention lasts for the connector process,
 not across connector restarts: adapter-only cards are not persisted transcripts.
 
+On v2 the `bash` card is a user shell's only card. OpenCode 2.x reports a `!`
+command with `session.shell.started` / `session.shell.ended`, and OpenChamber
+2.5.3 draws those as a `role: "shell"` row of its own (`lib/opencode/events.ts`,
+`TimelineNotice.tsx` `ShellNotice`). Sending both showed the command twice
+(reported 2026-11-18), so the adapter sends neither. The `bash` card stays
+because it carries live `metadata.output`; the shell row only gets output from
+`session.shell.ended`.
+
 ### Event translation
 
 | OpenCode (SSE `event`) | pi (stdout JSONL) |

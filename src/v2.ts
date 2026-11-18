@@ -476,8 +476,6 @@ export class V2EventTranslator {
       case "session.compaction.delta":
       case "session.compaction.ended":
       case "session.compaction.failed":
-      case "session.shell.started":
-      case "session.shell.ended":
       case "shell.created":
       case "shell.exited":
       case "filesystem.changed":

@@ -412,38 +412,29 @@ test("bare skill slash command resends as OmO's /skill: form", { timeout: 30_000
   assert.doesNotMatch(history, /Unknown command/);
 });
 
-test("v2 shell lifecycle uses native shell and output resource shapes", { timeout: 15_000 }, async (t) => {
-  const { url, directory } = await startServer(t);
+test("a v2 user shell is one bash card, without session.shell frames", { timeout: 15_000 }, async (t) => {
+  const { url } = await startServer(t);
   const sessionID = await createSession(url);
   const stream = startEvents(url, "/api/event");
   t.after(stream.close);
   await stream.ready;
-  const started = stream.waitFor("session.shell.started", (event) => event.data?.sessionID === sessionID);
-  const ended = stream.waitFor("session.shell.ended", (event) => event.data?.sessionID === sessionID);
+  const success = stream.waitFor("session.tool.success", (event) => event.data?.sessionID === sessionID);
+  const idle = stream.waitFor("session.idle", (event) => event.data?.sessionID === sessionID);
   const response = await fetch(`${url}/api/session/${sessionID}/shell`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ command: "exit 7" }),
   });
   assert.equal(response.status, 204);
-  const [start, end] = await Promise.all([started, ended]);
-  const shell = end.data?.shell;
-  const output = end.data?.output;
-  assert.ok(isRecord(shell) && isRecord(output));
-  assert.equal(shell.status, "exited");
-  assert.equal(shell.exit, 7);
-  assert.equal(shell.cwd, directory);
-  assert.equal(shell.command, "exit 7");
-  assert.ok(isRecord(start.data?.shell));
-  assert.equal(start.data.shell.id, shell.id);
-  assert.equal(start.data.shell.status, "running");
-  assert.ok(isRecord(shell.time));
-  assert.equal(typeof shell.time.started, "number");
-  assert.equal(typeof shell.time.completed, "number");
-  assert.equal(output.output, "SHELL_OUTPUT");
-  assert.equal(output.cursor, Buffer.byteLength("SHELL_OUTPUT"));
-  assert.equal(output.size, Buffer.byteLength("SHELL_OUTPUT"));
-  assert.equal(output.truncated, false);
+  const [card] = await Promise.all([success, idle]);
+  assert.match(JSON.stringify(card.data?.content), /SHELL_OUTPUT/);
+  assert.ok(isRecord(card.data?.metadata));
+  assert.equal(card.data.metadata.exitCode, 7);
+  // OpenChamber 2.5 draws `session.shell.*` as a second shell row beside the bash card.
+  assert.deepEqual(
+    stream.history.filter((event) => event.type.startsWith("session.shell.")).map((event) => event.type),
+    [],
+  );
 });
 
 test("shell synthetic users arrive over v2 SSE without an optimistic prompt", { timeout: 30_000 }, async (t) => {

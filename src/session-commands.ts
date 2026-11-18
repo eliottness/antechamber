@@ -408,15 +408,6 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   sessions.messages(session.info.id);
   const message = createShellMessage(session, command);
   const user = shellUserMessage(message);
-  const shell = {
-    id: message.parts[0].callID,
-    command,
-    cwd: session.info.directory,
-    shell: "bash",
-    file: "",
-    metadata: {},
-    time: { started: message.info.time.created },
-  };
   const dispatch = (session.tree.shellDispatch ??= {});
   dispatch[message.info.id] = false;
   const afterEntryId = session.tree.leafId ?? null;
@@ -454,11 +445,9 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
   setShellStatus(context, "busy");
   shellEvent(context, { type: "message.updated", properties: { info: user.info } });
   shellEvent(context, { type: "message.part.updated", properties: { part: user.parts[0] } });
+  // The `bash` card above is the shell's only card. No `session.shell.started`/`ended`: OpenChamber 2.5 draws
+  // those as a second shell row, one that cannot show output while the command runs.
   emitShellMessage(context, message);
-  shellEvent(context, {
-    type: "session.shell.started",
-    properties: { sessionID: session.info.id, shell: { ...shell, status: "running" } },
-  });
   try {
     await sessions.update(session.info.id, {});
     const response = await sessions.sessionRpc<unknown>(
@@ -511,23 +500,6 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
     streaming?.off("event", onOutput);
     clearTimeout(flush);
     delete session.cancelShell;
-    const state = message.parts[0].state;
-    const metadata = state.status === "pending" ? undefined : state.metadata;
-    const output = state.status === "completed" ? state.output : state.status === "error" ? state.error : "";
-    const size = Buffer.byteLength(output);
-    shellEvent(context, {
-      type: "session.shell.ended",
-      properties: {
-        sessionID: session.info.id,
-        shell: {
-          ...shell,
-          status: state.status === "completed" ? "exited" : "killed",
-          ...(typeof metadata?.exitCode === "number" ? { exit: metadata.exitCode } : {}),
-          time: { ...shell.time, completed: message.info.time.completed ?? Date.now() },
-        },
-        output: { output, cursor: size, size, truncated: metadata?.truncated === true },
-      },
-    });
     setShellStatus(context, "idle");
     await sessions.update(session.info.id, {});
   }

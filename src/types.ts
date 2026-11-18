@@ -268,24 +268,6 @@ export type OCEvent =
         error: { name: string; data: { message: string } };
       };
     }
-  | {
-      type: "session.shell.started" | "session.shell.ended";
-      properties: {
-        sessionID: string;
-        shell: {
-          id: string;
-          command: string;
-          cwd: string;
-          shell: string;
-          file: string;
-          status: "running" | "exited" | "timeout" | "killed";
-          exit?: number;
-          metadata: Record<string, unknown>;
-          time: { started: number; completed?: number };
-        };
-        output?: { output: string; cursor: number; size: number; truncated: boolean };
-      };
-    }
   | { type: "shell.created"; properties: { info: OCShellInfo } }
   | { type: "shell.exited"; properties: { id: string; status: OCShellStatus; exit?: number } }
   | { type: "session.deleted"; properties: { info: OCSession } }

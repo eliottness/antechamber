@@ -312,22 +312,24 @@ test("V232-026: emits compaction lifecycle frames", async (t) => {
   );
 });
 
-test("V232-027: emits shell lifecycle frames", async (t) => {
+test("V232-027: a user shell emits its bash card frames and no session.shell frames", async (t) => {
   const { url } = await startServer(t);
   const stream = openSse(t, url);
   await stream.ready;
   await stream.wait((event) => event.type === "server.connected", "v2 connection");
   const sessionID = await createSession(url);
-  const ended = stream.wait(
-    (event) => event.type === "session.shell.ended" && event.data?.sessionID === sessionID,
-    "shell end",
+  const idle = stream.wait(
+    (event) => event.type === "session.idle" && event.data?.sessionID === sessionID,
+    "shell idle",
   );
   const response = await postJson(url, `/api/session/${sessionID}/shell`, { command: "echo shell-start" });
   assert.ok(response.status === 200 || response.status === 204);
-  await ended;
-  const shellEvents = stream.history.filter((event) => event.data?.sessionID === sessionID);
+  await idle;
+  const types = stream.history.filter((event) => event.data?.sessionID === sessionID).map((event) => event.type);
+  assert.ok(types.includes("session.tool.success"), `no bash card result in ${types.join(", ")}`);
+  // OpenChamber 2.5 draws `session.shell.*` as a second shell row beside the bash card.
   assert.deepEqual(
-    shellEvents.map((event) => event.type).filter((type) => type.startsWith("session.shell.")),
-    ["session.shell.started", "session.shell.ended"],
+    types.filter((type) => type.startsWith("session.shell.")),
+    [],
   );
 });
