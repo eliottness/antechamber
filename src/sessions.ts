@@ -1528,7 +1528,10 @@ export class SessionManager {
     };
     const onNotification = (request: Record<string, unknown>): void => {
       if (request.method === "notify" && typeof request.message === "string") {
-        announceSessionNotice({ sessions: this, session: s, emit: this.emit }, request.message);
+        // OpenChamber 2.x orders by creation time and breaks a same-millisecond tie on the (random) id, so the
+        // command's output must be created after the command itself.
+        const created = Math.max(Date.now(), userMsg.time.created + 1);
+        announceSessionNotice({ sessions: this, session: s, emit: this.emit }, request.message, undefined, created);
       }
     };
     if (text.startsWith("/")) pi.onExtensionUI(onNotification);
@@ -1573,6 +1576,8 @@ export class SessionManager {
       properties: {
         sessionID: s.info.id,
         inboxID: userMsg.id,
+        // Admission time, not now: a print-only command's output was already announced during the prompt RPC.
+        created: userMsg.time.created,
         item: {
           type: "user",
           delivery,
@@ -1592,7 +1597,8 @@ export class SessionManager {
       "disposition" in res.data &&
       res.data.disposition === "handled"
     ) {
-      if (!input.delivered) this.events.deliverInput(s, userMsg.id);
+      // OmO handled the command on admission, ahead of the output it printed.
+      if (!input.delivered) this.events.deliverInput(s, userMsg.id, userMsg.time.created);
       if (wasIdle) this.events.setStatus(s, { type: "idle" });
     }
     return true;

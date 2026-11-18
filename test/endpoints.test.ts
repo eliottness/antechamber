@@ -15,7 +15,12 @@ import { modelRefFromBody, numberParam } from "../src/route-services.js";
 const fakeRpc = resolve("test/fixtures/fake-omo-endpoints.mjs");
 const unsupportedShare = { name: "UnsupportedError", data: { message: "Sharing is not available with OmO" } };
 
-type TestEvent = { type: string; properties?: Record<string, unknown>; data?: Record<string, unknown> };
+type TestEvent = {
+  type: string;
+  created?: number;
+  properties?: Record<string, unknown>;
+  data?: Record<string, unknown>;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
@@ -46,6 +51,7 @@ function startEvents(url: string, path = "/api/event") {
           if (!isRecord(parsed) || typeof parsed.type !== "string") continue;
           const event: TestEvent = {
             type: parsed.type,
+            ...(typeof parsed.created === "number" ? { created: parsed.created } : {}),
             ...(isRecord(parsed.properties) ? { properties: parsed.properties } : {}),
             ...(isRecord(parsed.data) ? { data: parsed.data } : {}),
           };
@@ -60,6 +66,7 @@ function startEvents(url: string, path = "/api/event") {
 
   return {
     ready,
+    history,
     close: () => controller.abort(),
     mark(): number {
       return history.length;
@@ -830,13 +837,26 @@ test("a print-only slash command renders its notification and returns idle witho
     JSON.stringify(event).includes("Print-only command output"),
   );
   const idle = stream.waitFor("session.idle", (event) => event.data?.sessionID === sessionId);
+  const enqueued = stream.waitFor("session.inbox.enqueued", (event) => event.data?.sessionID === sessionId);
+  const delivered = stream.waitFor("session.inbox.delivered", (event) => event.data?.sessionID === sessionId);
   const response = await fetch(`${url}/api/session/${sessionId}/command`, {
     method: "POST",
     body: JSON.stringify({ name: "notify-fixture", text: "" }),
   });
   assert.equal(response.status, 204);
-  await Promise.all([output, idle]);
+  const [text] = await Promise.all([output, idle]);
   assert.equal(server["sessions"].get(sessionId)?.status.type, "idle");
+  // OpenChamber 2.x orders a transcript by creation time: the user turn takes it from the inbox frames, the
+  // output from `session.step.started`. OmO prints the output before it answers the prompt RPC, so the command
+  // must not take the time the adapter announces it, or it renders below its own output.
+  const step = stream.history.find(
+    (event) =>
+      event.type === "session.step.started" && event.data?.assistantMessageID === text.data?.assistantMessageID,
+  );
+  const [user, delivery] = await Promise.all([enqueued, delivered]);
+  assert.ok(step?.created !== undefined && user.created !== undefined && delivery.created !== undefined);
+  assert.ok(user.created < step.created, `command ${user.created} must precede its output ${step.created}`);
+  assert.ok(delivery.created < step.created, `delivery ${delivery.created} must precede output ${step.created}`);
 });
 
 test("shell refreshes persisted entries appended without agent events and retains its bash card", {

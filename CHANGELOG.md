@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A print-only slash command such as `/loop stop` no longer renders below its own output in OpenChamber 2.x. The
+  command now takes the time OmO admitted it, and its output is always created after it.
+
 ## [2.0.3] - 2026-11-17
 
 ### Fixed

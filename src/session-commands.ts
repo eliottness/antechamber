@@ -345,10 +345,11 @@ export function announceSessionNotice(
   context: ShareNoticeContext,
   messageText: string,
   error?: OCAssistantMessage["error"],
+  created?: number,
 ): void {
   const { session, sessions, emit } = context;
   if (!sessions.messages(session.info.id)) return;
-  const message = noticeMessage(session, messageText, error);
+  const message = noticeMessage(session, messageText, error, created);
   const [part] = message.parts;
   const { info } = message;
   sessions.appendMessage(session.info.id, message);

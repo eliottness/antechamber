@@ -460,7 +460,10 @@ export class V2EventTranslator {
   translate(directory: string, ev: OCEvent): V2Envelope[] {
     switch (ev.type) {
       case "session.inbox.enqueued":
-      case "session.inbox.delivered":
+      case "session.inbox.delivered": {
+        const { created, ...data } = ev.properties;
+        return [this.frame(directory, ev.type, data, created)];
+      }
       case "session.renamed":
       case "session.agent.selected":
       case "session.archived":
