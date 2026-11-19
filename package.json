@@ -86,7 +86,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "omo-ai": "5.1.69"
+    "omo-ai": "5.1.79"
   },
   "openchamber": {
     "apiVersion": 1,

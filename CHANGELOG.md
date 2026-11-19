@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- OmO 5.1.79 (engine senpi 2026.11.18-3), up from 5.1.69.
+
 ### Added
 
 - OmO now follows its releases weekly: a scheduled workflow moves the pinned `omo-ai` to the latest version and
