@@ -91,6 +91,8 @@ no longer published.
 The [OmO bump workflow](.github/workflows/omo-bump.yml) moves the exact
 `omo-ai` pin to the latest release every Monday (06:17 UTC). Run it from the
 Actions tab to bump now, optionally to a given version.
+Started on any branch other than `main`, it is a dry run: it bumps that branch
+and runs every check below, then deletes the bump branch instead of shipping.
 
 1. **Bump.** `scripts/omo-bump.ts` updates `package.json`, `package-lock.json`
    and a `### Changed` note under `[Unreleased]`, and the job pushes the commit

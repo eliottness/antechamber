@@ -3,7 +3,9 @@ name: OmO bump
 # Weekly: move the omo-ai pin to the latest release and prove it against the latest OpenChamber. The bump commit is
 # pushed to omo-bump/<version>, which runs CI on it, and is checked end to end here. When everything passes it is
 # pushed to main with the release deploy key, and that push releases it (release.yml). When anything fails the
-# branch stays, and the OmO bump repair agent (omo-bump-repair.md) proposes a fix as a pull request. See RELEASE.md.
+# branch stays, and the OmO bump repair agent (omo-bump-repair.md) proposes a fix as a pull request. A run started on
+# any other branch is a dry run: it bumps and checks that branch, then deletes the bump branch instead of shipping.
+# See RELEASE.md.
 on:
   schedule:
     - cron: "17 6 * * 1"
@@ -31,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.ref }}
           # The deploy key's pushes start workflows (CI on the branch); GITHUB_TOKEN pushes start none.
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - uses: actions/setup-node@v7
@@ -119,8 +121,17 @@ jobs:
           ref: main
           fetch-depth: 0
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - name: Dry run, delete the bump branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          git push origin --delete "$BRANCH"
+          echo "### Dry run on $GITHUB_REF_NAME: omo-ai $TO passed CI and the end-to-end run; not shipped" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+          TO: ${{ needs.prepare.outputs.to }}
       # main only takes the exact commit CI and the end-to-end run tested.
       - name: Fast-forward main to the bump and release it
+        if: github.ref == 'refs/heads/main'
         run: |
           git fetch -q origin "$BRANCH"
           if ! git merge -q --ff-only FETCH_HEAD; then
