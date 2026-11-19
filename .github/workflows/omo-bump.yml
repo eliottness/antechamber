@@ -1,0 +1,148 @@
+name: OmO bump
+
+# Weekly: move the omo-ai pin to the latest release and prove it against the latest OpenChamber. The bump commit is
+# pushed to its own branch, omo-bump/<version>-<run>, which runs CI on it, and is checked end to end here. When
+# everything passes that exact commit is pushed to main with the release deploy key, and that push releases it
+# (release.yml). When anything fails the run fails and the branch stays; no later run touches it. A run started on any
+# other branch is a dry run on omo-bump-dry-run/<version>-<run>: it checks the bump, then deletes that branch instead
+# of shipping. See RELEASE.md.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: omo-ai version (default the latest)
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omo-bump
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      from: ${{ steps.bump.outputs.from }}
+      to: ${{ steps.bump.outputs.to }}
+      branch: ${{ steps.bump.outputs.branch }}
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          # The deploy key's pushes start workflows (CI on the branch); GITHUB_TOKEN pushes start none.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Bump omo-ai and push it to its own branch
+        id: bump
+        run: |
+          moved="$(npx tsx scripts/omo-bump.ts "$VERSION")"
+          if [ -z "$moved" ]; then
+            echo "omo-ai is already at $(node -p 'require("./package.json").dependencies["omo-ai"]')"
+            exit 0
+          fi
+          read -r from to <<< "$moved"
+          prefix=omo-bump
+          [ "$GITHUB_REF" = refs/heads/main ] || prefix=omo-bump-dry-run
+          branch="$prefix/$to-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -qam "chore(deps): bump omo-ai from $from to $to"
+          git push origin "HEAD:refs/heads/$branch"
+          {
+            echo "from=$from"
+            echo "to=$to"
+            echo "branch=$branch"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "### omo-ai $from -> $to on \`$branch\`" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          VERSION: ${{ inputs.version }}
+
+  # The branch push runs the full CI matrix (Linux, macOS, Bun); wait for its verdict rather than duplicate it.
+  ci:
+    needs: prepare
+    if: needs.prepare.outputs.to != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for CI on the bump commit
+        run: |
+          id=""
+          for _ in $(seq 1 60); do
+            id="$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" --event push \
+              --json databaseId --jq '.[0].databaseId // empty')"
+            [ -n "$id" ] && break
+            sleep 10
+          done
+          test -n "$id" || { echo "CI never started for $SHA"; exit 1; }
+          echo "CI: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id"
+          gh run watch "$id" -R "$GITHUB_REPOSITORY" --exit-status --interval 30 > /dev/null
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+
+  e2e:
+    needs: prepare
+    if: needs.prepare.outputs.to != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.x
+      - run: npm ci
+      - run: npm run build
+      # The model is a local OpenAI-compatible mock (scripts/ci/mock-openai.mjs): no provider, key or tokens.
+      - name: Latest OpenChamber drives the bumped OmO through the extension launcher
+        run: scripts/ci/openchamber-e2e.sh
+
+  ship:
+    needs: [prepare, ci, e2e]
+    if: needs.prepare.outputs.to != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      # Only the exact commit CI and the end-to-end run tested ships, and the branch is deleted only while it still
+      # points there: a commit pushed to it after the bump stays, untested and unshipped.
+      - name: Ship the tested commit, or delete the branch after a dry run
+        run: |
+          git fetch -q origin "$SHA"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            if ! git merge -q --ff-only "$SHA"; then
+              echo "::warning::main moved during the bump; run OmO bump again to retest on the new main"
+              exit 0
+            fi
+            git push origin HEAD:main
+            echo "### Shipped omo-ai $TO; the release workflow publishes it" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Dry run on $GITHUB_REF_NAME: omo-ai $TO passed every check; not shipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          git push --force-with-lease="refs/heads/$BRANCH:$SHA" origin ":refs/heads/$BRANCH" ||
+            echo "::warning::$BRANCH moved after the tested commit; left in place"
+        env:
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          TO: ${{ needs.prepare.outputs.to }}

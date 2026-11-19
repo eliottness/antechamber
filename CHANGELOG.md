@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OmO now follows its releases weekly: a scheduled workflow moves the pinned `omo-ai` to the latest version and
+  releases it once CI and an end-to-end run with the latest OpenChamber pass.
+
 ## [2.0.6] - 2026-11-19
 
 ### Fixed
