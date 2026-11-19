@@ -3,8 +3,7 @@ name: OmO bump
 # Weekly: move the omo-ai pin to the latest release and prove it against the latest OpenChamber. The bump commit is
 # pushed to omo-bump/<version>, which runs CI on it, and is checked end to end here. When everything passes it is
 # pushed to main with the release deploy key, and that push releases it (release.yml). When anything fails the
-# branch stays, and the OmO bump repair agent (omo-bump-repair.md) proposes a fix as a pull request. A run started on
-# any other branch is a dry run: it bumps and checks that branch, then deletes the bump branch instead of shipping.
+# run fails and the branch stays for a maintainer to fix on. A run started on any other branch is a dry run: it bumps and checks that branch, then deletes the bump branch instead of shipping.
 # See RELEASE.md.
 on:
   schedule:

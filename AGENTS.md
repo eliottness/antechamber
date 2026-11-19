@@ -32,7 +32,7 @@ Published package = `dist/` + `bin/` shims + the built antechamber extension; th
 | Why fork/revert/shutdown work as they do | `docs/architecture.md` | evidence-backed OmO protocol notes |
 | OmO deployment, systemd, teardown | `docs/backends/omo.md` | |
 | Release flow | `RELEASE.md`, `.github/workflows/release.yml`, `scripts/release.ts`, `scripts/publish-extension-branches.ts` | every push to main ships a patch; never hand-bump patch versions; `extension/*` branches are written by CI only |
-| Weekly OmO bump | `.github/workflows/omo-bump.yml`, `scripts/omo-bump.ts`, `scripts/ci/openchamber-e2e.sh`, `.github/workflows/omo-bump-repair.md` | the repair agent is gh-aw: edit the `.md`, then `gh aw compile omo-bump-repair`; never hand-edit the `.lock.yml` |
+| Weekly OmO bump | `.github/workflows/omo-bump.yml`, `scripts/omo-bump.ts`, `scripts/ci/openchamber-e2e.sh`, `scripts/ci/mock-openai.mjs` | deterministic and model-free: the e2e model is a local mock; runs off `main` are dry runs |
 | Per-module responsibility table | `docs/development.md` | source and smoke paths |
 
 ## CODE MAP

@@ -112,21 +112,9 @@ and runs every check below, then deletes the bump branch instead of shipping.
    If `main` moved during the run, nothing is shipped and the job warns; run
    the workflow again.
 
-When a check fails, the branch stays and the
-[OmO bump repair](.github/workflows/omo-bump-repair.md) agentic workflow
-([GitHub Agentic Workflows](https://github.github.com/gh-aw/), Claude engine)
-starts on the failed run. It reads the failing logs, reproduces on the branch,
-fixes antechamber on top of the bump commit following `AGENTS.md`, and opens a
-`[omo-bump]` pull request with the bump and the fix; merging it releases both.
-When the failure is infrastructure, or it cannot verify a fix, it opens an
-`[omo-bump]` issue with its diagnosis instead. While a PR or issue labelled
-`omo-bump` is open, further failures do not start it. Each run is capped at
-800 AI credits (about $8) and the workflow at 1,600 a day. To start it by hand,
-run it from the Actions tab with the failed run's ID.
-
-Edit `omo-bump-repair.md`, never its `.lock.yml`, then regenerate the lock
-with `gh aw compile omo-bump-repair` (`gh extension install github/gh-aw`) and
-commit both.
+When a check fails, the run fails (GitHub emails you) and `omo-bump/<to>`
+stays: fix antechamber on that branch in a pull request, and merging it
+releases the bump and the fix together.
 
 To move OmO by hand instead, run `npx tsx scripts/omo-bump.ts [version]` in an
 ordinary PR; the next release ships it to everyone who updates the extension.
@@ -152,14 +140,6 @@ ordinary PR; the next release ships it to everyone who updates the extension.
 - **OmO bump.** The bump workflow uses `RELEASE_DEPLOY_KEY` for its branch
   and `main` pushes; a GITHUB_TOKEN push would start neither CI nor the
   release. The bump itself needs no other secret.
-- **OmO bump repair.** The repair agent is the only part that uses a real model:
-  add an Anthropic API key as the `ANTHROPIC_API_KEY` secret. Without it the
-  bump still works, and a failed bump just fails with no repair attempt. For
-  the agent to open pull requests rather than issues, enable Settings ->
-  Actions -> General -> "Allow GitHub Actions to create and approve pull
-  requests". Its PRs are opened with `GITHUB_TOKEN`, so CI starts on them only
-  if a fine-grained PAT with `contents: write` is stored as
-  `GH_AW_CI_TRIGGER_TOKEN`; otherwise push an empty commit before merging.
 - **Extension branches.** The workflow pushes `extension/*` with the same
   credentials as `main`. The `main` ruleset covers only the default branch; a
   ruleset that also matched `extension/*` would have to let those credentials
