@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-11-19
+
+- fix(v2): open a turn for a ! shell command in OpenChamber 2.x (#92)
+
 ## [2.0.4] - 2026-11-19
 
 ### Fixed
