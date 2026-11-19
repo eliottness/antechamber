@@ -1004,6 +1004,36 @@ test("B2: v2 prompt requires text even with explicit parts or attachments", { ti
   assert.deepEqual(manager.messages(sessionID), []);
 });
 
+test("a v2 prompt of chat quotes alone, with no text of its own, reaches the agent", { timeout: 15_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionID = await createSession(url);
+  const pi = server["sessions"].get(sessionID)?.pi;
+  assert.ok(pi);
+  const command = pi.command.bind(pi);
+  const sent: Array<{ type: string; message?: unknown }> = [];
+  t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+    sent.push({ type: String(args[0].type), message: args[0].message });
+    return command(...args);
+  });
+  const stream = startEvents(url);
+  t.after(stream.close);
+  await stream.ready;
+  const post = (route: string, body: object) =>
+    fetch(`${url}/api/session/${sessionID}/${route}`, { method: "POST", body: JSON.stringify(body) });
+  // OpenChamber 2.5.3 `sendMessage` sends each chat quote as a synthetic message, then the prompt with the composer's
+  // text, which is empty when the user only wrote comments on the quotes.
+  const admitted = stream.waitFor("session.inbox.enqueued", (event) => event.data?.inboxID === "msg_quote_prompt");
+  assert.equal((await post("synthetic", { id: "msg_quote", text: "> Add a secret.\n\nNo provider" })).status, 200);
+  assert.equal((await post("prompt", { id: "msg_quote_prompt", text: "" })).status, 200);
+  await admitted;
+  assert.deepEqual(
+    sent.filter((item) => item.type === "prompt").map((item) => item.message),
+    [""],
+  );
+  // The quotes went with that prompt: another empty prompt has nothing to carry.
+  assert.equal((await post("prompt", { text: "" })).status, 400);
+});
+
 for (const v1 of [false]) {
   test(`B2: ${v1 ? "v1" : "v2"} attachment-only prompts still reach the agent`, {
     timeout: 15_000,

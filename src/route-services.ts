@@ -100,6 +100,8 @@ export function promptAsync(
   void services.sessions
     .prompt(session.info.id, text, model, noReply, messageID, delivery, parts, metadata)
     .catch((error: unknown) => {
+      // Context that never reached the agent cannot stand in for a prompt's text.
+      if (noReply && messageID !== undefined) session.pendingContext?.delete(messageID);
       // The agent stopped: the session's exit handler already shows why, once.
       if (error instanceof PiStoppedError) return;
       announceSessionError(

@@ -105,6 +105,11 @@ export interface ManagedSession extends ThinkingState {
   activeUserMessageID?: string;
   deliveredInputCompactions?: Map<string, string>;
   inputs?: Map<string, { text: string; delivery: "steer" | "queue"; accepted: boolean; delivered: boolean }>;
+  /**
+   * Context (v2 synthetic) admitted since the last prompt or command: OpenChamber sends chat quotes this way, ahead of
+   * a prompt that may have no text of its own. Recorded when the route accepts it, before its queued admission runs.
+   */
+  pendingContext?: Set<string>;
   instructions?: Record<string, InstructionEntryState>;
   /** Suppress model-selection events until the session creation record has its final model. */
   initializing?: boolean;
