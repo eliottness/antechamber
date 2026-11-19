@@ -86,9 +86,48 @@ so keep the branch and asset names stable. The `extension/omo-graph`,
 `extension/omo-work` and `extension/omo-compat` branches of antechamber 1.x are
 no longer published.
 
-To move OmO to a newer `omo-ai`, change its exact version in `package.json`
-(`npm install omo-ai@<version> --save-exact`) in an ordinary PR; the next
-release ships it to everyone who updates the extension.
+## Weekly OmO bump
+
+The [OmO bump workflow](.github/workflows/omo-bump.yml) moves the exact
+`omo-ai` pin to the latest release every Monday (06:17 UTC). Run it from the
+Actions tab to bump now, optionally to a given version.
+
+1. **Bump.** `scripts/omo-bump.ts` updates `package.json`, `package-lock.json`
+   and a `### Changed` note under `[Unreleased]`, and the job pushes the commit
+   `chore(deps): bump omo-ai from <from> to <to>` to `omo-bump/<to>` with the
+   release deploy key. When the pin is already current it stops there.
+2. **Check.** The branch push runs the whole CI matrix, and the workflow waits
+   for it. In parallel, `scripts/ci/openchamber-e2e.sh` installs the latest
+   `@openchamber/web`, makes the extension launcher install the packed
+   antechamber and its new OmO into an empty runtime directory, and drives that
+   OmO through OpenChamber's `/api` proxy: the provider catalog, the installed
+   OmO version, a new session, and one completed prompt. The model is
+   `scripts/ci/mock-openai.mjs`, a local OpenAI-compatible fake that OmO reaches
+   through its own provider client, so the bump needs no provider, key or
+   tokens. It does not run `npm run omo-smoke`, whose checks need a real model.
+3. **Ship.** When everything passes, `main` is fast-forwarded to the bump
+   commit and the branch is deleted. That push releases it as described above.
+   If `main` moved during the run, nothing is shipped and the job warns; run
+   the workflow again.
+
+When a check fails, the branch stays and the
+[OmO bump repair](.github/workflows/omo-bump-repair.md) agentic workflow
+([GitHub Agentic Workflows](https://github.github.com/gh-aw/), Claude engine)
+starts on the failed run. It reads the failing logs, reproduces on the branch,
+fixes antechamber on top of the bump commit following `AGENTS.md`, and opens a
+`[omo-bump]` pull request with the bump and the fix; merging it releases both.
+When the failure is infrastructure, or it cannot verify a fix, it opens an
+`[omo-bump]` issue with its diagnosis instead. While a PR or issue labelled
+`omo-bump` is open, further failures do not start it. Each run is capped at
+800 AI credits (about $8) and the workflow at 1,600 a day. To start it by hand,
+run it from the Actions tab with the failed run's ID.
+
+Edit `omo-bump-repair.md`, never its `.lock.yml`, then regenerate the lock
+with `gh aw compile omo-bump-repair` (`gh extension install github/gh-aw`) and
+commit both.
+
+To move OmO by hand instead, run `npx tsx scripts/omo-bump.ts [version]` in an
+ordinary PR; the next release ships it to everyone who updates the extension.
 
 ## One-time repository setup
 
@@ -108,6 +147,17 @@ release ships it to everyone who updates the extension.
     `eliottness/antechamber`, workflow `release.yml`. No secret is needed.
   - *Token.* Add an npm automation token as the `NPM_TOKEN` repository secret
     (Settings -> Secrets and variables -> Actions).
+- **OmO bump.** The bump workflow uses `RELEASE_DEPLOY_KEY` for its branch
+  and `main` pushes; a GITHUB_TOKEN push would start neither CI nor the
+  release. The bump itself needs no other secret.
+- **OmO bump repair.** The repair agent is the only part that uses a real model:
+  add an Anthropic API key as the `ANTHROPIC_API_KEY` secret. Without it the
+  bump still works, and a failed bump just fails with no repair attempt. For
+  the agent to open pull requests rather than issues, enable Settings ->
+  Actions -> General -> "Allow GitHub Actions to create and approve pull
+  requests". Its PRs are opened with `GITHUB_TOKEN`, so CI starts on them only
+  if a fine-grained PAT with `contents: write` is stored as
+  `GH_AW_CI_TRIGGER_TOKEN`; otherwise push an empty commit before merging.
 - **Extension branches.** The workflow pushes `extension/*` with the same
   credentials as `main`. The `main` ruleset covers only the default branch; a
   ruleset that also matched `extension/*` would have to let those credentials

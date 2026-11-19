@@ -32,6 +32,7 @@ Published package = `dist/` + `bin/` shims + the built antechamber extension; th
 | Why fork/revert/shutdown work as they do | `docs/architecture.md` | evidence-backed OmO protocol notes |
 | OmO deployment, systemd, teardown | `docs/backends/omo.md` | |
 | Release flow | `RELEASE.md`, `.github/workflows/release.yml`, `scripts/release.ts`, `scripts/publish-extension-branches.ts` | every push to main ships a patch; never hand-bump patch versions; `extension/*` branches are written by CI only |
+| Weekly OmO bump | `.github/workflows/omo-bump.yml`, `scripts/omo-bump.ts`, `scripts/ci/openchamber-e2e.sh`, `.github/workflows/omo-bump-repair.md` | the repair agent is gh-aw: edit the `.md`, then `gh aw compile omo-bump-repair`; never hand-edit the `.lock.yml` |
 | Per-module responsibility table | `docs/development.md` | source and smoke paths |
 
 ## CODE MAP
@@ -103,6 +104,7 @@ antechamber doctor                       # includes installed vs latest vs runni
 ```
 CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests. A `macos-latest` job runs typecheck and test on Node 24 so the darwin process paths meet the real `ps`, then, on Bun, `scripts/ci/darwin-teardown-probe.ts` (the shipped process table against the live table), doctor's `bun` and `private-host-teardown` checks, and `scripts/ci/launcher-smoke.sh` (the extension launcher installing and serving a packed runtime).
 The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check, and serves a fake-agent turn through `bin/opencode-antechamber`, then runs `scripts/ci/launcher-smoke.sh`.
+The weekly OmO bump (`omo-bump.yml`) additionally runs `scripts/ci/openchamber-e2e.sh`: the latest OpenChamber driving the real bumped OmO through the extension launcher. Run it locally after `npm run build`; its model is the local mock `scripts/ci/mock-openai.mjs`, so it needs no key and costs no tokens.
 
 ## NOTES
 - The extension's bundles (`extensions/antechamber/{panel,status,service,runtime}/*.js`) and the root `package.json` `openchamber` manifest are committed, because OpenChamber installs the repository URL by cloning it and never builds. `npm run build` regenerates both; commit them with the source change (CI fails on a diff).
