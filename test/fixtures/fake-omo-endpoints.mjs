@@ -29,6 +29,8 @@ const generationLog = (event) => {
 };
 generationLog("spawn");
 process.on("exit", () => generationLog("exit"));
+// Watch for the release before logging the event a test waits on: the test releases as soon as it reads that line,
+// and a release written before the watch exists is never seen (issue #95).
 function released(action) {
   const watcher = watch(process.cwd(), (_event, file) => {
     if (file?.toString() !== "release-generation") return;
@@ -117,8 +119,8 @@ input.on("line", (line) => {
       return;
     case "get_entries":
       if (holdEntries && noSession) {
-        generationLog("read");
         released(() => reply(command, true, { entries }));
+        generationLog("read");
         return;
       }
       if (holdEntries) {
@@ -147,19 +149,19 @@ input.on("line", (line) => {
       // Hold that ack after agent_start to reproduce the reviewer's pending admission.
       if (text === "fixture-generation-admission") {
         send({ type: "agent_start" });
-        generationLog("admission");
         released(() => {
           reply(command, true, {});
           send({ type: "agent_end" });
         });
+        generationLog("admission");
         return;
       }
       if (text === "fixture-generation-startup") {
-        generationLog("startup");
         released(() => {
           reply(command, true, {});
           send({ type: "agent_end" });
         });
+        generationLog("startup");
         return;
       }
       if (text === "fixture-generation-running" || text === "fixture-generation-read") {
@@ -167,8 +169,8 @@ input.on("line", (line) => {
         reply(command, true, {});
         recordMessage("assistant", "finished generation");
         holdEntries = text === "fixture-generation-read";
-        generationLog("running");
         released(() => send({ type: "agent_end" }));
+        generationLog("running");
         return;
       }
       // OmO can acknowledge a follow-up admission before its queued turn begins
