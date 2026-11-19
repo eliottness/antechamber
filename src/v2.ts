@@ -756,15 +756,28 @@ export class V2EventTranslator {
     part: Extract<OCPart, { type: "text" | "reasoning" }>,
     delta?: string,
   ): V2Envelope[] {
-    // Shell creates this user turn on the server; there is no optimistic prompt.
+    // Shell creates this user turn on the server; there is no optimistic prompt. OpenChamber 2.5 maps no
+    // `session.prompted` (packages/ui/src/lib/opencode/events.ts), so it learns of the turn from the inbox events;
+    // without them the shell card joins the previous turn. Both keep the message's own time, ahead of its card.
     if (part.type === "text" && part.synthetic) {
+      const created = part.time?.start ?? Date.now();
       return [
-        this.frame(directory, "session.prompted", {
-          sessionID: part.sessionID,
-          messageID: part.messageID,
-          prompt: { text: part.text },
-          delivery: "queue",
-        }),
+        this.frame(
+          directory,
+          "session.inbox.enqueued",
+          {
+            sessionID: part.sessionID,
+            inboxID: part.messageID,
+            item: { type: "user", delivery: "queue", payload: { text: part.text } },
+          },
+          created,
+        ),
+        this.frame(
+          directory,
+          "session.inbox.delivered",
+          { sessionID: part.sessionID, inboxID: part.messageID },
+          created,
+        ),
       ];
     }
     const kind = part.type;
