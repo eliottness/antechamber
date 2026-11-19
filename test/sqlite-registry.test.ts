@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import fs from "node:fs";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -13,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
 import { SessionPersistenceError, SessionStore } from "../src/session-store.js";
@@ -200,33 +203,88 @@ test("SQLite WAL and shared memory files remain private under umask 000", (t) =>
     assert.equal(statSync(join(state, name)).mode & 0o777, 0o600, name);
 });
 
-test("two processes opening the legacy registry import it exactly once", async (t) => {
+test("a sessions.json another process renamed away during the open is not an error", (t) => {
   const { state, entry } = setup(t);
-  writeFileSync(join(state, "sessions.json"), JSON.stringify({ ses_shared: entry }));
+  const legacy = join(state, "sessions.json");
+  // Process A imported sessions.json and renamed it away; this process saw it before that rename and reads it after.
+  new SessionStore(state).set("ses_kept", entry);
+  writeFileSync(legacy, JSON.stringify({ ses_kept: { ...entry, updated: 9 } }));
+  const read = fs.readFileSync;
+  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof read>) => {
+    if (args[0] === legacy) {
+      rmSync(legacy);
+      throw Object.assign(new Error(`ENOENT: no such file or directory, open '${legacy}'`), { code: "ENOENT" });
+    }
+    return read(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+
+  assert.equal(new SessionStore(state).get("ses_kept")?.updated, 2);
+});
+
+test("a registry another process imports between this one's existence checks is found", (t) => {
+  const { state, entry } = setup(t);
+  const legacy = join(state, "sessions.json");
+  writeFileSync(legacy, JSON.stringify({ ses_shared: entry }));
+  const exists = fs.existsSync;
+  let raced = false;
+  t.mock.method(fs, "existsSync", (path: Parameters<typeof exists>[0]) => {
+    const found = exists(path);
+    if (!raced && (path === legacy || path === join(state, "sessions.sqlite"))) {
+      // Right after this process's first check, another one creates the database, imports and renames sessions.json.
+      raced = true;
+      new SessionStore(state).get("ses_shared");
+    }
+    return found;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+
+  assert.equal(new SessionStore(state).get("ses_shared")?.piSessionId, "pi");
+  assert.equal(raced, true);
+});
+
+test("processes opening the legacy registry at once import it exactly once", async (t) => {
+  const { state: root, entry } = setup(t);
   const source = `import { SessionStore } from ${JSON.stringify(resolve("src/session-store.ts"))};
     const store = new SessionStore(process.argv[1]);
     if (store.get("ses_shared")?.piSessionId !== "pi") process.exitCode = 1;
     store.update("ses_shared", { title: "process" });`;
-  const children = [0, 1].map(() =>
-    spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source, state], {
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    }),
-  );
+  const children: ReturnType<typeof spawn>[] = [];
   t.after(() => {
     for (const child of children) if (child.exitCode === null) child.kill();
   });
-  const results = await Promise.all(
-    children.map(async (child) => {
-      let stderr = "";
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-      const [code] = await once(child, "exit", { signal: AbortSignal.timeout(10_000) });
-      assert.equal(code, 0, stderr);
-    }),
-  );
-  assert.equal(results.length, 2);
-  assert.equal(readdirSync(state).filter((name) => name.startsWith("sessions.json.migrated-")).length, 1);
-  assert.equal(new SessionStore(state).get("ses_shared")?.title, "process");
+  // Several processes over several fresh registries, so connections switching a new file to WAL at the same moment
+  // actually contend: one round of two rarely lined up (issue: registry open race on macOS CI).
+  for (let round = 0; round < 8; round++) {
+    const state = join(root, `round-${round}`);
+    mkdirSync(state);
+    writeFileSync(join(state, "sessions.json"), JSON.stringify({ ses_shared: entry }));
+    const started = Array.from({ length: 6 }, () =>
+      spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source, state], {
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+    children.push(...started);
+    await Promise.all(
+      started.map(async (child) => {
+        let stderr = "";
+        child.stderr?.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString();
+        });
+        const [code] = await once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+        assert.equal(code, 0, `round ${round}: ${stderr}`);
+      }),
+    );
+    assert.equal(readdirSync(state).filter((name) => name.startsWith("sessions.json.migrated-")).length, 1);
+    assert.equal(new SessionStore(state).get("ses_shared")?.title, "process");
+  }
 });
