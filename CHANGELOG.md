@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-11-19
+
 ### Fixed
 
 - Sending chat quotes with comments but no text of your own no longer fails with `session.prompt failed (400):
