@@ -1405,6 +1405,17 @@ export class SessionManager {
     metadata?: Record<string, unknown>,
   ): Promise<void> {
     const pi = await this.preparePrompt(s, model);
+    // The route accepts an empty prompt while quotes are pending, but a quote's admission can still fail after that:
+    // an empty prompt with no context ahead of it would send OmO nothing.
+    if (!noReply && text.trim() === "" && !parts?.some((part) => part.type === "file" || part.type === "agent")) {
+      const messages = this.ensureMessages(s);
+      const boundary = messages.findIndex((message) => message.info.id === s.tree.revert?.messageID);
+      const visible = boundary < 0 ? messages : messages.slice(0, boundary);
+      const user = visible.findLast((message) => message.info.role === "user")?.info;
+      if (user?.role !== "user" || user.synthetic !== true) {
+        throw new Error("prompt requires non-whitespace text, files, or agents");
+      }
+    }
     const native = nativePromptInput(text, parts ?? []);
     // OpenChamber treats instruction writes as best effort, so a rejected delivery must not fail the prompt;
     // the entries stay undelivered and are offered again before the next prompt.

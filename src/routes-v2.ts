@@ -933,6 +933,8 @@ export async function handleV2(
         };
         if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
           throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
+        // The command carries the quotes sent before it; ones sent while it runs wait for the next prompt.
+        const quotes = [...(managed.pendingContext ?? [])];
         const result = await runSessionSlash(services, sessionId, {
           command: body.name,
           arguments: body.text ?? "",
@@ -944,7 +946,7 @@ export async function handleV2(
           json(res, 400, errorBody("BadRequestError", "command is required"));
           return;
         }
-        managed.pendingContext?.clear();
+        for (const quote of quotes) managed.pendingContext?.delete(quote);
         res.writeHead(204).end();
         return;
       }
