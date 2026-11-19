@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-11-19
+
 ### Fixed
 
 - Two antechamber adapters starting at once on a new registry, or right after upgrading from `sessions.json`, no
