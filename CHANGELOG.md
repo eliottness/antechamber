@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.8] - 2026-11-19
+
+- test(generation): watch for the release before logging the event a test waits on (#101)
+
 ## [2.0.7] - 2026-11-19
 
 ### Added
