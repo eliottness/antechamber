@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Sending chat quotes with comments but no text of your own no longer fails with `session.prompt failed (400):
+  prompt requires non-whitespace text, files, or agents`. OpenChamber sends the quotes ahead of the prompt, so the
+  prompt had no text; the quotes were kept anyway, and a retry sent them a second time.
+
 ## [2.0.5] - 2026-11-19
 
 - fix(v2): open a turn for a ! shell command in OpenChamber 2.x (#92)

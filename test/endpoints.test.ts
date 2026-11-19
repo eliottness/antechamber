@@ -1004,6 +1004,105 @@ test("B2: v2 prompt requires text even with explicit parts or attachments", { ti
   assert.deepEqual(manager.messages(sessionID), []);
 });
 
+test("a v2 prompt of chat quotes alone, with no text of its own, reaches the agent", { timeout: 15_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionID = await createSession(url);
+  const pi = server["sessions"].get(sessionID)?.pi;
+  assert.ok(pi);
+  const command = pi.command.bind(pi);
+  const sent: Array<{ type: string; message?: unknown }> = [];
+  t.mock.method(pi, "command", (...args: Parameters<PiRpcClient["command"]>) => {
+    sent.push({ type: String(args[0].type), message: args[0].message });
+    return command(...args);
+  });
+  const stream = startEvents(url);
+  t.after(stream.close);
+  await stream.ready;
+  const post = (route: string, body: object) =>
+    fetch(`${url}/api/session/${sessionID}/${route}`, { method: "POST", body: JSON.stringify(body) });
+  // OpenChamber 2.5.3 `sendMessage` sends each chat quote as a synthetic message, then the prompt with the composer's
+  // text, which is empty when the user only wrote comments on the quotes.
+  const admitted = stream.waitFor("session.inbox.enqueued", (event) => event.data?.inboxID === "msg_quote_prompt");
+  const idle = stream.waitFor("session.idle", (event) => event.data?.sessionID === sessionID);
+  assert.equal((await post("synthetic", { id: "msg_quote", text: "> Add a secret.\n\nNo provider" })).status, 200);
+  assert.equal((await post("prompt", { id: "msg_quote_prompt", text: "" })).status, 200);
+  await Promise.all([admitted, idle]);
+  assert.deepEqual(
+    sent.filter((item) => item.type === "prompt").map((item) => item.message),
+    [""],
+  );
+  // The quotes went with that prompt: another empty prompt has nothing to carry.
+  assert.equal((await post("prompt", { text: "" })).status, 400);
+  // A rebuild from the session file (after a command, on refresh, after a restart) keeps the turn the reply answers.
+  const manager = server["sessions"];
+  await manager.reloadMessages(sessionID);
+  const history = manager.messages(sessionID) ?? [];
+  assert.equal(history.find((message) => message.info.id === "msg_quote_prompt")?.info.role, "user");
+  const reply = history.find((message) => message.info.role === "assistant")?.info;
+  assert.equal(reply?.role === "assistant" ? reply.parentID : undefined, "msg_quote_prompt");
+});
+
+test("an empty prompt whose quote the agent refused never reaches the agent", { timeout: 15_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionID = await createSession(url);
+  const pi = server["sessions"].get(sessionID)?.pi;
+  assert.ok(pi);
+  const command = pi.command.bind(pi);
+  const sent: string[] = [];
+  // Hold the quote's admission until the prompt is accepted, the order the race needs.
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
+    sent.push(String(args[0].type));
+    if (args[0].type === "send_custom_message") await gate;
+    return command(...args);
+  });
+  const stream = startEvents(url);
+  t.after(stream.close);
+  await stream.ready;
+  const post = (route: string, body: object) =>
+    fetch(`${url}/api/session/${sessionID}/${route}`, { method: "POST", body: JSON.stringify(body) });
+  const refused = stream.waitFor("session.text.ended", (event) =>
+    JSON.stringify(event).includes("prompt requires non-whitespace text"),
+  );
+  // OpenChamber sends the prompt once /synthetic answers, before the quote's queued admission has run.
+  assert.equal((await post("synthetic", { text: "fixture-reject-context" })).status, 200);
+  assert.equal((await post("prompt", { text: "" })).status, 200);
+  release();
+  await refused;
+  assert.deepEqual(sent, ["send_custom_message"]);
+});
+
+test("a command takes the quotes sent before it, not the ones sent while it runs", { timeout: 15_000 }, async (t) => {
+  const { url, server } = await startServer(t);
+  const sessionID = await createSession(url);
+  const pi = server["sessions"].get(sessionID)?.pi;
+  assert.ok(pi);
+  const command = pi.command.bind(pi);
+  let dispatched = (): void => {};
+  const commandDispatched = new Promise<void>((resolve) => (dispatched = resolve));
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  t.mock.method(pi, "command", async (...args: Parameters<PiRpcClient["command"]>) => {
+    if (args[0].type === "prompt" && args[0].message === "/notify-fixture") {
+      dispatched();
+      await gate;
+    }
+    return command(...args);
+  });
+  const post = (route: string, body: object) =>
+    fetch(`${url}/api/session/${sessionID}/${route}`, { method: "POST", body: JSON.stringify(body) });
+  assert.equal((await post("synthetic", { text: "> first\n\ncomment" })).status, 200);
+  const running = post("command", { name: "notify-fixture", text: "" });
+  await commandDispatched;
+  assert.equal((await post("synthetic", { text: "> second\n\ncomment" })).status, 200);
+  release();
+  assert.equal((await running).status, 204);
+  // The first quote went with the command; the second is still waiting for this prompt.
+  assert.equal((await post("prompt", { text: "" })).status, 200);
+  assert.equal((await post("prompt", { text: "" })).status, 400);
+});
+
 for (const v1 of [false]) {
   test(`B2: ${v1 ? "v1" : "v2"} attachment-only prompts still reach the agent`, {
     timeout: 15_000,

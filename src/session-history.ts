@@ -312,7 +312,8 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
     if (m.role === "user") {
       endRun();
       const text = textOf(m.content);
-      if (text === "") continue;
+      // An empty prompt antechamber sent (chat quotes alone) is a real turn; its reply answers it.
+      if (text === "" && m.clientMessageId === undefined) continue;
       const msgId =
         m.clientMessageId ??
         Object.keys(s.tree.messageEntries).find((key) => s.tree.messageEntries[key] === e.id) ??

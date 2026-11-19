@@ -933,6 +933,8 @@ export async function handleV2(
         };
         if (body.delivery !== undefined && body.delivery !== "steer" && body.delivery !== "queue")
           throw new RequestBodyError(400, 'delivery must be "steer" or "queue"');
+        // The command carries the quotes sent before it; ones sent while it runs wait for the next prompt.
+        const quotes = [...(managed.pendingContext ?? [])];
         const result = await runSessionSlash(services, sessionId, {
           command: body.name,
           arguments: body.text ?? "",
@@ -944,6 +946,7 @@ export async function handleV2(
           json(res, 400, errorBody("BadRequestError", "command is required"));
           return;
         }
+        for (const quote of quotes) managed.pendingContext?.delete(quote);
         res.writeHead(204).end();
         return;
       }
@@ -979,7 +982,13 @@ export async function handleV2(
           explicit.length > 0
             ? [...explicit, ...v2PromptParts("", body.files, body.agents)]
             : v2PromptParts(text, body.files, body.agents);
-        if (text.trim() === "" && !parts.some((part) => part.type === "file" || part.type === "agent")) {
+        // OpenChamber sends chat quotes as context ahead of the prompt, so a prompt of quotes alone has no text;
+        // OmO runs it as an empty user message after the quotes (RPC probe 2026-11-19).
+        if (
+          text.trim() === "" &&
+          !parts.some((part) => part.type === "file" || part.type === "agent") &&
+          !managed.pendingContext?.size
+        ) {
           json(res, 400, {
             _tag: "InvalidRequestError",
             message: "prompt requires non-whitespace text, files, or agents",
@@ -1012,6 +1021,7 @@ export async function handleV2(
           return;
         }
         const delivery = body.delivery ?? "steer";
+        managed.pendingContext?.clear();
         promptAsync(
           services,
           managed,
@@ -1072,6 +1082,7 @@ export async function handleV2(
         if (body.description !== undefined && typeof body.description !== "string")
           throw new RequestBodyError(400, "description must be a string");
         if (body.description !== undefined) (managed.tree.promptDescriptions ??= {})[messageID] = body.description;
+        (managed.pendingContext ??= new Set()).add(messageID);
         promptAsync(services, managed, text, undefined, true, messageID, body.delivery ?? "steer", undefined, metadata);
         // OpenChamber 2.3.2 treats anything but 200 + the admitted record as a failed send (captured OpenCode shape).
         json(res, 200, {

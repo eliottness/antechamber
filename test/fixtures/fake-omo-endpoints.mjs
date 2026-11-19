@@ -70,7 +70,7 @@ function reply(command, success, data, error) {
   });
 }
 
-function recordMessage(role, text, plain = false) {
+function recordMessage(role, text, plain = false, clientMessageId = undefined) {
   const entry = {
     type: "message",
     id: randomUUID(),
@@ -82,6 +82,7 @@ function recordMessage(role, text, plain = false) {
       content: plain ? text : [{ type: "text", text }],
       provider: "fake",
       model: "fake-model",
+      ...(clientMessageId === undefined ? {} : { clientMessageId }),
     },
   };
   leaf = entry.id;
@@ -222,7 +223,8 @@ input.on("line", (line) => {
         reply(command, true, {});
         return;
       }
-      recordMessage("user", text, text.startsWith("plain-content:"));
+      // OmO stores the prompt's clientMessageId on its user message (observed in a real session file, 2026-11-19).
+      recordMessage("user", text, text.startsWith("plain-content:"), command.clientMessageId);
       const assistant = recordMessage(
         "assistant",
         text === "fixture-generation-model" ? `${selectedModel.provider}/${selectedModel.id}` : `reply: ${text}`,
@@ -352,6 +354,10 @@ input.on("line", (line) => {
       // Idle OmO with triggerTurn:false appends the message to the conversation without a turn.
       if (command.triggerTurn !== false) {
         reply(command, false, undefined, "fixture only admits context without a turn");
+        return;
+      }
+      if (command.content?.[0]?.text === "fixture-reject-context") {
+        reply(command, false, undefined, "fixture rejects this context");
         return;
       }
       if (
