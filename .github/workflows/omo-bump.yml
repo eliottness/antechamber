@@ -1,10 +1,11 @@
 name: OmO bump
 
 # Weekly: move the omo-ai pin to the latest release and prove it against the latest OpenChamber. The bump commit is
-# pushed to omo-bump/<version>, which runs CI on it, and is checked end to end here. When everything passes it is
-# pushed to main with the release deploy key, and that push releases it (release.yml). When anything fails the
-# run fails and the branch stays for a maintainer to fix on. A run started on any other branch is a dry run: it bumps and checks that branch, then deletes the bump branch instead of shipping.
-# See RELEASE.md.
+# pushed to its own branch, omo-bump/<version>-<run>, which runs CI on it, and is checked end to end here. When
+# everything passes that exact commit is pushed to main with the release deploy key, and that push releases it
+# (release.yml). When anything fails the run fails and the branch stays; no later run touches it. A run started on any
+# other branch is a dry run on omo-bump-dry-run/<version>-<run>: it checks the bump, then deletes that branch instead
+# of shipping. See RELEASE.md.
 on:
   schedule:
     - cron: "17 6 * * 1"
@@ -40,7 +41,7 @@ jobs:
           node-version: 24.x
           cache: npm
       - run: npm ci
-      - name: Bump omo-ai and push omo-bump/<version>
+      - name: Bump omo-ai and push it to its own branch
         id: bump
         run: |
           moved="$(npx tsx scripts/omo-bump.ts "$VERSION")"
@@ -49,12 +50,14 @@ jobs:
             exit 0
           fi
           read -r from to <<< "$moved"
-          branch="omo-bump/$to"
+          prefix=omo-bump
+          [ "$GITHUB_REF" = refs/heads/main ] || prefix=omo-bump-dry-run
+          branch="$prefix/$to-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git commit -qam "chore(deps): bump omo-ai from $from to $to"
-          git push --force origin "HEAD:refs/heads/$branch"
+          git push origin "HEAD:refs/heads/$branch"
           {
             echo "from=$from"
             echo "to=$to"
@@ -70,6 +73,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.to != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       actions: read
     steps:
@@ -93,6 +97,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.to != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -120,26 +125,24 @@ jobs:
           ref: main
           fetch-depth: 0
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
-      - name: Dry run, delete the bump branch
-        if: github.ref != 'refs/heads/main'
+      # Only the exact commit CI and the end-to-end run tested ships, and the branch is deleted only while it still
+      # points there: a commit pushed to it after the bump stays, untested and unshipped.
+      - name: Ship the tested commit, or delete the branch after a dry run
         run: |
-          git push origin --delete "$BRANCH"
-          echo "### Dry run on $GITHUB_REF_NAME: omo-ai $TO passed CI and the end-to-end run; not shipped" >> "$GITHUB_STEP_SUMMARY"
-        env:
-          BRANCH: ${{ needs.prepare.outputs.branch }}
-          TO: ${{ needs.prepare.outputs.to }}
-      # main only takes the exact commit CI and the end-to-end run tested.
-      - name: Fast-forward main to the bump and release it
-        if: github.ref == 'refs/heads/main'
-        run: |
-          git fetch -q origin "$BRANCH"
-          if ! git merge -q --ff-only FETCH_HEAD; then
-            echo "::warning::main moved during the bump; run OmO bump again to retest on the new main"
-            exit 0
+          git fetch -q origin "$SHA"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            if ! git merge -q --ff-only "$SHA"; then
+              echo "::warning::main moved during the bump; run OmO bump again to retest on the new main"
+              exit 0
+            fi
+            git push origin HEAD:main
+            echo "### Shipped omo-ai $TO; the release workflow publishes it" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Dry run on $GITHUB_REF_NAME: omo-ai $TO passed every check; not shipped" >> "$GITHUB_STEP_SUMMARY"
           fi
-          git push origin HEAD:main
-          git push origin --delete "$BRANCH"
-          echo "### Shipped omo-ai $TO; the release workflow publishes it" >> "$GITHUB_STEP_SUMMARY"
+          git push --force-with-lease="refs/heads/$BRANCH:$SHA" origin ":refs/heads/$BRANCH" ||
+            echo "::warning::$BRANCH moved after the tested commit; left in place"
         env:
           BRANCH: ${{ needs.prepare.outputs.branch }}
+          SHA: ${{ needs.prepare.outputs.sha }}
           TO: ${{ needs.prepare.outputs.to }}

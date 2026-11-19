@@ -24,7 +24,9 @@ export function addUnreleasedChange(text: string, line: string): string {
   let last = changed + 1;
   while (last + 1 < end && !lines[last + 1]!.startsWith("### ")) last++;
   while (lines[last] === "") last--;
-  return [...lines.slice(0, last + 1), line, ...lines.slice(last + 1)].join("\n");
+  // An empty "### Changed" heading gets the blank line a list needs under it.
+  const added = last === changed ? ["", line] : [line];
+  return [...lines.slice(0, last + 1), ...added, ...lines.slice(last + 1)].join("\n");
 }
 
 function npm(root: string, args: readonly string[]): string {

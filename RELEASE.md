@@ -92,12 +92,13 @@ The [OmO bump workflow](.github/workflows/omo-bump.yml) moves the exact
 `omo-ai` pin to the latest release every Monday (06:17 UTC). Run it from the
 Actions tab to bump now, optionally to a given version.
 Started on any branch other than `main`, it is a dry run: it bumps that branch
-and runs every check below, then deletes the bump branch instead of shipping.
+on `omo-bump-dry-run/<to>-<run>` and runs every check below, then deletes that
+branch instead of shipping.
 
 1. **Bump.** `scripts/omo-bump.ts` updates `package.json`, `package-lock.json`
    and a `### Changed` note under `[Unreleased]`, and the job pushes the commit
-   `chore(deps): bump omo-ai from <from> to <to>` to `omo-bump/<to>` with the
-   release deploy key. When the pin is already current it stops there.
+   `chore(deps): bump omo-ai from <from> to <to>` to its own branch,
+   `omo-bump/<to>-<run>`, with the release deploy key. When the pin is already current it stops there.
 2. **Check.** The branch push runs the whole CI matrix, and the workflow waits
    for it. In parallel, `scripts/ci/openchamber-e2e.sh` installs the latest
    `@openchamber/web`, makes the extension launcher install the packed
@@ -107,14 +108,15 @@ and runs every check below, then deletes the bump branch instead of shipping.
    `scripts/ci/mock-openai.mjs`, a local OpenAI-compatible fake that OmO reaches
    through its own provider client, so the bump needs no provider, key or
    tokens. It does not run `npm run omo-smoke`, whose checks need a real model.
-3. **Ship.** When everything passes, `main` is fast-forwarded to the bump
-   commit and the branch is deleted. That push releases it as described above.
+3. **Ship.** When everything passes, `main` is fast-forwarded to exactly the
+   commit that was tested, and the branch is deleted unless something was
+   pushed to it since. That push releases it as described above.
    If `main` moved during the run, nothing is shipped and the job warns; run
    the workflow again.
 
-When a check fails, the run fails (GitHub emails you) and `omo-bump/<to>`
-stays: fix antechamber on that branch in a pull request, and merging it
-releases the bump and the fix together.
+When a check fails, the run fails (GitHub emails you) and the bump branch
+stays. No later run touches it: fix antechamber on top of it in a pull
+request, and merging that releases the bump and the fix together.
 
 To move OmO by hand instead, run `npx tsx scripts/omo-bump.ts [version]` in an
 ordinary PR; the next release ships it to everyone who updates the extension.

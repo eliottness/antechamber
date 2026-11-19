@@ -17,6 +17,16 @@ npm install --prefix "$work/openchamber" --no-audit --no-fund --loglevel=error \
 openchamber="$work/openchamber/node_modules/@openchamber/web"
 echo "OpenChamber $(node -p "require('$openchamber/package.json').version"), OmO $pin"
 
+server="" mock=""
+cleanup() {
+  kill $server $mock 2> /dev/null || true
+  wait $server $mock 2> /dev/null || true
+  [ -f "$work/openchamber.log" ] && tail -n 80 "$work/openchamber.log"
+  [ -f "$work/mock.log" ] && { echo "--- mock provider"; tail -n 20 "$work/mock.log"; }
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
 mock_port=4099
 MOCK_PORT="$mock_port" node scripts/ci/mock-openai.mjs > "$work/mock.log" 2>&1 &
 mock=$!
@@ -57,8 +67,6 @@ HOME="$home" OMO_CODING_AGENT_DIR="$agent" ANTECHAMBER_STATE_DIR="$work/state" \
   OPENCODE_BINARY="$PWD/extensions/antechamber/bin/opencode-antechamber" \
   node "$openchamber/bin/cli.js" serve --foreground --port "$port" --host 127.0.0.1 > "$work/openchamber.log" 2>&1 &
 server=$!
-trap 'kill "$server" "$mock" 2>/dev/null || true; wait "$server" "$mock" 2>/dev/null || true
-  tail -n 80 "$work/openchamber.log"; echo "--- mock provider"; tail -n 20 "$work/mock.log"' EXIT
 
 dir="directory=$(node -p 'encodeURIComponent(process.argv[1])' "$project")"
 api() { curl -fsS --max-time 60 "$@"; }
@@ -76,8 +84,12 @@ echo
 # OmO read the private models.json: the mock model is in the catalog.
 test "$(json 'd.data.some((p) => p.id === "mock" && "mock-pong" in p.models)' < "$work/providers.json")" = true
 
-installed="$(ls -d "$ANTECHAMBER_RUNTIME_DIR"/local-*/node_modules/omo-ai)"
-test "$(node -p "require('$installed/package.json').version")" = "$pin"
+# A reused ANTECHAMBER_RUNTIME_DIR keeps earlier local-* runtimes; this run's is the newest. The launcher names them
+# local-<hash>, so sorting ls by time is safe.
+# shellcheck disable=SC2012
+installed="$(ls -dt "$ANTECHAMBER_RUNTIME_DIR"/local-*/node_modules/omo-ai | head -n 1)"
+version="$(node -p "require('$installed/package.json').version")"
+test "$version" = "$pin" || { echo "the launcher installed OmO $version, not the pinned $pin" >&2; exit 1; }
 
 session="$(api -X POST -H 'content-type: application/json' -d '{}' "$base/api/session?$dir" | json 'd.data.id')"
 echo "session $session created through OpenChamber"
@@ -86,8 +98,9 @@ api -X POST -H 'content-type: application/json' -d '{"text":"e2e ping from antec
   "$base/api/session/$session/prompt?$dir" > /dev/null
 answer=""
 for _ in $(seq 1 180); do
-  answer="$(api "$base/api/session/$session/message?$dir" |
-    json 'd.data.filter((m) => m.type === "assistant").flatMap((m) => m.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join(" ")')"
+  # A transient HTTP error is retried on the next pass rather than failing the run.
+  answer="$(api "$base/api/session/$session/message?$dir" 2> /dev/null |
+    json 'd.data.filter((m) => m.type === "assistant").flatMap((m) => m.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join(" ")' 2> /dev/null || true)"
   [ "$answer" = pong ] && break
   sleep 1
 done

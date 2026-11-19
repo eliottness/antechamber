@@ -29,3 +29,11 @@ test("addUnreleasedChange puts Changed before other [Unreleased] sections when i
   );
   assert.throws(() => addUnreleasedChange(`${HEADER}## [0.2.1]\n`, NOTE));
 });
+
+test("addUnreleasedChange fills an empty Changed heading with a properly spaced list", () => {
+  const before = `${HEADER}## [Unreleased]\n\n### Changed\n\n## [0.2.1] - x\n`;
+  assert.equal(
+    addUnreleasedChange(before, NOTE),
+    `${HEADER}## [Unreleased]\n\n### Changed\n\n${NOTE}\n\n## [0.2.1] - x\n`,
+  );
+});
