@@ -328,10 +328,10 @@ export class PiEventTranslator {
     });
   }
 
-  deliverInput(s: ManagedSession, messageID: string): void {
+  deliverInput(s: ManagedSession, messageID: string, created?: number): void {
     this.services.emit(s.info.directory, {
       type: "session.inbox.delivered",
-      properties: { sessionID: s.info.id, inboxID: messageID },
+      properties: { sessionID: s.info.id, inboxID: messageID, ...(created !== undefined ? { created } : {}) },
     });
     s.inputs?.delete(messageID);
   }

@@ -460,7 +460,10 @@ export class V2EventTranslator {
   translate(directory: string, ev: OCEvent): V2Envelope[] {
     switch (ev.type) {
       case "session.inbox.enqueued":
-      case "session.inbox.delivered":
+      case "session.inbox.delivered": {
+        const { created, ...data } = ev.properties;
+        return [this.frame(directory, ev.type, data, created)];
+      }
       case "session.renamed":
       case "session.agent.selected":
       case "session.archived":
@@ -473,8 +476,6 @@ export class V2EventTranslator {
       case "session.compaction.delta":
       case "session.compaction.ended":
       case "session.compaction.failed":
-      case "session.shell.started":
-      case "session.shell.ended":
       case "shell.created":
       case "shell.exited":
       case "filesystem.changed":

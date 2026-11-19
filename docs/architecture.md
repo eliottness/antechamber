@@ -230,6 +230,14 @@ replacement prompt retain these cards; they are never matched to OmO JSONL
 entries or sent to the model. This retention lasts for the connector process,
 not across connector restarts: adapter-only cards are not persisted transcripts.
 
+On v2 the `bash` card is a user shell's only card. OpenCode 2.x reports a `!`
+command with `session.shell.started` / `session.shell.ended`, and OpenChamber
+2.5.3 draws those as a `role: "shell"` row of its own (`lib/opencode/events.ts`,
+`TimelineNotice.tsx` `ShellNotice`). Sending both showed the command twice
+(reported 2026-11-18), so the adapter sends neither. The `bash` card stays
+because it carries live `metadata.output`; the shell row only gets output from
+`session.shell.ended`.
+
 ### Event translation
 
 | OpenCode (SSE `event`) | pi (stdout JSONL) |
@@ -375,6 +383,13 @@ its status through `extension_ui_request {method: "notify"}` and returns
 notifications received during a slash invocation as assistant text and treats
 that handled response as completion, returning the session to idle. Prompts
 that start an agent turn still use the agent lifecycle events for completion.
+
+OmO sends the notification before it answers the prompt RPC, and OpenChamber
+2.x orders a transcript by creation time (`sync/message-ordering.ts`), taking
+the command's from `session.inbox.enqueued` / `delivered` and breaking a
+same-millisecond tie on the random id. Those two frames carry the command's
+admission time, and its notices are created at least 1 ms after it, so
+`/loop stop` renders above its output (reported 2026-11-18).
 
 This is a connector-only mapping of the installed OmO protocol, not a change
 to OmO or its settings.

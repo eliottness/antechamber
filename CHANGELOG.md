@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A print-only slash command such as `/loop stop` no longer renders below its own output in OpenChamber 2.x. The
+  command now takes the time OmO admitted it, and its output is always created after it.
+- A `!` shell command shows one card in OpenChamber 2.5, not two. The adapter no longer sends `session.shell.started`
+  and `session.shell.ended`, which OpenChamber draws as a second shell row; the remaining `bash` card is the one that
+  shows output while the command runs.
+
 ## [2.0.3] - 2026-11-17
 
 ### Fixed

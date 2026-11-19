@@ -202,6 +202,8 @@ export type OCEvent =
       properties: {
         sessionID: string;
         inboxID: string;
+        /** v2 envelope time; OpenChamber 2.x takes the user message's creation time from it. Defaults to now. */
+        created?: number;
         item:
           | {
               type: "user";
@@ -216,7 +218,7 @@ export type OCEvent =
           | { type: "synthetic"; payload: { text: string; metadata?: Record<string, unknown> } };
       };
     }
-  | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string } }
+  | { type: "session.inbox.delivered"; properties: { sessionID: string; inboxID: string; created?: number } }
   | { type: "session.diff"; properties: { sessionID: string; diff: import("./session-diff.js").SessionFileDiff[] } }
   | { type: "server.connected"; properties: Record<string, unknown> }
   | { type: "mcp.tools.changed"; properties: { server: string } }
@@ -264,24 +266,6 @@ export type OCEvent =
         reason: string;
         inputID: string;
         error: { name: string; data: { message: string } };
-      };
-    }
-  | {
-      type: "session.shell.started" | "session.shell.ended";
-      properties: {
-        sessionID: string;
-        shell: {
-          id: string;
-          command: string;
-          cwd: string;
-          shell: string;
-          file: string;
-          status: "running" | "exited" | "timeout" | "killed";
-          exit?: number;
-          metadata: Record<string, unknown>;
-          time: { started: number; completed?: number };
-        };
-        output?: { output: string; cursor: number; size: number; truncated: boolean };
       };
     }
   | { type: "shell.created"; properties: { info: OCShellInfo } }
