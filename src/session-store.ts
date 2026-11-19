@@ -662,6 +662,28 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error ? String(error.code) : undefined;
 }
 
+const REGISTRY_BUSY_TIMEOUT_MS = 5_000;
+
+/**
+ * Connections switching a new file to WAL at the same time can deadlock, and SQLite then answers SQLITE_BUSY at once
+ * instead of running its busy handler (https://sqlite.org/c3ref/busy_handler.html). Do what that handler would: back
+ * off and try again within the same `busy_timeout`. Once one connection has switched the file, the rest find it in WAL.
+ */
+function enableWal(db: DatabaseSync): void {
+  const deadline = Date.now() + REGISTRY_BUSY_TIMEOUT_MS;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL;");
+      return;
+    } catch (error) {
+      const busy = error instanceof Error && "errcode" in error && (Number(error.errcode) & 0xff) === 5;
+      if (!busy || Date.now() >= deadline) throw error;
+      Atomics.wait(pause, 0, 0, 5 + Math.random() * 20);
+    }
+  }
+}
+
 export class SessionStore {
   readonly stateDir: string;
   private readonly file: string;
@@ -687,7 +709,9 @@ export class SessionStore {
   private database(write = false): DatabaseSync | undefined {
     if (this.db !== undefined) return this.db;
     const legacy = join(this.stateDir, "sessions.json");
-    if (!write && !existsSync(this.file) && !existsSync(legacy)) return undefined;
+    // Legacy first: another process renames sessions.json away only after it has created the database, so whichever
+    // moment the second check runs, one of the two is there. The other order can miss both.
+    if (!write && !existsSync(legacy) && !existsSync(this.file)) return undefined;
     let db: DatabaseSync | undefined;
     try {
       mkdirSync(this.stateDir, { recursive: true, mode: REGISTRY_DIRECTORY_MODE });
@@ -696,7 +720,8 @@ export class SessionStore {
       closeSync(openSync(this.file, "a", REGISTRY_FILE_MODE));
       chmodSync(this.file, REGISTRY_FILE_MODE);
       db = new DatabaseSync(this.file);
-      db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;");
+      db.exec(`PRAGMA busy_timeout = ${REGISTRY_BUSY_TIMEOUT_MS};`);
+      enableWal(db);
       db.exec(`CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY, payload TEXT NOT NULL, pi_session_id TEXT NOT NULL,
         directory TEXT NOT NULL, parent_id TEXT, has_task INTEGER NOT NULL
@@ -736,6 +761,8 @@ export class SessionStore {
           const parsed: unknown = JSON.parse(readFileSync(legacy, "utf8"));
           return record(parsed) ? parsed : undefined;
         } catch (error) {
+          // Another process imported it and renamed it away after this one checked it was there.
+          if (errorCode(error) === "ENOENT") return undefined;
           if (!(error instanceof SyntaxError)) throw error;
           // Preserve malformed JSON untouched; a later repair can still be imported.
           return undefined;

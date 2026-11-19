@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Two antechamber adapters starting at once on a new registry, or right after upgrading from `sessions.json`, no
+  longer fail with `Failed to persist session registry ... database is locked` or
+  `ENOENT ... sessions.json`. Switching a new registry to WAL now backs off and retries within the 5 s busy timeout,
+  a `sessions.json` another process already imported and renamed is no longer an error, and a process that opens
+  the registry while another imports `sessions.json` no longer finds it empty.
+
 ## [2.0.8] - 2026-11-19
 
 - test(generation): watch for the release before logging the event a test waits on (#101)
