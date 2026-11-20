@@ -659,6 +659,23 @@ Because stopping the parent's turn no longer ends its background subagents,
 fork and revert stay refused while one runs, with an error that says so;
 wait for the subagent, or cancel it from the parent session.
 
+On the v2 API a background task (`run_in_background: true`) is OpenCode's
+background `subagent` call. pi ends the step that spawned it before the child
+finishes, and OpenChamber 2.5.3 marks a running tool under a completed message
+`error: "Interrupted"` (`packages/ui/src/sync/materialization.ts`
+`finalizeActiveToolsInCompletedMessage`). It follows a call past its step only
+when the call settled with `{status: "running", sessionID}` in its metadata
+(`lib/opencode/subagent-run.ts` `readBackgroundSubagentChildID`). The row then
+shows as running while that child session is busy, and is finished by a
+`session.synthetic` report carrying `metadata.source: "subagent"`
+(`readSubagentRun`). The report exists only on the live stream: a reload
+renders the finished card from its own output. If a report lands just before
+the user's next prompt, OpenChamber can name it as the cut of a revert or fork of
+that prompt, and the connector refuses that unknown boundary. The row's Stop
+button first sends a cancellation note to `/synthetic`, which the connector
+refuses with 400, because OmO has no RPC to stop a task. OpenChamber then
+reports that the stop failed and interrupts nothing.
+
 ### MCP status and authorization
 
 OpenChamber scopes MCP calls by directory, while OmO owns MCP per session

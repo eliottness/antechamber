@@ -887,6 +887,58 @@ test("a background task outliving its step reaches v2 as a running background su
   assert.notEqual(finished?.state.metadata.status, "running");
 });
 
+test("a finished background task reports its end state once, even to a translator started after it ended", () => {
+  const card = (id: string, state: OCToolPart["state"]): OCToolPart => ({
+    id: `prt_task_${id}_0`,
+    sessionID: "ses_parent",
+    messageID: "msg_parent",
+    type: "tool",
+    tool: "task",
+    callID: id,
+    state,
+  });
+  const input = { description: "Review", prompt: "go", subagent_type: "explore", background: true };
+  const time = { start: 1, end: 2 };
+  const metadata = (status: string) => ({ sessionID: `ses_${status}`, task: { status } });
+  const cases: Array<[OCToolPart, string]> = [
+    [
+      card("done", {
+        status: "completed",
+        input,
+        output: "ok",
+        title: "Review",
+        metadata: metadata("completed"),
+        time,
+      }),
+      "completed",
+    ],
+    [card("failed", { status: "error", input, error: "boom", metadata: metadata("failed"), time }), "error"],
+    [
+      card("cancelled", { status: "error", input, error: "stopped", metadata: metadata("cancelled"), time }),
+      "cancelled",
+    ],
+    [card("canceled", { status: "error", input, error: "stopped", metadata: metadata("canceled"), time }), "cancelled"],
+  ];
+  for (const [part, state] of cases) {
+    const translator = new V2EventTranslator();
+    const update = { type: "message.part.updated", properties: { part } } as OCEvent;
+    const frames = [...translator.translate("/w", update), ...translator.translate("/w", update)];
+    const reports = frames.filter((frame) => frame.type === "session.synthetic");
+    assert.equal(reports.length, 1, part.callID);
+    assert.deepEqual(reports[0]?.data.metadata, {
+      source: "subagent",
+      childID: `ses_${part.callID === "done" ? "completed" : part.callID}`,
+      state,
+      agent: "explore",
+    });
+    const settled = frames.filter(
+      (frame) => frame.type === "session.tool.success" || frame.type === "session.tool.failed",
+    );
+    assert.equal(settled.length, 1, part.callID);
+    assert.notEqual((settled[0]?.data.metadata as Record<string, unknown> | undefined)?.status, "running");
+  }
+});
+
 test("partial lines and split UTF8 stream only after the terminating newline", async (t) => {
   const { manager, parent, store, bus } = setup(t);
   const child = liveRecord(store);
