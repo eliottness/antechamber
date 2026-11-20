@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenChamber keeps subagent costs in the session total after a restart, even
+  when its live events arrive before the session list finishes loading.
+
 ## [2.0.9] - 2026-11-19
 
 ### Fixed

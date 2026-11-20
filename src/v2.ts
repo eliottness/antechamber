@@ -507,6 +507,7 @@ export class V2EventTranslator {
             ...(info.parentMessageID !== undefined ? { parentMessageID: info.parentMessageID } : {}),
             ...(info.metadata !== undefined ? { metadata: info.metadata } : {}),
           }),
+          ...this.usageFrames(directory, info),
         ];
       }
       case "session.updated": {
@@ -515,15 +516,7 @@ export class V2EventTranslator {
           ...(info.metadata !== undefined
             ? [this.frame(directory, "session.metadata.updated", { sessionID: info.id, metadata: info.metadata })]
             : []),
-          ...(info.cost !== undefined
-            ? [
-                this.frame(directory, "session.usage.updated", {
-                  sessionID: info.id,
-                  cost: info.cost,
-                  tokens: info.tokens ?? zeroTokens(),
-                }),
-              ]
-            : []),
+          ...this.usageFrames(directory, info),
         ];
       }
       case "session.diff":
@@ -935,6 +928,17 @@ export class V2EventTranslator {
       this.sessions.set(sessionID, st);
     }
     return st;
+  }
+
+  private usageFrames(directory: string, info: OCSession): V2Envelope[] {
+    if (info.cost === undefined) return [];
+    return [
+      this.frame(directory, "session.usage.updated", {
+        sessionID: info.id,
+        cost: info.cost,
+        tokens: info.tokens ?? zeroTokens(),
+      }),
+    ];
   }
 
   private frame(directory: string, type: string, data: Record<string, unknown>, created = Date.now()): V2Envelope {
