@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.11] - 2026-11-20
+
 ### Fixed
 
 - A background task (`run_in_background`) no longer shows as "Interrupted" in OpenChamber while it is still
