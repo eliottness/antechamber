@@ -87,6 +87,8 @@ toolMappers.task = (args, result) => {
     description: args.task_summary ?? args.name ?? args.description,
     prompt: args.prompt,
     subagent_type: args.subagent_type ?? args.category,
+    // OpenCode 2.x's own flag for a delegated call that returns at once (v2.ts `backgroundTask`).
+    ...(args.run_in_background === true ? { background: true } : {}),
   };
   const details = record(result?.details) ? result.details : {};
   return {

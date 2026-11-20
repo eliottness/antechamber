@@ -806,6 +806,87 @@ test("nested background completion wake updates the parent card and archives the
   assert.ok(existsSync(join(state, "children", "st_child.jsonl")));
 });
 
+// OpenChamber 2.x marks a running tool under a completed message "Interrupted" (materialization.ts
+// `finalizeActiveToolsInCompletedMessage`), and follows a call past its step only as OpenCode's background
+// `subagent`: settled with `{status: "running", sessionID}`, then finished by a `session.synthetic` report
+// (subagent-run.ts `readBackgroundSubagentChildID`, `readSubagentRun`; OpenChamber 2.5.3).
+test("a background task outliving its step reaches v2 as a running background subagent, then reports", (t) => {
+  const { manager, parent, store, directory, events } = setup(t);
+  liveRecord(store);
+  start(manager, parent, { task_summary: "Background child", subagent_type: "explore", run_in_background: true });
+  result(manager, parent, { task_id: "st_child", status: "running" }, "Started");
+  manager["onPiEvent"](parent, { type: "message_end", message: { role: "assistant", stopReason: "toolUse" } });
+  manager["onPiEvent"](parent, { type: "message_start", message: { role: "assistant" } });
+  const owner = parent.messages?.find((message) => message.parts.some((part) => part.type === "tool"));
+  assert.ok(owner);
+  assert.ok(
+    owner?.info.role === "assistant" && owner.info.time.completed !== undefined,
+    "the next step completes the task's message",
+  );
+  const card = parts(parent.messages)[0];
+  assert.equal(card?.state.status, "running");
+  const childID = card?.state.status === "running" ? card.state.metadata?.sessionID : undefined;
+  assert.equal(typeof childID, "string");
+  assert.equal(manager.get(String(childID))?.status.type, "busy");
+
+  const toolOf = (message: OCMessageWithParts) =>
+    toV2Message(message).content?.find((item) => item.type === "tool") as
+      | { name: string; state: { status: string; output?: string; metadata: Record<string, unknown> } }
+      | undefined;
+  const listed = toolOf(owner);
+  assert.equal(listed?.name, "subagent");
+  assert.deepEqual(
+    {
+      status: listed?.state.status,
+      background: listed?.state.metadata.status,
+      child: listed?.state.metadata.sessionID,
+    },
+    { status: "completed", background: "running", child: childID },
+  );
+
+  manager["onPiEvent"](parent, {
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "omo-senpi:wake",
+      details: [
+        {
+          customType: "senpi-task.completion",
+          details: [{ task_id: "st_child", status: "completed", final_response: "wake result" }],
+        },
+      ],
+    },
+  });
+  assert.equal(parts(parent.messages)[0]?.state.status, "completed");
+
+  const translator = new V2EventTranslator();
+  const frames = events.flatMap((event) => translator.translate(directory, event));
+  const tool = frames.filter((frame) => frame.type.startsWith("session.tool.") && frame.data.id === "spawn");
+  assert.equal(tool.findLast((frame) => frame.type === "session.tool.input.started")?.data.name, "subagent");
+  assert.deepEqual(
+    tool.filter((frame) => frame.type === "session.tool.success" || frame.type === "session.tool.failed"),
+    [tool.find((frame) => frame.type === "session.tool.success")],
+    "the call settles once, as OpenCode settles a background call",
+  );
+  const settled = tool.find((frame) => frame.type === "session.tool.success")?.data.metadata as Record<string, unknown>;
+  assert.deepEqual({ status: settled.status, sessionID: settled.sessionID }, { status: "running", sessionID: childID });
+  const reports = frames.filter((frame) => frame.type === "session.synthetic");
+  assert.deepEqual(
+    reports.map((frame) => frame.data),
+    [
+      {
+        sessionID: parent.info.id,
+        text: `<subagent sessionID="${childID}" state="completed">\nwake result\n</subagent>`,
+        description: "Background child",
+        metadata: { source: "subagent", childID, state: "completed", agent: "explore" },
+      },
+    ],
+  );
+  const finished = toolOf(owner);
+  assert.equal(finished?.state.output, "wake result");
+  assert.notEqual(finished?.state.metadata.status, "running");
+});
+
 test("partial lines and split UTF8 stream only after the terminating newline", async (t) => {
   const { manager, parent, store, bus } = setup(t);
   const child = liveRecord(store);
