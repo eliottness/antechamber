@@ -38,7 +38,10 @@ for (const file of readdirSync(fixtures).filter((name) => name.endsWith(".json")
   test(`real ${fixture.tool} fixtures map renderer inputs and text output`, () => {
     for (const sample of fixture.samples) {
       const mapped = mapTool(fixture.tool, sample.arguments, sample);
-      if (keys[mapped.tool] !== undefined) assert.deepEqual(Object.keys(mapped.input), keys[mapped.tool]);
+      const expected = keys[mapped.tool];
+      // A background task also carries OpenCode's `background` flag (v2.ts `backgroundTask`).
+      const background = mapped.tool === "task" && sample.arguments.run_in_background === true ? ["background"] : [];
+      if (expected !== undefined) assert.deepEqual(Object.keys(mapped.input), [...expected, ...background]);
       else assert.deepEqual(mapped.input, sample.arguments);
       const blocks = sample.content as Array<{ type: string; text?: string }>;
       const text = blocks

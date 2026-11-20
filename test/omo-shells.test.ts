@@ -159,6 +159,16 @@ test("OmO background work is listed and announced as OpenCode shells, readable, 
       body: JSON.stringify({ text: "stopped", metadata: { openchamberShellCancellation: { shellIDs } } }),
     });
   assert.equal((await note([monitorShell])).status, 400);
+  // OpenChamber's subagent stop (client.ts `stopSubagent`, 2.5.3): OmO cannot stop a task over RPC.
+  const subagentStop = await fetch(`${url}/api/session/${id}/synthetic`, {
+    method: "POST",
+    body: JSON.stringify({
+      text: "stopped",
+      metadata: { openchamberSubagentCancellation: { sessionID: "ses_child" } },
+    }),
+  });
+  assert.equal(subagentStop.status, 400);
+  assert.equal(((await subagentStop.json()) as { name: string }).name, "UnsupportedError");
   assert.equal((await note([cellShell, backgroundShell])).status, 400);
   assert.equal((await fetch(`${url}/api/shell/${monitorShell}`, { method: "DELETE" })).status, 400);
   assert.equal((await note([cellShell])).status, 200);

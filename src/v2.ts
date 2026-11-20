@@ -298,9 +298,52 @@ export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
   return msg;
 }
 
-/** OpenCode 2.x renamed `bash` to `shell`; OpenChamber 2.x draws a shell card (command, live output) only for `shell`. */
-function v2ToolName(tool: string): string {
-  return tool === "bash" ? "shell" : tool;
+/**
+ * OpenCode 2.x renamed `bash` to `shell`; OpenChamber 2.x draws a shell card (command, live output) only for `shell`.
+ * A background `task` is OpenCode's background `subagent` call, the only call OpenChamber 2.x follows past its step.
+ */
+function v2ToolName(part: Extract<OCPart, { type: "tool" }>): string {
+  if (part.tool === "task" && part.state.status !== "pending" && part.state.input.background === true)
+    return "subagent";
+  return part.tool === "bash" ? "shell" : part.tool;
+}
+
+/**
+ * A background task whose call returned while the child still runs. pi completes the step before the child ends, and
+ * OpenChamber 2.x marks a running tool under a completed message "Interrupted". OpenCode 2.x settles such a call at
+ * once with `{status: "running", sessionID}` in its metadata, and OpenChamber 2.x draws the row from the child
+ * session's status, then from its report (`session.synthetic`, see `subagentReport`).
+ */
+function backgroundTask(
+  part: Extract<OCPart, { type: "tool" }>,
+): { output: string; metadata: Record<string, unknown> } | undefined {
+  const st = part.state;
+  if (part.tool !== "task" || st.status !== "running" || st.input.background !== true) return undefined;
+  const sessionID = st.metadata?.sessionID;
+  if (typeof sessionID !== "string") return undefined;
+  return { output: "", metadata: { ...st.metadata, status: "running", sessionID } };
+}
+
+/** OpenCode 2.x's report of a finished background subagent, which OpenChamber 2.x puts on the call's row. */
+function subagentReport(part: Extract<OCPart, { type: "tool" }>): Record<string, unknown> | undefined {
+  const st = part.state;
+  if (part.tool !== "task" || st.input.background !== true) return undefined;
+  if (st.status !== "completed" && st.status !== "error") return undefined;
+  const childID = st.metadata?.sessionID;
+  if (typeof childID !== "string") return undefined;
+  const task = st.metadata?.task;
+  const cancelled =
+    task !== null && typeof task === "object" && "status" in task && /^cancel/.test(String(task.status));
+  const state = st.status === "completed" ? "completed" : cancelled ? "cancelled" : "error";
+  const text = st.status === "completed" ? st.output : st.error;
+  const description = st.input.description;
+  const agent = st.input.subagent_type;
+  return {
+    sessionID: part.sessionID,
+    text: `<subagent sessionID="${childID}" state="${state}">\n${text}\n</subagent>`,
+    ...(typeof description === "string" ? { description } : {}),
+    metadata: { source: "subagent", childID, state, ...(typeof agent === "string" ? { agent } : {}) },
+  };
 }
 
 /**
@@ -334,7 +377,7 @@ function v2ToolId(part: Extract<OCPart, { type: "tool" }>): string {
 
 function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, unknown> {
   const st = part.state;
-  const name = v2ToolName(part.tool);
+  const name = v2ToolName(part);
   const start = st.status === "pending" ? undefined : st.time.start;
   const end = st.status === "pending" || st.status === "running" ? undefined : st.time.end;
   const id = v2ToolId(part);
@@ -351,7 +394,7 @@ function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, un
       ...(end !== undefined ? { completed: end } : {}),
     },
   };
-  const background = st.status === "running" ? backgroundShell(part) : undefined;
+  const background = st.status === "running" ? (backgroundShell(part) ?? backgroundTask(part)) : undefined;
   if (st.status === "pending") {
     base.state = { status: "streaming", input: st.raw ?? "", metadata: {} };
   } else if (background !== undefined) {
@@ -437,6 +480,8 @@ interface ToolState {
   raw: string;
   /** Metadata last sent on `session.tool.progress`, as JSON. */
   metadata: string;
+  /** A background task's `session.synthetic` report went out. */
+  reported?: boolean;
 }
 
 interface SessionState {
@@ -818,7 +863,7 @@ export class V2EventTranslator {
 
   private onToolPart(directory: string, part: Extract<OCPart, { type: "tool" }>): V2Envelope[] {
     const st = this.state(part.sessionID);
-    const name = v2ToolName(part.tool);
+    const name = v2ToolName(part);
     let ts = st.tools.get(part.id);
     if (!ts) {
       ts = {
@@ -871,6 +916,28 @@ export class V2EventTranslator {
     if (!ts.called) {
       ts.called = true;
       frames.push(this.frame(directory, "session.tool.called", { ...base, input: state.input, executed: false }));
+    }
+    const task = backgroundTask(part);
+    if (task !== undefined) {
+      if (!ts.ended) {
+        ts.ended = true;
+        frames.push(
+          this.frame(directory, "session.tool.success", {
+            ...base,
+            content: [],
+            metadata: task.metadata,
+            executed: false,
+          }),
+        );
+      }
+      return frames;
+    }
+    // Every terminal background task reports once, even one settled before a restart: OpenChamber 2.x drops the
+    // report of a call whose row it already shows finished.
+    const report = subagentReport(part);
+    if (report !== undefined && !ts.reported) {
+      ts.reported = true;
+      frames.push(this.frame(directory, "session.synthetic", report));
     }
     const background = backgroundShell(part);
     if (background !== undefined) {

@@ -216,6 +216,9 @@ async function handleV2Bootstrap(
   return false;
 }
 
+/** OpenChamber's subagent stop note (subagent-run.ts `subagentCancellationNote`). */
+const SUBAGENT_CANCELLATION_KEY = "openchamberSubagentCancellation";
+
 /** Shell ids named by OpenChamber's stop note (background-shell.ts `shellCancellationNote`). */
 function cancelledShells(metadata: Record<string, unknown> | undefined): string[] {
   const note = metadata?.[SHELL_CANCELLATION_KEY];
@@ -1074,6 +1077,12 @@ export async function handleV2(
             400,
             errorBody("UnsupportedError", `OmO cannot stop ${unstoppable.join(", ")}: only eval cells can be stopped`),
           );
+          return;
+        }
+        // OpenChamber's subagent stop sends this note, then interrupts the child (client.ts `stopSubagent`,
+        // 2.5.3). An OmO task child has no RPC to stop it, so refuse the note: the agent is never told of a stop.
+        if (metadata?.[SUBAGENT_CANCELLATION_KEY] !== undefined) {
+          json(res, 400, errorBody("UnsupportedError", "OmO cannot stop a subagent from OpenChamber"));
           return;
         }
         const messageID =

@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A background task (`run_in_background`) no longer shows as "Interrupted" in OpenChamber while it is still
+  running. It reaches OpenChamber as OpenCode's background subagent, so its row stays running, labelled in
+  background, while the child works, and shows the child's result when it finishes.
+
 ## [2.0.10] - 2026-11-20
 
 ### Fixed
