@@ -20,7 +20,7 @@ import { ocIdFor, piSessionDir, SessionStore } from "../src/session-store.js";
 import { type ManagedSession, SessionManager } from "../src/sessions.js";
 import { evalAgentSession, findTask, findTaskBySession, JsonlTail, stripTaskSuffix } from "../src/subagents.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "../src/types.js";
-import { toV2Message, V2EventTranslator } from "../src/v2.js";
+import { toV2Message, type V2Envelope, V2EventTranslator } from "../src/v2.js";
 import { bugHarness } from "./bug-harness.js";
 
 const fixture = JSON.parse(readFileSync("test/fixtures/omo-tools/task.json", "utf8"));
@@ -1042,7 +1042,17 @@ for (const global of [false, true]) {
     const { manager, parent, store, directory, state } = setup(t);
     for (let index = 0; index < 4; index++) {
       const taskID = `st_cold_${index}`;
-      liveRecord(store, taskID, "completed", `retained result ${index}`);
+      const { path } = liveRecord(store, taskID, "completed", `retained result ${index}`);
+      appendFileSync(
+        path,
+        `${JSON.stringify({
+          type: "message",
+          id: "paid",
+          parentId: "z",
+          timestamp: 5,
+          message: { role: "assistant", content: [], usage: { input: 12, output: 4, cost: { total: 1.25 } } },
+        })}\n`,
+      );
       start(manager, parent, { task_summary: `Child ${index}` }, `spawn-${index}`);
       result(manager, parent, { task_id: taskID, status: "completed" }, "done", true, `spawn-${index}`);
     }
@@ -1051,14 +1061,31 @@ for (const global of [false, true]) {
     const registry = new SessionStore(state);
     const persist = t.mock.fn(registry["persist"].bind(registry));
     registry["persist"] = persist;
-    const restarted = new SessionManager(() => {}, registry, directory);
+    const translator = new V2EventTranslator();
+    const frames: V2Envelope[] = [];
+    const restarted = new SessionManager(
+      (dir, event) => {
+        if (event.type !== "todo.updated") frames.push(...translator.translate(dir, event));
+      },
+      registry,
+      directory,
+    );
     t.after(() => restarted.disposeAll());
 
     const listed = global ? restarted.listAll() : restarted.list(directory);
     const children = listed.filter((session) => session.parentID === parent.info.id);
     assert.equal(children.length, 4);
     assert.ok(persist.mock.callCount() <= 1, `listing rewrote the whole registry ${persist.mock.callCount()} times`);
-    for (const child of children) assert.equal(restarted["subagents"]["children"].get(child.id)?.loaded, false);
+    for (const child of children) {
+      assert.equal(restarted["subagents"]["children"].get(child.id)?.loaded, false);
+      assert.equal(child.cost, 1.25);
+      const events = frames.filter((frame) => frame.data.sessionID === child.id);
+      assert.deepEqual(
+        events.map((frame) => frame.type),
+        ["session.created", "session.usage.updated"],
+      );
+      assert.deepEqual(events[1]?.data, { sessionID: child.id, cost: 1.25, tokens: child.tokens });
+    }
     for (const child of children) {
       assert.match(texts(restarted.messages(child.id)), /retained result/);
       assert.equal(new SessionStore(state).get(child.id)?.parentID, parent.info.id);

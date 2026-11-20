@@ -270,6 +270,9 @@ usage; they do not also emit a successful step or execution terminal.
 Interrupted and failed executions likewise do not later emit a success
 terminal. Successful steps use `session.step.ended`.
 
+When a session is announced with saved usage, `session.created` is followed
+by `session.usage.updated` with its own cumulative cost and tokens.
+
 V2 also projects staged/cleared/committed revert events, compaction
 started/ended/failed events, `shell.created` / `shell.exited` for OmO
 background work, permission events,
