@@ -16,6 +16,10 @@ const ignoring = process.argv.includes("--ignore-term");
 const requireGroup = process.argv.includes("--require-group");
 let stopping = false;
 let bashRun;
+// A pending-* prompt leaves its turn running until finish_pending_turn or abort.
+let turnRunning = false;
+// A plain abort's quiesce (agent_end, agent_idle) that has not been sent yet.
+let quiesceHeld = false;
 let leaf = null;
 let records = readFileSync(sessionFile, "utf8")
   .trim()
@@ -83,6 +87,14 @@ const branch = (target = leaf) => {
 input.on("line", (line) => {
   const command = JSON.parse(line);
   let data = {};
+  // OmO answers a plain abort on dispatch and the turn quiesces after it (senpi dist/modes/rpc/effect-commands.js
+  // `runAbort`; a 2026-11-22 probe saw `agent_idle` ~110 ms after the answer). Hold it until the next command so a
+  // client that acts on the answer alone meets a turn that is still running.
+  if (quiesceHeld) {
+    quiesceHeld = false;
+    send({ type: "agent_end" });
+    send({ type: "agent_idle" });
+  }
   if (command.type === "emit_event") send(command.event);
   if (command.type === "switch_session") {
     sessionFile = command.sessionPath;
@@ -95,6 +107,7 @@ input.on("line", (line) => {
     data = { cancelled: false };
   }
   if (command.type === "finish_pending_turn") {
+    turnRunning = false;
     const message = record("assistant", "completed followup");
     send({ type: "message_start", message });
     send({
@@ -280,6 +293,7 @@ input.on("line", (line) => {
     record("user", command.message);
     send({ type: "agent_start" });
     if (["pending-question", "pending-permission", "pending-turn"].includes(command.message)) {
+      turnRunning = true;
       if (command.message !== "pending-turn")
         send({
           type: "extension_ui_request",
@@ -308,8 +322,13 @@ input.on("line", (line) => {
     send({ type: "agent_idle" });
   }
   if (command.type === "abort") {
-    send({ type: "agent_end" });
-    send({ type: "agent_idle" });
+    // With `awaitIdle` the answer waits for the turn to stop, so `agent_idle` goes out first.
+    if (turnRunning && command.awaitIdle !== true) quiesceHeld = true;
+    else {
+      send({ type: "agent_end" });
+      send({ type: "agent_idle" });
+    }
+    turnRunning = false;
   }
   send({ type: "response", id: command.id, command: command.type, success: true, data });
 });

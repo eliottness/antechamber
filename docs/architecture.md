@@ -350,6 +350,23 @@ and tsc pushed a 16 GB WSL host under earlyoom's limits; every process in
 agents) but not `node`, and it SIGTERMed then SIGKILLed the adapter at 589 MiB,
 taking the DAG's driving agent and its unfinished children with it.
 
+### Interrupt waits for the turn to stop
+
+A plain `abort` is answered on dispatch, before the turn stops: senpi
+`dist/modes/rpc/effect-commands.js` `runAbort` waits only when the command
+carries `awaitIdle` (or `clearQueue`), up to `graceMs` (default 10 s, max
+60 s, `abort-grace.js`). A 2026-11-22 probe (`omo --mode rpc --no-session`,
+one prompt, abort after `turn_start`) saw the plain answer at 1445 ms and
+`agent_idle` at 1554 ms; with `awaitIdle: true`, `agent_idle` and then the
+answer both arrived at 4122 ms.
+
+OpenChamber 2.x reverts a running session by interrupting it and staging the
+revert as soon as the interrupt answers (`session-actions.ts`
+`revertToMessage`). With a plain abort the stage met a session still marked
+busy and was refused with 400, so the revert never happened. The connector
+therefore sends `abort` with `awaitIdle: true`: the interrupt route answers
+after `agent_idle` has set the session idle.
+
 ### User shell cancellation and extension commands
 
 The installed OmO RPC exposes two different abort commands. `abort` acknowledges
