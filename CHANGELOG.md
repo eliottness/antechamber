@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.12] - 2026-11-22
+
 ### Fixed
 
 - Reverting a message while the agent is still working now reverts the conversation. OpenChamber stops the turn
