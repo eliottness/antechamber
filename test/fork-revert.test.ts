@@ -1888,3 +1888,16 @@ test("unknown and malformed messageIDs return 400 without changing session or tr
   const redo = await fetch(`${url}/revert`, { method: "DELETE" });
   assert.equal(redo.status, 204);
 });
+
+test("a revert staged right after interrupting a running turn is admitted", { timeout: 30_000 }, async (t) => {
+  // OpenChamber 2.x reverts a running session by interrupting it and staging the revert as soon as the interrupt
+  // answers (session-actions.ts `revertToMessage`). OmO answers a plain abort before the turn quiesces.
+  const { manager, dir } = setup(t);
+  const { s, id } = await turns(manager, dir);
+  await manager.prompt(id, "pending-turn", undefined, false, "msg_running");
+  assert.equal(s.status.type, "busy");
+  assert.equal(await manager.abort(id), true);
+  assert.equal(s.status.type, "idle", "the interrupt answers once the turn has stopped");
+  const info = await manager.revert(id, "msg_live_2");
+  assert.deepEqual(info.revert, { messageID: "msg_live_2" });
+});

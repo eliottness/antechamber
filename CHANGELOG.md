@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reverting a message while the agent is still working now reverts the conversation. OpenChamber stops the turn
+  and stages the revert right away; the adapter answered the stop before OmO had stopped, so the revert was refused
+  as "Session is busy" and the next prompt still ran on the old history.
+
 ## [2.0.11] - 2026-11-20
 
 ### Fixed

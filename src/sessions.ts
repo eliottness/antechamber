@@ -1075,7 +1075,9 @@ export class SessionManager {
     if (s.pi !== undefined) {
       if (s.status.type !== "idle") s.interruptRequested = true;
       try {
-        const response = await s.pi.command({ type: "abort" });
+        // OmO answers a plain abort before the turn stops; OpenChamber stages a revert (or forks) as soon as the
+        // interrupt answers, so wait for agent_idle (sent ahead of this answer) up to OmO's default grace.
+        const response = await s.pi.command({ type: "abort", awaitIdle: true });
         if (!response.success) throw new Error(response.error ?? "pi abort failed");
       } catch (error) {
         delete s.interruptRequested;
