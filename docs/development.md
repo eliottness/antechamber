@@ -108,6 +108,7 @@ real model calls, so they cost tokens and are not run in CI:
 | `contrib/probe.ts` | `npm run probe` | Dumps raw pi/OmO RPC events to a JSONL file for protocol inspection |
 | `contrib/model-consistency.ts` | `npm run model-smoke` | Checks that model selection/resolution stays consistent across requests |
 | `contrib/v2-smoke.ts` | `npm run v2-smoke` | Checks the OpenCode v2 API surface specifically |
+| `contrib/history-benchmark.ts` | `bun contrib/history-benchmark.ts <session.jsonl>...` | Times the history rebuild a dormant session's first message read does (`parsePiSessionText`), p50 over `HISTORY_BENCH_RUNS` runs (default 5). No agent and no tokens; pass copies of real sessions. |
 | `contrib/replay/transcripts.ts` | `npm run replay` | Opens copies of real sessions in an isolated OpenChamber with headless Chrome, at phone and desktop sizes, and fails when a transcript renders no turn. No agent and no tokens; the data stays local. See `contrib/AGENTS.md`. |
 
 Replay keeps the selected sessions' descendant registry closure in its sandbox,

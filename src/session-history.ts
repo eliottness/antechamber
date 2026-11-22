@@ -500,7 +500,9 @@ export function parsePiSessionText(s: ManagedSession, agentName: string, raw: st
       });
       applyProviderToolResults(
         blocks,
-        [...toolParts.values()].flat(),
+        (function* () {
+          for (const mapped of toolParts.values()) yield* mapped;
+        })(),
         typeof m.timestamp === "number" ? m.timestamp : created,
       );
       out.push({ info, parts });

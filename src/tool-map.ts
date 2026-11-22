@@ -512,7 +512,8 @@ export function applyProviderToolResults(
 ): OCToolPart[] {
   const updated: OCToolPart[] = [];
   if (!Array.isArray(content)) return updated;
-  const byCallID = new Map([...parts].map((part) => [part.callID, part]));
+  // Result blocks are rare: index the parts only when one appears, so history stays linear in its messages.
+  let byCallID: Map<string, OCToolPart> | undefined;
   for (const block of content) {
     if (
       !record(block) ||
@@ -522,6 +523,7 @@ export function applyProviderToolResults(
       continue;
     const raw = providerRaw(block.raw);
     if (typeof raw?.tool_use_id !== "string") continue;
+    byCallID ??= new Map([...parts].map((part) => [part.callID, part]));
     const part = byCallID.get(raw.tool_use_id);
     if (part === undefined) continue;
     const result = raw.content;
