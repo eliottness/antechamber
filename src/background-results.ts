@@ -275,8 +275,10 @@ export function backgroundMessage(
   if (result.kind === "terminal") {
     // Newest first, stopping at an earlier finish of the same id: OmO numbers shells from bash_1 again
     // after its process restarts, so an older launch of that id is not this command's.
-    search: for (const message of messages.toReversed()) {
-      for (const part of message.parts.toReversed()) {
+    search: for (let m = messages.length - 1; m >= 0; m--) {
+      const parts = messages[m]!.parts;
+      for (let p = parts.length - 1; p >= 0; p--) {
+        const part = parts[p]!;
         if (part.type !== "tool" || part.state.status === "pending") continue;
         if (
           part.callID.startsWith("call_background_") &&
@@ -300,7 +302,8 @@ export function backgroundMessage(
         const original =
           typeof nested === "string"
             ? nested
-            : launchedShells(output).includes(result.callID)
+            : // A plain substring test first: the regex scan of every older output dominated long histories.
+              output.includes(result.callID) && launchedShells(output).includes(result.callID)
               ? (part.state.input.command ?? part.state.input.code)
               : undefined;
         if (typeof original === "string") {

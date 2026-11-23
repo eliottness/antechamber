@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Opening a long session is faster. Rebuilding its history no longer rescans every earlier tool card for each
+  assistant message and each background-shell notification; a real 1,560-message session now loads in about
+  half the time, with the same transcript.
+
 ## [2.0.12] - 2026-11-22
 
 ### Fixed
