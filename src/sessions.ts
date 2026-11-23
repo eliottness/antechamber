@@ -40,7 +40,6 @@ import {
   SessionTreeError,
   unrevertConversation,
   type SessionTreeState,
-  type TreeEntry,
 } from "./session-tree.js";
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
