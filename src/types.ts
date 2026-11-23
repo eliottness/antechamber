@@ -78,7 +78,7 @@ export interface OCAssistantMessage {
   summary?: boolean;
 }
 
-export type OCMessage = OCUserMessage | OCAssistantMessage;
+type OCMessage = OCUserMessage | OCAssistantMessage;
 
 export interface OCTextPart {
   id: string;
@@ -111,7 +111,7 @@ export interface OCToolStatePending {
   raw: string;
 }
 
-export interface OCToolStateRunning {
+interface OCToolStateRunning {
   status: "running";
   input: Record<string, unknown>;
   title?: string;
@@ -119,7 +119,7 @@ export interface OCToolStateRunning {
   time: { start: number };
 }
 
-export interface OCToolStateCompleted {
+interface OCToolStateCompleted {
   status: "completed";
   input: Record<string, unknown>;
   output: string;
@@ -128,7 +128,7 @@ export interface OCToolStateCompleted {
   time: { start: number; end: number };
 }
 
-export interface OCToolStateError {
+interface OCToolStateError {
   status: "error";
   input: Record<string, unknown>;
   error: string;
@@ -136,7 +136,7 @@ export interface OCToolStateError {
   time: { start: number; end: number };
 }
 
-export type OCToolState = OCToolStatePending | OCToolStateRunning | OCToolStateCompleted | OCToolStateError;
+type OCToolState = OCToolStatePending | OCToolStateRunning | OCToolStateCompleted | OCToolStateError;
 
 export interface OCToolPart {
   id: string;
@@ -149,7 +149,7 @@ export interface OCToolPart {
 }
 
 /** OpenChamber renders a user message holding this part as `/compact`. */
-export interface OCCompactionPart {
+interface OCCompactionPart {
   id: string;
   sessionID: string;
   messageID: string;
@@ -163,7 +163,7 @@ export type OCPromptPart = (
   | { type: "agent"; name: string; source?: { value: string; start: number; end: number } }
 ) & { id?: string };
 
-export type OCInputPart = OCPromptPart & { id: string; sessionID: string; messageID: string };
+type OCInputPart = OCPromptPart & { id: string; sessionID: string; messageID: string };
 export type OCPart =
   | OCTextPart
   | OCReasoningPart
@@ -332,22 +332,3 @@ export type OCEvent =
    * its picker is otherwise client-local state that happily drifts.
    */
   | { type: "model.changed"; properties: { sessionID: string; model: OCModelRef; previous?: OCModelRef } };
-
-export interface OCProject {
-  id: string;
-  worktree: string;
-  vcs?: "git";
-  time: { created: number; updated?: number; initialized?: number };
-  sandboxes?: string[];
-}
-
-/** Incoming prompt body for POST /session/{id}/message and /prompt_async */
-export interface OCPromptBody {
-  messageID?: string;
-  delivery?: "steer" | "queue";
-  model?: OCModelRef;
-  agent?: string;
-  noReply?: boolean;
-  system?: string;
-  parts: Array<{ type: string; text?: string; [key: string]: unknown }>;
-}

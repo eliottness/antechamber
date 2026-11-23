@@ -21,12 +21,13 @@ import { errorBody, json } from "./http.js";
 import type { MonitorSessions, MonitorView } from "./monitor-sessions.js";
 import type { ManagedSession, SessionManager } from "./sessions.js";
 import type { TodoPhase } from "./todo-bridge.js";
+import { isRecord } from "./guards.js";
 
-export const WAKE_SOURCE_STATE_EVENT = "wake_source_state";
-export const GOAL_TIMER_STATE_EVENT = "goal_continuation_timer_state";
-export const GOAL_SCHEDULED_EVENT = "goal_continuation_scheduled";
-export const GOAL_FIRE_NOW_REQUEST = "goal_continuation_fire_now";
-export const CODEMODE_WAKE_SOURCE = "senpi-codemode";
+const WAKE_SOURCE_STATE_EVENT = "wake_source_state";
+const GOAL_TIMER_STATE_EVENT = "goal_continuation_timer_state";
+const GOAL_SCHEDULED_EVENT = "goal_continuation_scheduled";
+const GOAL_FIRE_NOW_REQUEST = "goal_continuation_fire_now";
+const CODEMODE_WAKE_SOURCE = "senpi-codemode";
 
 /** Ended watches and matched lines kept per watch in a snapshot. */
 const MAX_ENDED_MONITORS = 5;
@@ -36,7 +37,7 @@ const EVAL_LIST_TTL_MS = 1000;
 const EVAL_RPC_TIMEOUT_MS = 10_000;
 const MAX_PEEK_BYTES = 64 * 1024;
 
-export interface WakeSourceItem {
+interface WakeSourceItem {
   id: string;
   description: string;
   startedAtMs: number;
@@ -99,10 +100,6 @@ export class WorkStatusError extends Error {
   }
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function finite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -111,13 +108,13 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-export function parseWakeSource(data: unknown): WakeSource | undefined {
-  if (!record(data) || typeof data.source !== "string" || data.source === "") return undefined;
+function parseWakeSource(data: unknown): WakeSource | undefined {
+  if (!isRecord(data) || typeof data.source !== "string" || data.source === "") return undefined;
   const activeCount = finite(data.activeCount);
   if (activeCount === undefined) return undefined;
   const rawItems = Array.isArray(data.items) ? data.items : Array.isArray(data.monitors) ? data.monitors : [];
   const items = rawItems.flatMap((item): WakeSourceItem[] => {
-    if (!record(item) || typeof item.id !== "string") return [];
+    if (!isRecord(item) || typeof item.id !== "string") return [];
     const startedAtMs = finite(item.startedAtMs);
     if (startedAtMs === undefined) return [];
     return [{ id: item.id, description: nonEmpty(item.description) ?? item.id, startedAtMs }];
@@ -125,8 +122,8 @@ export function parseWakeSource(data: unknown): WakeSource | undefined {
   return { source: data.source, activeCount, items };
 }
 
-export function parseEvalCell(value: unknown): EvalCellView | undefined {
-  if (!record(value) || typeof value.cellId !== "string" || typeof value.state !== "string") return undefined;
+function parseEvalCell(value: unknown): EvalCellView | undefined {
+  if (!isRecord(value) || typeof value.cellId !== "string" || typeof value.state !== "string") return undefined;
   const language = nonEmpty(value.language);
   const startedAtMs = finite(value.startedAtMs);
   const summary = nonEmpty(value.summary);
@@ -168,12 +165,12 @@ export function readBackgroundSessions(
   } catch {
     return []; // Missing (no background session yet), or mid-write: the next poll reads it.
   }
-  if (!record(manifest) || !Array.isArray(manifest.backgroundSessions)) return [];
+  if (!isRecord(manifest) || !Array.isArray(manifest.backgroundSessions)) return [];
   return manifest.backgroundSessions.flatMap((entry): BackgroundSessionView[] => {
-    if (!record(entry) || typeof entry.id !== "string") return [];
+    if (!isRecord(entry) || typeof entry.id !== "string") return [];
     const startedAtMs = finite(entry.startedAtMs);
     if (startedAtMs === undefined) return [];
-    const pid = record(entry.runtime) ? finite(entry.runtime.pid) : undefined;
+    const pid = isRecord(entry.runtime) ? finite(entry.runtime.pid) : undefined;
     if (pid !== undefined && !isAlive(pid)) return [];
     return [
       {
@@ -237,7 +234,7 @@ export class WorkStatusBridge {
       if (source.source === CODEMODE_WAKE_SOURCE) delete work.evalList;
       return;
     }
-    if (!record(ev.data)) return;
+    if (!isRecord(ev.data)) return;
     if (ev.name === GOAL_TIMER_STATE_EVENT) {
       const work = this.state(s.info.id);
       const kind = nonEmpty(ev.data.kind);
@@ -251,7 +248,7 @@ export class WorkStatusBridge {
               ...(work.goal?.wakeSources !== undefined ? { wakeSources: work.goal.wakeSources } : {}),
             }
           : null;
-    } else if (ev.name === GOAL_SCHEDULED_EVENT && record(ev.data.wakeSources)) {
+    } else if (ev.name === GOAL_SCHEDULED_EVENT && isRecord(ev.data.wakeSources)) {
       const counts = Object.fromEntries(
         Object.entries(ev.data.wakeSources).filter(
           (entry): entry is [string, number] => finite(entry[1]) !== undefined,
@@ -319,7 +316,7 @@ export class WorkStatusBridge {
   async peekEvalCell(s: ManagedSession, cellId: string, tailBytes: number): Promise<Record<string, unknown>> {
     const bytes = Math.max(0, Math.min(MAX_PEEK_BYTES, Math.trunc(tailBytes)));
     const data = await this.evalCommand(s, { type: "eval_cells.peek", cellId, tailBytes: bytes });
-    if (!record(data)) throw new WorkStatusError(502, "OmO answered eval_cells.peek without a cell");
+    if (!isRecord(data)) throw new WorkStatusError(502, "OmO answered eval_cells.peek without a cell");
     return data;
   }
 
@@ -327,7 +324,7 @@ export class WorkStatusBridge {
     const data = await this.evalCommand(s, { type: "eval_cells.stop", cellId });
     const work = this.work.get(s.info.id);
     if (work !== undefined) delete work.evalList;
-    if (!record(data)) throw new WorkStatusError(502, "OmO answered eval_cells.stop without a cell");
+    if (!isRecord(data)) throw new WorkStatusError(502, "OmO answered eval_cells.stop without a cell");
     return data;
   }
 

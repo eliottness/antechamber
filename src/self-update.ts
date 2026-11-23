@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { managedByExtension } from "./config.js";
 import { ADAPTER_VERSION } from "./version.js";
+import { errorMessage } from "./guards.js";
 
 export type InstallMethod = "npm" | "bun";
 
@@ -13,7 +14,7 @@ export class SelfUpdateUnsupportedError extends Error {
   override readonly name = "SelfUpdateUnsupportedError";
 }
 
-export interface InstallLocation {
+interface InstallLocation {
   readonly packageRoot: string;
   readonly env: NodeJS.ProcessEnv;
   readonly home: string;
@@ -51,7 +52,7 @@ function bunInstallDir(location: Pick<InstallLocation, "env" | "home">): string 
   return location.env.BUN_INSTALL ?? join(location.home, ".bun");
 }
 
-export const MANAGED_UPDATE_HINT =
+const MANAGED_UPDATE_HINT =
   "antechamber is managed by its OpenChamber extension: update the extension in Settings -> Extensions";
 
 function locate(location: InstallLocation): { root: string; bun: boolean } {
@@ -75,7 +76,7 @@ function npmOwns(location: InstallLocation, root: string, npmGlobal: string): In
 }
 
 function npmUnavailable(error: unknown): SelfUpdateUnsupportedError {
-  const reason = error instanceof Error ? error.message : String(error);
+  const reason = errorMessage(error);
   return new SelfUpdateUnsupportedError(`cannot run npm root -g to confirm a global npm install (${reason})`);
 }
 
@@ -176,7 +177,7 @@ function bunBinaryFor(env: NodeJS.ProcessEnv, home: string): string {
   return existsSync(installed) ? installed : "bun";
 }
 
-export function defaultSelfUpdateDeps(env: NodeJS.ProcessEnv = process.env, home = homedir()): SelfUpdateDeps {
+function defaultSelfUpdateDeps(env: NodeJS.ProcessEnv = process.env, home = homedir()): SelfUpdateDeps {
   const npmBinary = npmBinaryFor();
   return {
     // src/self-update.ts (tsx) and dist/self-update.js both sit one level below the package root.

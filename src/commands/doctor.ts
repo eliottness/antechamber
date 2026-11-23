@@ -17,6 +17,7 @@ import {
   type SettingsOptions,
   settingsPath,
 } from "./context.js";
+import { errorMessage } from "../guards.js";
 
 interface DoctorCheck {
   readonly name: string;
@@ -62,7 +63,7 @@ export function doctor(
     try {
       add("backend", "PASS", `${binary}: ${ctx.exec(binary, ["--version"]) || "version command succeeded"}`);
     } catch (error) {
-      add("backend", "FAIL", `${binary}: ${error instanceof Error ? error.message : String(error)}`);
+      add("backend", "FAIL", `${binary}: ${errorMessage(error)}`);
     }
   }
   add(
@@ -87,7 +88,7 @@ export function doctor(
       `${stateDir}${ancestor === stateDir ? " is writable" : ` can be created under writable ${ancestor}`}`,
     );
   } catch (error) {
-    add("state-dir", "FAIL", `${stateDir}: ${error instanceof Error ? error.message : String(error)}`);
+    add("state-dir", "FAIL", `${stateDir}: ${errorMessage(error)}`);
   }
   const latest = typeof latestVersion === "string" ? latestVersion : undefined;
   if (latestVersion instanceof Error)
@@ -145,11 +146,7 @@ export function doctor(
     try {
       add("openchamber", "PASS", `${openchamber}: ${ctx.exec(openchamber, ["--version"]) || "version not reported"}`);
     } catch (error) {
-      add(
-        "openchamber",
-        "WARN",
-        `${openchamber}: version not determinable (${error instanceof Error ? error.message : String(error)})`,
-      );
+      add("openchamber", "WARN", `${openchamber}: version not determinable (${errorMessage(error)})`);
     }
   }
   const settings = settingsPath(options, ctx);
@@ -171,7 +168,7 @@ export function doctor(
         `${settings}: opencodeBinary=${JSON.stringify(configured ?? null)}${viaLauncher ? ` (auto-update launcher for ${launcherTarget})` : matches ? "" : "; does not point at this antechamber installation"}`,
       );
     } catch (error) {
-      add("openchamber-settings", "WARN", error instanceof Error ? error.message : String(error));
+      add("openchamber-settings", "WARN", errorMessage(error));
     }
   }
   add("auth", "INFO", `OPENCODE_SERVER_PASSWORD is ${ctx.env.OPENCODE_SERVER_PASSWORD ? "set" : "not set"}`);

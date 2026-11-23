@@ -17,8 +17,9 @@ import { constants as osConstants } from "node:os";
 import { systemClock, type LifecycleClock } from "./lifecycle.js";
 import { agentBinary, envSetting } from "./config.js";
 import { createProcessTable, type ProcessTable } from "./proc-table.js";
+import { errorMessage } from "./guards.js";
 
-export type { ProcessIdentity, ProcessTable } from "./proc-table.js";
+export type { ProcessTable } from "./proc-table.js";
 
 export interface PiRpcCommand {
   id?: string;
@@ -67,7 +68,7 @@ function rankAboveAdapterForOom(pid: number): void {
 const procTable: ProcessTable = createProcessTable();
 
 /** Why the agent stopped without antechamber disposing it on purpose (eviction, delete, shutdown). */
-export type PiStopReason =
+type PiStopReason =
   | { readonly kind: "timeout"; readonly command: string; readonly ms: number }
   | { readonly kind: "frame-overflow" }
   | { readonly kind: "spawn"; readonly detail: string }
@@ -320,7 +321,7 @@ export class PiRpcClient extends EventEmitter {
     this.stopped ??= reason;
     this.failAll(new PiStoppedError(reason, cause));
     void this.dispose().catch((disposeError: unknown) => {
-      const message = disposeError instanceof Error ? disposeError.message : String(disposeError);
+      const message = errorMessage(disposeError);
       console.error(`[pi-rpc] failed to dispose after transport failure: ${message}`);
     });
   }

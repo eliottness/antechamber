@@ -36,7 +36,7 @@ const MAX_MONITOR_LINES = 200;
 const BACKGROUND_NOTICE =
   "OmO does not expose a background terminal session's output to antechamber; the agent reads it with bash_output.\n";
 
-export type OmoShellKind = "monitor" | "background" | "eval";
+type OmoShellKind = "monitor" | "background" | "eval";
 
 export function terminalShellId(agentStartedAtMs: number, bashId: string): string {
   return `sh_t${Math.trunc(agentStartedAtMs).toString(36)}_${bashId}`;

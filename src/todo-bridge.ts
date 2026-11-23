@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { toolMappers } from "./tool-map.js";
 import type { OCToolPart } from "./types.js";
+import { isRecord } from "./guards.js";
 
 export interface Todo {
   readonly id: string;
@@ -20,10 +21,6 @@ export interface TodoUpdated {
   properties: { sessionID: string; todos: Todo[] };
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function todoStatus(value: unknown): Todo["status"] {
   switch (value) {
     case "in_progress":
@@ -40,12 +37,12 @@ function todoStatus(value: unknown): Todo["status"] {
 }
 
 /** The `senpi.todo-state` phases, keeping only well-formed phases and tasks. */
-export function todoPhases(data: unknown): TodoPhase[] {
-  if (!record(data) || !Array.isArray(data.phases)) return [];
-  return data.phases.filter(record).flatMap((phase): TodoPhase[] => {
+function todoPhases(data: unknown): TodoPhase[] {
+  if (!isRecord(data) || !Array.isArray(data.phases)) return [];
+  return data.phases.filter(isRecord).flatMap((phase): TodoPhase[] => {
     if (typeof phase.name !== "string" || !Array.isArray(phase.tasks)) return [];
     const tasks = phase.tasks
-      .filter(record)
+      .filter(isRecord)
       .flatMap((task) =>
         typeof task.content === "string" ? [{ content: task.content, status: todoStatus(task.status) }] : [],
       );
@@ -84,7 +81,7 @@ export class TodoBridge {
   track(part: OCToolPart, args: unknown): void {
     if (part.tool !== "todowrite") return;
     part.state.input = { todos: this.todos };
-    if (!record(args) || args.op !== "view") this.awaitingState.push(part);
+    if (!isRecord(args) || args.op !== "view") this.awaitingState.push(part);
   }
 
   finish(part: OCToolPart, isError: boolean): void {
@@ -92,7 +89,7 @@ export class TodoBridge {
   }
 
   entry(entry: unknown, updatePart: (part: OCToolPart) => void = () => {}): TodoUpdated | undefined {
-    if (!record(entry) || entry.type !== "custom" || entry.customType !== "senpi.todo-state") return undefined;
+    if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== "senpi.todo-state") return undefined;
     this.todos = flattenTodos(this.sessionID, entry.data);
     this.phases = todoPhases(entry.data);
     const part = this.awaitingState.shift();
@@ -105,16 +102,16 @@ export class TodoBridge {
 
   restore(entries: readonly unknown[], parts: Map<string, OCToolPart>): void {
     for (const entry of entries) {
-      if (!record(entry)) continue;
+      if (!isRecord(entry)) continue;
       const message = entry.message;
-      if (record(message) && message.role === "assistant" && Array.isArray(message.content)) {
+      if (isRecord(message) && message.role === "assistant" && Array.isArray(message.content)) {
         for (const block of message.content) {
-          if (!record(block) || block.type !== "toolCall" || typeof block.id !== "string") continue;
+          if (!isRecord(block) || block.type !== "toolCall" || typeof block.id !== "string") continue;
           const part = parts.get(block.id);
           if (part !== undefined) this.track(part, block.arguments);
         }
       }
-      if (record(message) && message.role === "toolResult" && typeof message.toolCallId === "string") {
+      if (isRecord(message) && message.role === "toolResult" && typeof message.toolCallId === "string") {
         const part = parts.get(message.toolCallId);
         if (part !== undefined) this.finish(part, message.isError === true);
       }

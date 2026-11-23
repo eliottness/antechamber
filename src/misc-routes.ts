@@ -3,8 +3,8 @@ import { opendir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { envSetting } from "./config.js";
+import { errorMessage } from "./guards.js";
 import { errorBody } from "./http.js";
-export { errorBody } from "./http.js";
 
 let loggingDisabled = false;
 const MAX_DIRECTORY_ENTRIES = 1000;
@@ -23,7 +23,7 @@ export function debugLog(line: string): void {
     );
   } catch (error) {
     loggingDisabled = true;
-    console.error(`[debug] logging disabled: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[debug] logging disabled: ${errorMessage(error)}`);
   }
 }
 

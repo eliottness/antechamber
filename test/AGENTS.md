@@ -26,7 +26,7 @@ test/
 | Diff route | `fixtures/diff-omo.mjs` |
 | Detached task-host teardown | `fixtures/fake-omo-host.mjs`, `detached-fixture*.ts`, `pidfd-host-probe.py` |
 | Tool-card mapping | `fixtures/omo-tools/<tool>.json` via `tool-map.test.ts` |
-| Biggest suites | `fork-revert.test.ts` (1407), `subagents.test.ts`, `endpoints.test.ts` |
+| Biggest suites | `fork-revert.test.ts` (about 1900 lines), `subagents.test.ts`, `endpoints.test.ts` |
 
 ## CONVENTIONS
 - The fake agent is selected by pointing `ANTECHAMBER_PI_BINARY` at a fixture script. Save and restore the env in the test.

@@ -20,7 +20,9 @@ cli.ts (parseArgs, lazy import per command; no command framework)
 |------|----------|-------|
 | New/changed route | `routes-v1.ts` + `routes-v2.ts` | v2 shapes/event translator live in `v2.ts` |
 | Shared route helpers | `route-services.ts` | model parsing, async prompt admission (204 contract) |
-| Prompt/abort/fork/revert orchestration | `sessions.ts` (1262 lines) | owns the conversation-operation queue |
+| Prompt/abort/fork/revert orchestration | `sessions.ts` (about 2000 lines) | owns the conversation-operation queue |
+| Session instructions sent to the model | `instructions.ts` | pure: what the branch holds, what to send next |
+| `isRecord`, `errorMessage` | `guards.ts` | use these; do not redeclare local copies |
 | Live pi events -> OpenCode parts | `pi-event-translation.ts`, `tool-map.ts` | `toolMappers` is per-tool |
 | History rebuilt from JSONL | `session-history.ts` | restored messages, pending inputs |
 | Fork/revert tree navigation | `session-tree.ts` | `SessionTreeError` -> HTTP 400 |

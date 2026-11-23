@@ -6,6 +6,7 @@
 import { id, PiEventTranslator, syncSessionCost } from "./pi-event-translation.js";
 import { parsePiSessionFile, parsePiSessionText } from "./session-history.js";
 import { CONTEXT_MESSAGE_TYPE, nativePromptInput, v2PromptAttachments } from "./prompt-parts.js";
+import { deliveredInstructions, INSTRUCTIONS_CUSTOM_TYPE, instructionDelivery } from "./instructions.js";
 import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -39,7 +40,6 @@ import {
   SessionTreeError,
   unrevertConversation,
   type SessionTreeState,
-  type TreeEntry,
 } from "./session-tree.js";
 import { SubagentBridge } from "./subagents.js";
 import { MonitorSessions } from "./monitor-sessions.js";
@@ -78,7 +78,7 @@ import type {
 } from "./types.js";
 
 import { ADAPTER_VERSION } from "./version.js";
-export { ADAPTER_VERSION } from "./version.js";
+import { errorMessage } from "./guards.js";
 const SESSION_SCAN_CACHE_TTL_MS = 5_000;
 const PI_FILE_RESOLVE_ATTEMPTS = 10;
 const PI_FILE_RESOLVE_RETRY_MS = 200;
@@ -1054,13 +1054,7 @@ export class SessionManager {
         this.emit(s.info.directory, { type: "session.diff", properties: { sessionID: s.info.id, diff } });
       })
       .catch((error: unknown) => {
-        this.emit(s.info.directory, {
-          type: "session.error",
-          properties: {
-            sessionID: s.info.id,
-            error: { name: "UnknownError", data: { message: error instanceof Error ? error.message : String(error) } },
-          },
-        });
+        this.emitUnknownError(s, errorMessage(error));
       })
       .finally(() => {
         if (this.diffEmissions.get(s.info.id) === pending) this.diffEmissions.delete(s.info.id);
@@ -1322,16 +1316,7 @@ export class SessionManager {
         // This prompt already owns the operation queue; do not enqueue recursively.
         await this.setModelLive(s, model);
       } catch (error) {
-        this.emit(s.info.directory, {
-          type: "session.error",
-          properties: {
-            sessionID: s.info.id,
-            error: {
-              name: "UnknownError",
-              data: { message: error instanceof Error ? error.message : String(error) },
-            },
-          },
-        });
+        this.emitUnknownError(s, errorMessage(error));
         throw error;
       }
     }
@@ -1443,37 +1428,16 @@ export class SessionManager {
    * (OpenCode rewinds its instruction state the same way, core/session/projector.ts).
    */
   private async deliverInstructions(s: ManagedSession, pi: PiRpcClient): Promise<void> {
-    const instructions = Object.entries(s.instructions ?? {});
-    if (instructions.length === 0) return;
-    const delivered = deliveredInstructions(branchEntries(await getEntries(pi)));
-    const pending = instructions
-      .filter(([key, entry]) =>
-        entry.removed
-          ? key in delivered
-          : !(key in delivered) || JSON.stringify(entry.value) !== JSON.stringify(delivered[key]),
-      )
-      .sort(([left], [right]) => left.localeCompare(right));
-    if (pending.length === 0) return;
-    const text = pending
-      .map(([key, entry]) => {
-        if (entry.removed) return `The context under "${key}" no longer applies. Disregard it.`;
-        const block = `<context key="${key}">\n${typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value, null, 2)}\n</context>`;
-        return key in delivered
-          ? `The context under "${key}" changed and supersedes the previous value:\n${block}`
-          : block;
-      })
-      .join("\n\n");
-    const snapshot = { ...delivered };
-    for (const [key, entry] of pending) {
-      if (entry.removed) delete snapshot[key];
-      else snapshot[key] = entry.value;
-    }
+    const instructions = s.instructions ?? {};
+    if (Object.keys(instructions).length === 0) return;
+    const delivery = instructionDelivery(instructions, deliveredInstructions(branchEntries(await getEntries(pi))));
+    if (delivery === undefined) return;
     const result = await pi.command({
       type: "send_custom_message",
       customType: INSTRUCTIONS_CUSTOM_TYPE,
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: delivery.text }],
       display: false,
-      details: { instructions: snapshot },
+      details: { instructions: delivery.snapshot },
       triggerTurn: false,
     });
     if (!result.success) throw new Error(result.error ?? "instruction delivery rejected");
@@ -1494,13 +1458,7 @@ export class SessionManager {
       triggerTurn: false,
     });
     if (!res.success) {
-      if (s.tree.promptParts) delete s.tree.promptParts[userMsg.id];
-      if (s.tree.promptMetadata) delete s.tree.promptMetadata[userMsg.id];
-      s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
-      this.emit(s.info.directory, {
-        type: "message.removed",
-        properties: { sessionID: s.info.id, messageID: userMsg.id },
-      });
+      this.withdrawUserMessage(s, userMsg.id);
       throw new Error(res.error ?? "context admission rejected");
     }
     // Bind the appended entry and persist the new leaf before announcing delivery, or a restart
@@ -1535,13 +1493,7 @@ export class SessionManager {
     (s.inputs ??= new Map()).set(userMsg.id, input);
     const rejectInput = (): void => {
       s.inputs?.delete(userMsg.id);
-      if (s.tree.promptParts) delete s.tree.promptParts[userMsg.id];
-      if (s.tree.promptMetadata) delete s.tree.promptMetadata[userMsg.id];
-      s.messages = s.messages?.filter((message) => message.info.id !== userMsg.id);
-      this.emit(s.info.directory, {
-        type: "message.removed",
-        properties: { sessionID: s.info.id, messageID: userMsg.id },
-      });
+      this.withdrawUserMessage(s, userMsg.id);
       if (wasIdle) this.events.setStatus(s, { type: "idle" });
     };
     const onNotification = (request: Record<string, unknown>): void => {
@@ -1579,13 +1531,7 @@ export class SessionManager {
       });
     if (!res.success) {
       rejectInput();
-      this.emit(s.info.directory, {
-        type: "session.error",
-        properties: {
-          sessionID: s.info.id,
-          error: { name: "UnknownError", data: { message: res.error ?? "prompt rejected" } },
-        },
-      });
+      this.emitUnknownError(s, res.error ?? "prompt rejected");
       return false;
     }
     input.accepted = true;
@@ -2027,10 +1973,25 @@ export class SessionManager {
     });
   }
 
+  /** Take back a user message OmO did not admit: drop its stored parts and metadata and remove its card. */
+  private withdrawUserMessage(s: ManagedSession, messageID: string): void {
+    if (s.tree.promptParts) delete s.tree.promptParts[messageID];
+    if (s.tree.promptMetadata) delete s.tree.promptMetadata[messageID];
+    s.messages = s.messages?.filter((message) => message.info.id !== messageID);
+    this.emit(s.info.directory, { type: "message.removed", properties: { sessionID: s.info.id, messageID } });
+  }
+
+  private emitUnknownError(s: ManagedSession, message: string): void {
+    this.emit(s.info.directory, {
+      type: "session.error",
+      properties: { sessionID: s.info.id, error: { name: "UnknownError", data: { message } } },
+    });
+  }
+
   /** Async event callbacks cannot reject an HTTP operation; report save failures through SSE. */
   private reportPersistenceError(s: ManagedSession, error: unknown): void {
     const name = error instanceof Error ? error.name : "UnknownError";
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     this.emit(s.info.directory, {
       type: "session.error",
       properties: { sessionID: s.info.id, error: { name, data: { message } } },
@@ -2063,26 +2024,4 @@ export class SessionManager {
       this.persistMeta(s);
     }
   }
-}
-
-const INSTRUCTIONS_CUSTOM_TYPE = "antechamber.instructions";
-
-/** The instruction map the model holds on this branch: the last delivery inside the newest compaction's kept range. */
-function deliveredInstructions(branch: TreeEntry[]): Record<string, unknown> {
-  let start = 0;
-  for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = branch[index] as TreeEntry & { firstKeptEntryId?: unknown };
-    if (entry.type !== "compaction") continue;
-    const kept = branch.findIndex((candidate) => candidate.id === entry.firstKeptEntryId);
-    start = kept >= 0 ? kept : index + 1;
-    break;
-  }
-  for (let index = branch.length - 1; index >= start; index--) {
-    const entry = branch[index];
-    if (entry?.type !== "custom_message" || entry.customType !== INSTRUCTIONS_CUSTOM_TYPE) continue;
-    const details = entry.details as { instructions?: unknown } | undefined;
-    if (details?.instructions !== null && typeof details?.instructions === "object")
-      return { ...(details.instructions as Record<string, unknown>) };
-  }
-  return {};
 }

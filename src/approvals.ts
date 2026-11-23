@@ -9,6 +9,7 @@ import type {
   EventQuestionReplied,
   EventQuestionRejected,
 } from "@opencode-ai/sdk/v2";
+import { isRecord } from "./guards.js";
 
 type WithoutEventID<T> = T extends { id: string } ? Omit<T, "id"> : never;
 export type ApprovalEvent =
@@ -61,9 +62,7 @@ type Pending = {
 const MAX_SETTLED_STRUCTURED_QUESTIONS = 256;
 
 function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  return isRecord(value) ? value : undefined;
 }
 
 export function extensionUiRequestFrom(value: Record<string, unknown>): UIRequest | undefined {

@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 antechamber is an OpenCode-compatible HTTP/SSE server, so OpenChamber can drive the pi coding agent (default backend: OmO) over JSONL stdio RPC (`<agent> --mode rpc`), with one agent process per session.
-Built with TypeScript 7 and ESM/NodeNext. The published CLI runs on Bun >=1.4 (`#!/usr/bin/env bun`); the dev tooling (tsc, tsx tests, esbuild) runs on Node >=22. Its one runtime dependency is `omo-ai`, pinned to an exact version so each release ships the OmO it was tested with; the devDeps are tsc, tsx, Biome, `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (2.x) for the bundled extension.
+Built with TypeScript 7 and ESM/NodeNext. The published CLI runs on Bun >=1.4 (`#!/usr/bin/env bun`); the dev tooling (tsc, tsx tests, esbuild) runs on Node >=22. Its one runtime dependency is `omo-ai`, pinned to an exact version so each release ships the OmO it was tested with; the devDeps are tsc, tsx, Biome, knip (dead-code gate), `@opencode-ai/sdk` (types only), and esbuild plus `@openchamber/sdk` (2.x) for the bundled extension.
 
 ```
 OpenChamber --HTTP/SSE (OpenCode v1 + v2 /api subset)--> antechamber --JSONL stdio--> omo|pi --mode rpc
@@ -93,7 +93,7 @@ For every bug report:
 ```bash
 npm ci
 npm run dev -- serve --port 4096         # run from source (bun)
-npm run check                            # typecheck + lint + format:check + test (release gate)
+npm run check                            # typecheck + lint + format:check + knip + test (release gate)
 npm run typecheck && npm test && npm run build   # minimum before a PR
 npm run format                           # biome format --write
 npx tsx --test --import ./test/setup.ts test/fork-revert.test.ts   # one file; keep the setup import
@@ -102,7 +102,7 @@ ANTECHAMBER_PI_BINARY="$(command -v omo)" npm run omo-smoke   # live, costs toke
 npm run build && npm run replay -- [--session ses_x]   # real sessions in a real OpenChamber; no tokens, local only
 antechamber doctor                       # includes installed vs latest vs running adapter versions
 ```
-CI (Node 22.x and 24.x) runs typecheck, lint, format:check, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests. A `macos-latest` job runs typecheck and test on Node 24 so the darwin process paths meet the real `ps`, then, on Bun, `scripts/ci/darwin-teardown-probe.ts` (the shipped process table against the live table), doctor's `bun` and `private-host-teardown` checks, and `scripts/ci/launcher-smoke.sh` (the extension launcher installing and serving a packed runtime).
+CI (Node 22.x and 24.x) runs typecheck, lint, format:check, knip, test and build, then asserts `npm pack` ships `dist/cli.js` and the built extensions, and no `test/`, `contrib/` or extension sources/tests. A `macos-latest` job runs typecheck and test on Node 24 so the darwin process paths meet the real `ps`, then, on Bun, `scripts/ci/darwin-teardown-probe.ts` (the shipped process table against the live table), doctor's `bun` and `private-host-teardown` checks, and `scripts/ci/launcher-smoke.sh` (the extension launcher installing and serving a packed runtime).
 The `bun-runtime` job (Bun 1.4.x and latest) builds, checks doctor's `bun` check, and serves a fake-agent turn through `bin/opencode-antechamber`, then runs `scripts/ci/launcher-smoke.sh`.
 The weekly OmO bump (`omo-bump.yml`) additionally runs `scripts/ci/openchamber-e2e.sh`: the latest OpenChamber driving the real bumped OmO through the extension launcher. Run it locally after `npm run build`; its model is the local mock `scripts/ci/mock-openai.mjs`, so it needs no key and costs no tokens.
 

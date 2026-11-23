@@ -6,7 +6,7 @@
 import type * as fs from "node:fs";
 import { join } from "node:path";
 
-export interface RunningServer {
+interface RunningServer {
   readonly pid: number;
   readonly version: string;
   readonly url: string;
