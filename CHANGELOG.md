@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.14] - 2026-11-23
+
+- refactor: consolidate shared guards, extract instruction delivery, gate dead code with knip (#107)
+
 ## [2.0.13] - 2026-11-23
 
 ### Changed
