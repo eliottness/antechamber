@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.16] - 2026-11-23
+
 ### Changed
 
 - OmO 5.1.81 (engine senpi 2026.11.19-5), up from 5.1.69.
