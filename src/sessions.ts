@@ -235,8 +235,12 @@ export class SessionManager {
   ) {
     this.store = store ?? new SessionStore();
     this.lifecycle = new SessionLifecycle(() => this.sessions.values(), lifecycleOptions);
-    this.subagents = new SubagentBridge(this.store, this.sessions, this.emit, (session, raw) =>
-      parsePiSessionText(session, getAgentName(), raw),
+    this.subagents = new SubagentBridge(
+      this.store,
+      this.sessions,
+      this.emit,
+      (session, raw) => parsePiSessionText(session, getAgentName(), raw),
+      (directory) => this.ensureScanned(directory),
     );
     this.monitors = new MonitorSessions(this.sessions, this.emit);
     this.workStatus = new WorkStatusBridge(this.monitors);
@@ -1911,7 +1915,8 @@ export class SessionManager {
   /** Resolve a bare session id (e.g. deep link after restart) via known directories. */
   private resolveRestored(sessionId: string): ManagedSession | undefined {
     const reg = this.store.get(sessionId);
-    if (reg?.deleted) return undefined;
+    // A child row's piPath is the adapter's own archive; only the subagent bridge may restore it.
+    if (reg?.deleted || reg?.task) return undefined;
     if (reg && existsSync(reg.piPath)) {
       return this.adopt({
         piSessionId: reg.piSessionId,
