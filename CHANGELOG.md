@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.15] - 2026-11-23
+
 ### Fixed
 
 - Subagent sessions whose parent session was deleted or never saved no longer show up in OpenChamber as top-level
