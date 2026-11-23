@@ -1414,12 +1414,16 @@ test("a registry child whose parent session is gone is neither listed nor restor
   const keptID = ocIdFor("st_kept");
   assert.ok(manager.get(keptID));
   await manager.disposeAll();
-  // The parent of these rows was deleted or never saved: no registry entry, no pi file, no task record.
+  // The kept child's parent survives only as a pi file on disk, so the list must scan before hiding anything.
   const registry = new SessionStore(state);
-  const orphan = (id: string, parentPiId: string, parentID = ocIdFor(parentPiId)) =>
+  registry.remove(ocIdFor("parent-pi"));
+  // The parent of these rows was deleted or never saved: no registry entry, no pi file, no task record.
+  const orphan = (id: string, parentPiId: string, parentID = ocIdFor(parentPiId)) => {
+    const piPath = join(state, "children", `${id}.jsonl`);
+    put(piPath, transcript(`archived ${id}`, id));
     registry.set(ocIdFor(id), {
       piSessionId: id,
-      piPath: join(state, "children", `${id}.jsonl`),
+      piPath,
       directory,
       title: id,
       parentID,
@@ -1427,6 +1431,7 @@ test("a registry child whose parent session is gone is neither listed nor restor
       created: 1,
       updated: 1,
     });
+  };
   orphan("st_orphan", "gone-pi");
   orphan("st_grandchild", "st_orphan");
   const restarted = new SessionManager(() => {}, new SessionStore(state), directory);
@@ -1436,7 +1441,9 @@ test("a registry child whose parent session is gone is neither listed nor restor
   assert.ok(listed.includes(keptID));
   assert.ok(!listed.includes(ocIdFor("st_orphan")));
   assert.ok(!listed.includes(ocIdFor("st_grandchild")));
+  // A direct lookup must not adopt the archived transcript as a root session either.
   assert.equal(restarted.get(ocIdFor("st_orphan")), undefined);
+  assert.ok(!restarted.list(directory).some((session) => session.id === ocIdFor("st_orphan")));
 });
 
 test("a deleted child stays deleted after a parent history read and a restart", async (t) => {
