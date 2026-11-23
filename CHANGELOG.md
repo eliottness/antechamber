@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.13] - 2026-11-23
+
 ### Changed
 
 - Opening a long session is faster. Rebuilding its history no longer rescans every earlier tool card for each
