@@ -235,8 +235,12 @@ export class SessionManager {
   ) {
     this.store = store ?? new SessionStore();
     this.lifecycle = new SessionLifecycle(() => this.sessions.values(), lifecycleOptions);
-    this.subagents = new SubagentBridge(this.store, this.sessions, this.emit, (session, raw) =>
-      parsePiSessionText(session, getAgentName(), raw),
+    this.subagents = new SubagentBridge(
+      this.store,
+      this.sessions,
+      this.emit,
+      (session, raw) => parsePiSessionText(session, getAgentName(), raw),
+      (directory) => this.ensureScanned(directory),
     );
     this.monitors = new MonitorSessions(this.sessions, this.emit);
     this.workStatus = new WorkStatusBridge(this.monitors);

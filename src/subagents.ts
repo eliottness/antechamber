@@ -540,6 +540,8 @@ export class SubagentBridge {
     private readonly sessions: Map<string, ManagedSession>,
     private readonly emit: (directory: string, event: OCEvent) => void,
     private readonly parse: ParseHistory,
+    /** Adopts the pi sessions on disk for a directory, so an unscanned root parent is found before a child is hidden. */
+    private readonly scanDirectory: (directory: string) => void = () => {},
   ) {}
 
   private archive(child: Child): string {
@@ -734,11 +736,30 @@ export class SubagentBridge {
       const entry = this.store.get(id);
       if (!entry) return this.removed.has(id) ? undefined : this.adopt(id);
       if (entry.deleted || !entry.task || !entry.parentID) return undefined;
+      if (!this.parentExists(entry.parentID, entry.directory)) return undefined;
       const child = this.create(this.detachedParent(entry.parentID, entry.directory, entry), entry.task, id);
       child.session.info.title = entry.title ?? child.session.info.title;
       this.refresh(child, false, true, false);
       return child.session;
     });
+  }
+
+  /**
+   * A registry child outlives a parent that was deleted or never saved, and OpenChamber would then list it as a
+   * root holding only the "Full transcript is unavailable" fallback. A parent exists when it is loaded, registered
+   * and not deleted (a nested child's own parent chain counts the same way), or a pi session on disk.
+   */
+  private parentExists(id: string, directory: string, seen = new Set<string>()): boolean {
+    if (this.sessions.has(id)) return true;
+    const entry = this.store.get(id);
+    if (entry === undefined) {
+      this.scanDirectory(directory);
+      return this.sessions.has(id);
+    }
+    if (entry.deleted || seen.has(id)) return false;
+    if (!entry.task || !entry.parentID) return true;
+    seen.add(id);
+    return this.parentExists(entry.parentID, entry.directory, seen);
   }
 
   /**

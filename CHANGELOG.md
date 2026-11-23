@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Subagent sessions whose parent session was deleted or never saved no longer show up in OpenChamber as top-level
+  sessions that only say "Full transcript is unavailable". The registry kept their rows, and every session list
+  rebuilt them without checking that the parent still existed.
+
 ## [2.0.14] - 2026-11-23
 
 - refactor: consolidate shared guards, extract instruction delivery, gate dead code with knip (#107)

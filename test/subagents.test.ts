@@ -1408,6 +1408,37 @@ test("after a restart a wake reaches a registry-only child and nested eval tasks
   assert.equal(restarted.list(directory).find((session) => session.id === ocIdFor("st_inner"))?.parentID, outerID);
 });
 
+test("a registry child whose parent session is gone is neither listed nor restored", async (t) => {
+  const { manager, store, state, directory } = setup(t);
+  liveRecord(store, "st_kept", "completed", "kept child");
+  const keptID = ocIdFor("st_kept");
+  assert.ok(manager.get(keptID));
+  await manager.disposeAll();
+  // The parent of these rows was deleted or never saved: no registry entry, no pi file, no task record.
+  const registry = new SessionStore(state);
+  const orphan = (id: string, parentPiId: string, parentID = ocIdFor(parentPiId)) =>
+    registry.set(ocIdFor(id), {
+      piSessionId: id,
+      piPath: join(state, "children", `${id}.jsonl`),
+      directory,
+      title: id,
+      parentID,
+      task: { id, parentPiId, input: { description: id }, details: { task_id: id, status: "running" } },
+      created: 1,
+      updated: 1,
+    });
+  orphan("st_orphan", "gone-pi");
+  orphan("st_grandchild", "st_orphan");
+  const restarted = new SessionManager(() => {}, new SessionStore(state), directory);
+  t.after(() => restarted.disposeAll());
+
+  const listed = restarted.list(directory).map((session) => session.id);
+  assert.ok(listed.includes(keptID));
+  assert.ok(!listed.includes(ocIdFor("st_orphan")));
+  assert.ok(!listed.includes(ocIdFor("st_grandchild")));
+  assert.equal(restarted.get(ocIdFor("st_orphan")), undefined);
+});
+
 test("a deleted child stays deleted after a parent history read and a restart", async (t) => {
   const { manager, parentPath, store, directory, parent } = setup(t);
   const batch = fixture.samples[1];
