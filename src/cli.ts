@@ -2,6 +2,7 @@
 /** CLI parsing and dispatch. Server code is loaded only for serve/default mode. */
 import { parseArgs } from "node:util";
 import { ADAPTER_VERSION, OPENCODE_API_VERSION } from "./version.js";
+import { errorMessage } from "./guards.js";
 
 try {
   const argv = process.argv.slice(2);
@@ -87,6 +88,6 @@ try {
     }
   }
 } catch (error) {
-  console.error(`antechamber: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`antechamber: ${errorMessage(error)}`);
   process.exitCode = 1;
 }

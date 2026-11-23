@@ -29,6 +29,7 @@ import { errorBody } from "./http.js";
 import { PiRpcClient } from "./pi-rpc.js";
 import type { RouteServices } from "./route-services.js";
 import type { ManagedSession, SessionManager } from "./sessions.js";
+import { errorMessage, isRecord } from "./guards.js";
 
 type OCMcpStatus =
   | { status: "connected" }
@@ -86,7 +87,7 @@ const MCP_READ_WAIT_MS = 5_000;
 /** OmO announces the authorization URL before it waits for the browser. */
 const MCP_AUTH_URL_WAIT_MS = 30_000;
 /** OmO's loopback listener gives up after 5 minutes; leave room for the reconnect that follows. */
-export const MCP_AUTH_COMMAND_TIMEOUT_MS = 10 * 60_000;
+const MCP_AUTH_COMMAND_TIMEOUT_MS = 10 * 60_000;
 /** A pending paste flow is forgotten after this; OmO's own state is replaced by the next start. */
 const MCP_AUTH_ATTEMPT_TTL_MS = 10 * 60_000;
 /** Names are passed as one slash-command argument, so they must not split or quote. */
@@ -108,14 +109,6 @@ const watchedDirectories = new Set<string>();
 const inventories = new Map<string, { at: number; servers: Promise<OmoMcpServer[]> }>();
 const inventoryAgents = new Set<PiRpcClient>();
 let changeTimer: ReturnType<typeof setTimeout> | undefined;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 const flowKey = (directory: string, name: string): string => `${directory}\0${name}`;
 
@@ -277,7 +270,7 @@ async function mcpCommandName(pi: PiRpcClient): Promise<string | undefined> {
 }
 
 /** The URL OmO prints on its own line after naming the server (`auth` and `auth-start` both do). */
-export function authorizationUrl(text: string, name: string): string | undefined {
+function authorizationUrl(text: string, name: string): string | undefined {
   if (!text.includes(name)) return undefined;
   const candidate = /(?:^|\n)(https?:\/\/\S+)/.exec(text)?.[1];
   if (candidate === undefined) return undefined;

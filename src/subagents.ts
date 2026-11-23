@@ -22,14 +22,11 @@ import type { ManagedSession } from "./sessions.js";
 import { type EvalAgent, mapTool, resultText, type ToolResult, toolMappers } from "./tool-map.js";
 import type { OCEvent, OCMessageWithParts, OCSession, OCToolPart } from "./types.js";
 import { ADAPTER_VERSION } from "./version.js";
+import { isRecord } from "./guards.js";
 
 // macOS watches directories through FSEvents, which goes live asynchronously after
 // watch() returns; a task record replaced inside that window raises no event.
 const FSEVENTS_STARTUP_RECHECK_MS = 1_000;
-
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function taskId(value: unknown): value is string {
   return typeof value === "string" && /^st_[a-zA-Z0-9_-]+$/.test(value);
@@ -90,7 +87,7 @@ toolMappers.task = (args, result) => {
     // OpenCode 2.x's own flag for a delegated call that returns at once (v2.ts `backgroundTask`).
     ...(args.run_in_background === true ? { background: true } : {}),
   };
-  const details = record(result?.details) ? result.details : {};
+  const details = isRecord(result?.details) ? result.details : {};
   return {
     tool: "task",
     input,
@@ -106,7 +103,7 @@ toolMappers.task = (args, result) => {
 export function taskParts(template: OCToolPart, args: Record<string, unknown>): OCToolPart[] {
   const items = Array.isArray(args.tasks) && args.tasks.length > 0 ? args.tasks : [args];
   return items.map((item, index) => {
-    const mapped = mapTool("task", { ...args, ...(record(item) ? item : {}) });
+    const mapped = mapTool("task", { ...args, ...(isRecord(item) ? item : {}) });
     return {
       ...template,
       id: `prt_task_${template.callID}_${index}`,
@@ -123,13 +120,13 @@ export function taskParts(template: OCToolPart, args: Record<string, unknown>): 
 
 /** Keep task status independent of the parent tool returning a background handle. */
 export function updateTaskParts(parts: OCToolPart[], result: ToolResult, ended: boolean, now: number): void {
-  const details = record(result.details) ? result.details : {};
+  const details = isRecord(result.details) ? result.details : {};
   const items = Array.isArray(details.items) ? details.items : undefined;
   parts.forEach((part, index) => {
     const previous = part.state.status !== "pending" ? part.state.metadata : undefined;
-    const old = record(previous?.task) ? previous.task : {};
+    const old = isRecord(previous?.task) ? previous.task : {};
     const item = items?.[index];
-    const current = items !== undefined ? (record(item) ? item : {}) : index === 0 ? details : {};
+    const current = items !== undefined ? (isRecord(item) ? item : {}) : index === 0 ? details : {};
     const data = { ...old, ...current };
     const output = stripTaskSuffix(
       typeof data.final_response === "string"
@@ -174,7 +171,7 @@ export function updateTaskParts(parts: OCToolPart[], result: ToolResult, ended: 
 /** Wake messages carry arrays of completion envelopes, not a flat details object. */
 export function taskCompletions(value: unknown): Record<string, unknown>[] {
   if (Array.isArray(value)) return value.flatMap(taskCompletions);
-  if (!record(value)) return [];
+  if (!isRecord(value)) return [];
   if (taskId(value.task_id)) return [value];
   return taskCompletions(value.details);
 }
@@ -194,7 +191,7 @@ function jsonObject(path: string): Record<string, unknown> | undefined {
   if (raw === undefined) return undefined;
   try {
     const value: unknown = JSON.parse(raw);
-    return record(value) ? value : undefined;
+    return isRecord(value) ? value : undefined;
   } catch (error) {
     if (error instanceof SyntaxError) return undefined;
     throw error;
@@ -217,7 +214,7 @@ function taskStores(): Set<string> {
   const agent = piAgentDir();
   const registry = jsonObject(join(agent, "rpc", "task-stores.json"));
   return new Set([
-    ...Object.keys(record(registry?.stores) ? registry.stores : {}),
+    ...Object.keys(isRecord(registry?.stores) ? registry.stores : {}),
     ...directories(join(agent, "projects")).map((project) => join(project, "senpi-task")),
   ]);
 }
@@ -403,7 +400,7 @@ export function evalAgentSession(
     if (claimed.has(id)) continue;
     const data = cached ?? childRecord(id, path);
     if (data?.parent_session_id !== parentPiId) continue;
-    const spec = record(data.spawn_spec) ? data.spawn_spec : {};
+    const spec = isRecord(data.spawn_spec) ? data.spawn_spec : {};
     if (!recordedMatch(args.prompt, spec.prompt)) continue;
     if (typeof args.label === "string" && !recordedMatch(args.label, data.name)) continue;
     const created = typeof data.created_at === "string" ? Date.parse(data.created_at) : Number.NaN;
@@ -441,7 +438,7 @@ export function findTask(id: string, parentPiId: string): { path: string; data: 
 function transcriptSessionId(raw: string): string | undefined {
   try {
     const header: unknown = JSON.parse(raw.split("\n", 1)[0] ?? "");
-    return record(header) && header.type === "session" && typeof header.id === "string" ? header.id : undefined;
+    return isRecord(header) && header.type === "session" && typeof header.id === "string" ? header.id : undefined;
   } catch (error) {
     if (error instanceof SyntaxError) return undefined;
     throw error;
@@ -589,7 +586,7 @@ export class SubagentBridge {
   }
 
   wake(parent: ManagedSession, event: Record<string, unknown>): void {
-    const message = record(event.message) ? event.message : event;
+    const message = isRecord(event.message) ? event.message : event;
     if (message.customType !== "omo-senpi:wake") return;
     for (const data of taskCompletions(message.details)) {
       const id = this.sessionId(parent, String(data.task_id));
@@ -611,12 +608,12 @@ export class SubagentBridge {
    * the snapshot is capped at 256 tasks.
    */
   observe(parent: ManagedSession, ev: Record<string, unknown>): void {
-    if (ev.name !== "omo.task.updated" || !record(ev.data) || !Array.isArray(ev.data.tasks)) return;
+    if (ev.name !== "omo.task.updated" || !isRecord(ev.data) || !Array.isArray(ev.data.tasks)) return;
     const rows = ev.data.tasks;
     this.store.batch(() =>
       withTaskLookups(this.store, () => {
         for (const row of rows) {
-          if (!record(row) || !taskId(row.task_id)) continue;
+          if (!isRecord(row) || !taskId(row.task_id)) continue;
           if (
             typeof row.parent_session_id === "string" &&
             row.parent_session_id !== (parent.piSessionId ?? parent.restored?.piSessionId)
@@ -670,7 +667,7 @@ export class SubagentBridge {
       const metadata = part.state.metadata;
       if (!metadata || !taskId(metadata.taskID)) continue;
       const id = metadata.taskID;
-      const details = record(metadata.task) ? metadata.task : {};
+      const details = isRecord(metadata.task) ? metadata.task : {};
       const sessionID = this.sessionId(parent, id);
       let child = this.children.get(sessionID);
       if (!child && this.deleted(sessionID)) continue;
@@ -757,7 +754,7 @@ export class SubagentBridge {
     const parent = this.parentFor(parentPi);
     if (!parent) return undefined;
     this.wire(parent);
-    const spec = record(found.data.spawn_spec) ? found.data.spawn_spec : {};
+    const spec = isRecord(found.data.spawn_spec) ? found.data.spawn_spec : {};
     const name = found.data.name ?? found.data.description;
     const child = this.create(
       parent,
@@ -914,7 +911,7 @@ export class SubagentBridge {
     child.recordPath = found.path;
     if (useRecord) this.applyNative(child, found.data);
     const host = found.data.host_session;
-    if (record(host) && typeof host.session_path === "string") {
+    if (isRecord(host) && typeof host.session_path === "string") {
       child.livePath = host.session_path;
       return found;
     }
@@ -1040,8 +1037,8 @@ export class SubagentBridge {
 
   private fallback(child: Child): OCMessageWithParts[] {
     const data = child.task.details;
-    const stats = record(data.run_stats) ? data.run_stats : {};
-    const resolved = record(data.resolved_model) ? data.resolved_model : {};
+    const stats = isRecord(data.run_stats) ? data.run_stats : {};
+    const resolved = isRecord(data.resolved_model) ? data.resolved_model : {};
     const model =
       typeof data.model === "string"
         ? data.model

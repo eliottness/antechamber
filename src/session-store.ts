@@ -35,6 +35,7 @@ import type { SessionTreeState } from "./session-tree.js";
 import { isPromptPart } from "./prompt-parts.js";
 import type { ChildTask } from "./subagents.js";
 import { defaultStateDir, envSetting } from "./config.js";
+import { errorMessage, isRecord } from "./guards.js";
 
 /** pi's session directory for a given cwd (see pi docs/session-format.md). */
 export function piSessionDir(cwd: string): string {
@@ -130,7 +131,7 @@ export interface SessionRegistryEntry {
 
 export class SessionPersistenceError extends Error {
   constructor(file: string, cause: unknown) {
-    super(`Failed to persist session registry ${file}: ${cause instanceof Error ? cause.message : String(cause)}`, {
+    super(`Failed to persist session registry ${file}: ${errorMessage(cause)}`, {
       cause,
     });
     this.name = "SessionPersistenceError";
@@ -464,22 +465,18 @@ export function scanPiSessions(directory: string): ScannedSession[] {
  * Persistent oc-session-id → metadata registry (title overrides, known pi
  * paths). Legacy JSON records are validated at migration; SQLite writes are atomic.
  */
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function stringRecord(value: unknown): value is Record<string, string> {
-  return record(value) && Object.values(value).every((entry) => typeof entry === "string");
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
 function booleanRecord(value: unknown): value is Record<string, boolean> {
-  return record(value) && Object.values(value).every((entry) => typeof entry === "boolean");
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "boolean");
 }
 
 function persistedMessage(value: unknown): boolean {
   return (
-    record(value) &&
-    record(value.info) &&
+    isRecord(value) &&
+    isRecord(value.info) &&
     typeof value.info.id === "string" &&
     typeof value.info.role === "string" &&
     Array.isArray(value.parts)
@@ -487,16 +484,16 @@ function persistedMessage(value: unknown): boolean {
 }
 
 function sessionTreeState(value: unknown): value is SessionTreeState {
-  if (!record(value) || !stringRecord(value.messageEntries)) return false;
+  if (!isRecord(value) || !stringRecord(value.messageEntries)) return false;
   if (
     value.promptParts !== undefined &&
-    (!record(value.promptParts) ||
+    (!isRecord(value.promptParts) ||
       !Object.values(value.promptParts).every((parts) => Array.isArray(parts) && parts.every(isPromptPart)))
   )
     return false;
   if (
     value.promptMetadata !== undefined &&
-    (!record(value.promptMetadata) || !Object.values(value.promptMetadata).every((metadata) => record(metadata)))
+    (!isRecord(value.promptMetadata) || !Object.values(value.promptMetadata).every((metadata) => isRecord(metadata)))
   )
     return false;
   if (value.promptDescriptions !== undefined && !stringRecord(value.promptDescriptions)) return false;
@@ -508,7 +505,7 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
     return false;
   if (
     value.messageParts !== undefined &&
-    (!record(value.messageParts) ||
+    (!isRecord(value.messageParts) ||
       !Object.values(value.messageParts).every(
         (parts) => Array.isArray(parts) && parts.every((part) => typeof part === "string"),
       ))
@@ -519,18 +516,18 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
   if (value.lastIdle !== undefined && !finite(value.lastIdle)) return false;
   if (
     value.compactionAdmissions !== undefined &&
-    (!record(value.compactionAdmissions) || !Object.values(value.compactionAdmissions).every(finite))
+    (!isRecord(value.compactionAdmissions) || !Object.values(value.compactionAdmissions).every(finite))
   )
     return false;
   if (
     value.idleBoundaries !== undefined &&
-    (!record(value.idleBoundaries) ||
+    (!isRecord(value.idleBoundaries) ||
       !Object.values(value.idleBoundaries).every(
         (boundary) =>
-          record(boundary) &&
+          isRecord(boundary) &&
           finite(boundary.at) &&
           ["succeeded", "failed", "interrupted"].includes(boundary.outcome as string) &&
-          (boundary.error === undefined || record(boundary.error)),
+          (boundary.error === undefined || isRecord(boundary.error)),
       ))
   )
     return false;
@@ -539,7 +536,7 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
     return false;
   if (value.revert !== undefined) {
     if (
-      !record(value.revert) ||
+      !isRecord(value.revert) ||
       typeof value.revert.messageID !== "string" ||
       (value.revert.previousLeafId !== null && typeof value.revert.previousLeafId !== "string") ||
       (value.revert.targetId !== null && typeof value.revert.targetId !== "string")
@@ -551,7 +548,7 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
     (Array.isArray(value.localShellTurns) &&
       value.localShellTurns.every(
         (turn) =>
-          record(turn) &&
+          isRecord(turn) &&
           (turn.afterEntryId === null || typeof turn.afterEntryId === "string") &&
           Array.isArray(turn.messages) &&
           turn.messages.length === 2 &&
@@ -563,11 +560,11 @@ function sessionTreeState(value: unknown): value is SessionTreeState {
 
 function childTask(value: unknown): value is ChildTask {
   return (
-    record(value) &&
+    isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.parentPiId === "string" &&
-    record(value.input) &&
-    record(value.details) &&
+    isRecord(value.input) &&
+    isRecord(value.details) &&
     (value.terminalAt === undefined || (typeof value.terminalAt === "number" && Number.isFinite(value.terminalAt)))
   );
 }
@@ -577,13 +574,13 @@ function finite(value: unknown): value is number {
 }
 
 function sessionUsage(value: unknown): value is SessionUsage {
-  if (!record(value) || !finite(value.cost) || !record(value.tokens)) return false;
+  if (!isRecord(value) || !finite(value.cost) || !isRecord(value.tokens)) return false;
   const { tokens } = value;
   return (
     finite(tokens.input) &&
     finite(tokens.output) &&
     finite(tokens.reasoning) &&
-    record(tokens.cache) &&
+    isRecord(tokens.cache) &&
     finite(tokens.cache.read) &&
     finite(tokens.cache.write)
   );
@@ -595,7 +592,7 @@ function titleSource(value: unknown): value is TitleSource {
 
 function registryEntry(value: unknown): value is SessionRegistryEntry {
   if (
-    !record(value) ||
+    !isRecord(value) ||
     typeof value.piPath !== "string" ||
     typeof value.piSessionId !== "string" ||
     typeof value.directory !== "string" ||
@@ -611,14 +608,14 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
   if (value.parentID !== undefined && typeof value.parentID !== "string") return false;
   if (value.parentMessageID !== undefined && typeof value.parentMessageID !== "string") return false;
   if (value.agent !== undefined && typeof value.agent !== "string") return false;
-  if (value.metadata !== undefined && !record(value.metadata)) return false;
+  if (value.metadata !== undefined && !isRecord(value.metadata)) return false;
   if (
     value.instructions !== undefined &&
-    (!record(value.instructions) ||
+    (!isRecord(value.instructions) ||
       !Object.entries(value.instructions).every(
         ([key, entry]) =>
           /^[a-z0-9][a-z0-9._-]*$/.test(key) &&
-          record(entry) &&
+          isRecord(entry) &&
           "value" in entry &&
           (entry.removed === undefined || entry.removed === true),
       ))
@@ -632,12 +629,12 @@ function registryEntry(value: unknown): value is SessionRegistryEntry {
   if (value.viewed !== undefined && (typeof value.viewed !== "number" || !Number.isFinite(value.viewed))) return false;
   if (
     value.model !== undefined &&
-    (!record(value.model) || typeof value.model.providerID !== "string" || typeof value.model.modelID !== "string")
+    (!isRecord(value.model) || typeof value.model.providerID !== "string" || typeof value.model.modelID !== "string")
   )
     return false;
   if (
     value.lastStop !== undefined &&
-    (!record(value.lastStop) ||
+    (!isRecord(value.lastStop) ||
       typeof value.lastStop.message !== "string" ||
       typeof value.lastStop.at !== "number" ||
       !Number.isFinite(value.lastStop.at))
@@ -759,7 +756,7 @@ export class SessionStore {
       const parse = (): Record<string, unknown> | undefined => {
         try {
           const parsed: unknown = JSON.parse(readFileSync(legacy, "utf8"));
-          return record(parsed) ? parsed : undefined;
+          return isRecord(parsed) ? parsed : undefined;
         } catch (error) {
           // Another process imported it and renamed it away after this one checked it was there.
           if (errorCode(error) === "ENOENT") return undefined;

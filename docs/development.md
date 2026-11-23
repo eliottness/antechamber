@@ -25,6 +25,8 @@ One line per module in `src/`:
 | `routes-v2.ts` | OpenCode v2 `/api/*` HTTP routes and route-specific response adapters |
 | `v2.ts` | OpenCode v2 API translation layer (session/message shapes, v2 event translator) |
 | `sessions.ts` | `SessionManager`: registry, persistence, lifecycle, prompt/abort/fork/revert orchestration |
+| `instructions.ts` | Session instructions as hidden `antechamber.instructions` messages: what the branch holds and the next delivery |
+| `guards.ts` | Shared `isRecord` guard and `errorMessage` for values parsed from RPC, JSONL and request bodies |
 | `session-history.ts` | Reconstructs OpenCode messages, stable parts, and pending inputs from pi JSONL history |
 | `pi-event-translation.ts` | Shared pi message/part helpers and live event translation with explicit manager services |
 | `session-store.ts` | Session registry persistence (directory, ancestry, metadata, model, tree, and part-ID mappings) |

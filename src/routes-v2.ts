@@ -33,6 +33,7 @@ import {
   sessionMetadata,
   type RouteServices,
 } from "./route-services.js";
+import { errorMessage } from "./guards.js";
 
 async function v2Agents(services: RouteServices): Promise<
   Array<{
@@ -897,11 +898,11 @@ export async function handleV2(
             if (managed.compactionID === inputID) delete managed.compactionID;
           })
           .catch((error: unknown) => {
-            fail(error instanceof Error ? error.message : String(error));
+            fail(errorMessage(error));
             announceSessionError(
               { sessions: services.sessions, session: managed, emit: services.broadcast },
               error instanceof Error ? error.name : "UnknownError",
-              error instanceof Error ? error.message : String(error),
+              errorMessage(error),
             );
           });
         json(res, 200, { data: admission.item });
@@ -1151,7 +1152,7 @@ export async function handleV2(
             json(res, 200, { data: info.revert });
           }
         } catch (error) {
-          json(res, 400, errorBody("SessionTreeError", error instanceof Error ? error.message : String(error)));
+          json(res, 400, errorBody("SessionTreeError", errorMessage(error)));
         }
         return;
       }
@@ -1192,7 +1193,7 @@ export async function handleV2(
           }
           res.writeHead(204).end();
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = errorMessage(err);
           console.error(`[model] session ${sessionId} → ${ref.providerID}/${ref.modelID} failed:`, message);
           json(
             res,

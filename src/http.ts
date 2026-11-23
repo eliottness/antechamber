@@ -5,6 +5,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { ApprovalInputError } from "./approvals.js";
 import { envSetting } from "./config.js";
 import { UpstreamProtocolError } from "./pi-rpc.js";
+import { errorMessage } from "./guards.js";
 
 const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -59,7 +60,7 @@ export function json(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /** Routes the OmO Work extension service calls with the run-record token instead of the server password. */
-export const EXTENSION_ROUTE_PREFIX = "/antechamber/work-status/";
+const EXTENSION_ROUTE_PREFIX = "/antechamber/work-status/";
 
 export class Http {
   private readonly credentials: Buffer | undefined;
@@ -121,7 +122,7 @@ export class Http {
     try {
       await handle();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       if (err instanceof RequestBodyError && err.status === 413) {
         res.setHeader("Connection", "close");
         res.once("finish", () => req.destroy());

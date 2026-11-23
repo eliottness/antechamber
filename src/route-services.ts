@@ -22,6 +22,7 @@ import { PiStoppedError } from "./pi-rpc.js";
 import type { FileWatchRegistry } from "./file-watch.js";
 import type { getCommands } from "./session-commands.js";
 import type { TextGeneration } from "./text-generation.js";
+import { errorMessage } from "./guards.js";
 
 export interface RouteServices {
   readonly sessions: SessionManager;
@@ -107,12 +108,12 @@ export function promptAsync(
       announceSessionError(
         { sessions: services.sessions, session, emit: services.broadcast },
         error instanceof Error ? error.name : "UnknownError",
-        error instanceof Error ? error.message : String(error),
+        errorMessage(error),
       );
     });
 }
 
-export type ShellRouteResult =
+type ShellRouteResult =
   | { kind: "input" }
   | { kind: "busy" }
   | { kind: "error"; message: string }
@@ -136,7 +137,7 @@ export async function runSessionShell(
   return result.kind === "error" ? result : { kind: "success", message: result.message };
 }
 
-export type SlashRouteResult = { kind: "input" } | { kind: "success"; message: OCMessageWithParts | undefined };
+type SlashRouteResult = { kind: "input" } | { kind: "success"; message: OCMessageWithParts | undefined };
 
 /** Parse and dispatch slash commands once for both protocol versions. */
 export async function runSessionSlash(

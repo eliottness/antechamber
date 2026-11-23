@@ -22,7 +22,7 @@ type ReplayRecord = {
 };
 
 /** The session an event belongs to, when it names one. */
-export function eventSessionID(event: OCEvent | TodoUpdated): string | undefined {
+function eventSessionID(event: OCEvent | TodoUpdated): string | undefined {
   const properties = event.properties as Record<string, unknown>;
   const nested = (key: "info" | "part"): unknown => {
     const value = properties[key];

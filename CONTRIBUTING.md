@@ -21,6 +21,7 @@ Bun 1.4+ to run the CLI (`npm run dev`, `dist/cli.js`). You don't need `pi` or `
 | `npm run build` | compile `src/` to `dist/` with `tsc`, then bundle the OpenChamber extension (`extensions/antechamber/`) with esbuild |
 | `npm run dev` | run the CLI from source with Bun, no build step |
 | `npm run typecheck` | `tsc -p tsconfig.check.json && tsc -p extensions/antechamber/tsconfig.json` |
+| `npm run knip` | fail on unused files, exports, types and dependencies (config: `knip.json`) |
 | `npm test` | run the unit/integration test suite (`test/*.test.ts` and the extension's `extensions/*/test/**/*.test.ts`) |
 | `npm run smoke` | end-to-end smoke test against a real `pi` process |
 | `npm run omo-smoke` | end-to-end smoke test against a real `omo` process |
@@ -92,6 +93,7 @@ see [RELEASE.md](RELEASE.md). Do not bump versions or push tags yourself. Add us
 ## Pull request checklist
 
 - [ ] `npm run typecheck` passes
+- [ ] `npm run knip` passes (an export used only in its own module is not exported)
 - [ ] `npm test` passes
 - [ ] `npm run build` succeeds
 - [ ] New behavior has a unit test that fails without the change; no fixed sleeps were added

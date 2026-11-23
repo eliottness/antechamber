@@ -1,5 +1,6 @@
 import { ocIdFor } from "./session-store.js";
 import type { OCToolPart } from "./types.js";
+import { isRecord } from "./guards.js";
 
 /** OmO arguments translated to OpenChamber's renderer contracts. */
 interface MappedTool {
@@ -17,10 +18,6 @@ export interface ToolResult {
 }
 
 type ToolMapper = (args: Record<string, unknown>, result?: ToolResult) => MappedTool;
-
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function generic(tool: string, input: Record<string, unknown>): MappedTool {
   const hint = [input.summary, input.description, input.query, input.url, input.path, input.command].find(
@@ -63,7 +60,9 @@ export const toolMappers: Record<string, ToolMapper> = {
       typeof args.path !== "string" ||
       !Array.isArray(args.edits) ||
       args.edits.length === 0 ||
-      !args.edits.every((edit) => record(edit) && typeof edit.oldText === "string" && typeof edit.newText === "string")
+      !args.edits.every(
+        (edit) => isRecord(edit) && typeof edit.oldText === "string" && typeof edit.newText === "string",
+      )
     ) {
       return generic("edit", args);
     }
@@ -105,7 +104,7 @@ export const toolMappers: Record<string, ToolMapper> = {
   kill_bash: (args) => terminalTool("kill_bash", args),
   bash_resize: (args) => terminalTool("bash_resize", args),
   ask_user_question: (args) => {
-    if (!Array.isArray(args.questions) || !args.questions.every(record)) return generic("ask_user_question", args);
+    if (!Array.isArray(args.questions) || !args.questions.every(isRecord)) return generic("ask_user_question", args);
     const questions = args.questions.map((question) => ({
       question: question.question,
       header: question.header,
@@ -129,14 +128,14 @@ export const toolMappers: Record<string, ToolMapper> = {
  * details.isError instead (senpi-codemode src/tool/render-result.ts:42).
  */
 export function toolFailed(result: ToolResult): boolean {
-  return result.isError === true || (record(result.details) && result.details.isError === true);
+  return result.isError === true || (isRecord(result.details) && result.details.isError === true);
 }
 
 /** Text blocks only; images and structured details are not tool output text. */
 export function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
-    .filter(record)
+    .filter(isRecord)
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("");
@@ -145,7 +144,7 @@ export function resultText(content: unknown): string {
 /** Only edit cards need patch metadata; write cards already preview input.content. */
 export function resultMetadata(tool: string, result: ToolResult): Record<string, unknown> {
   if (tool !== "edit" && tool !== "multiedit") return {};
-  const details = record(result.details) ? result.details : {};
+  const details = isRecord(result.details) ? result.details : {};
   return {
     ...(typeof details.patch === "string" ? { patch: details.patch } : {}),
     ...(typeof details.diff === "string" ? { diff: details.diff } : {}),
@@ -153,7 +152,7 @@ export function resultMetadata(tool: string, result: ToolResult): Record<string,
 }
 
 export function mapTool(omoName: string, args: unknown, result?: ToolResult): MappedTool {
-  const input = record(args) ? args : {};
+  const input = isRecord(args) ? args : {};
   const handler = Object.hasOwn(toolMappers, omoName) ? toolMappers[omoName] : undefined;
   const mapped = handler !== undefined ? handler(input, result) : generic(omoName, input);
   if (result === undefined) return mapped;
@@ -169,7 +168,7 @@ export function mapTool(omoName: string, args: unknown, result?: ToolResult): Ma
  * What an eval cell started that has a session of its own. Its other calls are not shown:
  * the cell's output already holds what it printed, and OmO records only a one-line preview.
  */
-export interface NestedSessions {
+interface NestedSessions {
   /** The monitor child session for a recorded `monitor` call. */
   monitor?: (args: Record<string, unknown>) => string | undefined;
   /** The OpenCode shell id of a monitor child session's watch while it runs (omo-shells.ts). */
@@ -235,14 +234,14 @@ function nestedSubagent(
  * Monitors and `agent()` calls (recorded as `__agent__`) become subagent cards; everything else is skipped.
  */
 export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: NestedSessions = {}): OCToolPart[] {
-  if (!record(details) || !Array.isArray(details.toolCalls)) return [];
+  if (!isRecord(details) || !Array.isArray(details.toolCalls)) return [];
   const parts: OCToolPart[] = [];
   const start = parent.state.status === "pending" ? 0 : parent.state.time.start;
   const claimed = new Set<string>();
   details.toolCalls.forEach((entry: unknown, index) => {
     let failure: string | undefined;
     if (
-      !record(entry) ||
+      !isRecord(entry) ||
       (entry.name !== "monitor" && entry.name !== "__agent__" && entry.name !== "task") ||
       typeof entry.ok !== "boolean" ||
       typeof entry.durationMs !== "number" ||
@@ -250,7 +249,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
       entry.durationMs < 0
     )
       return;
-    const args = record(entry.args) ? entry.args : {};
+    const args = isRecord(entry.args) ? entry.args : {};
     let mapped: MappedTool;
     if (entry.name === "monitor") {
       const sessionID = entry.ok ? sessions.monitor?.(args) : undefined;
@@ -343,7 +342,7 @@ export function nestedToolParts(parent: OCToolPart, details: unknown, sessions: 
  * Never execute provider content; invalid or incomplete literals are skipped.
  */
 function providerRaw(value: unknown): Record<string, unknown> | undefined {
-  if (record(value)) return value;
+  if (isRecord(value)) return value;
   // Provider raw strings are display data, not an unbounded parser workload.
   if (typeof value !== "string" || value.length > 1024 * 1024) return undefined;
   let parsed: unknown;
@@ -428,7 +427,7 @@ function providerRaw(value: unknown): Record<string, unknown> | undefined {
       return undefined;
     }
   }
-  return record(parsed) ? parsed : undefined;
+  return isRecord(parsed) ? parsed : undefined;
 }
 
 /** One card at each call's original block index; result blocks are not cards.
@@ -443,7 +442,7 @@ export function providerToolParts(
   const parts = new Map<number, OCToolPart>();
   if (!Array.isArray(content)) return parts;
   const blocks = content.map((block: unknown) =>
-    record(block) && block.type === "providerNative"
+    isRecord(block) && block.type === "providerNative"
       ? { subtype: block.subtype, raw: providerRaw(block.raw) }
       : undefined,
   );
@@ -459,13 +458,13 @@ export function providerToolParts(
     switch (block?.subtype) {
       case "server_tool_use": {
         if (typeof raw.name !== "string") return;
-        input = record(raw.input) ? raw.input : {};
+        input = isRecord(raw.input) ? raw.input : {};
         title = typeof input.query === "string" ? input.query : raw.name;
         tool = raw.name === "web_search" ? "websearch" : raw.name;
         break;
       }
       case "web_search_call": {
-        const action = record(raw.action) ? raw.action : {};
+        const action = isRecord(raw.action) ? raw.action : {};
         const queries = Array.isArray(action.queries)
           ? action.queries.filter((q): q is string => typeof q === "string")
           : [];
@@ -516,7 +515,7 @@ export function applyProviderToolResults(
   let byCallID: Map<string, OCToolPart> | undefined;
   for (const block of content) {
     if (
-      !record(block) ||
+      !isRecord(block) ||
       block.type !== "providerNative" ||
       (block.subtype !== "web_search_tool_result" && block.subtype !== "tool_search_tool_result")
     )
@@ -531,16 +530,16 @@ export function applyProviderToolResults(
     let error: string | undefined;
     if (Array.isArray(result)) {
       output = result
-        .filter(record)
+        .filter(isRecord)
         .filter((item) => typeof item.title === "string" && typeof item.url === "string")
         .map((item) => `${item.title} - ${item.url}`)
         .join("\n");
-    } else if (record(result)) {
+    } else if (isRecord(result)) {
       if (typeof result.type === "string" && result.type.endsWith("_error")) {
         error = typeof result.error_code === "string" ? result.error_code : "Server tool failed";
       } else if (Array.isArray(result.tool_references)) {
         output = result.tool_references
-          .filter(record)
+          .filter(isRecord)
           .map((item) => item.tool_name)
           .filter((name): name is string => typeof name === "string")
           .join("\n");

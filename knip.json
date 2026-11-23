@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/commands/*.ts",
+    "test/**/*.ts",
+    "contrib/**/*.ts",
+    "scripts/**/*.ts",
+    "extensions/antechamber/src/**/*.ts",
+    "extensions/antechamber/scripts/*.ts",
+    "extensions/antechamber/test/**/*.ts"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignoreDependencies": ["omo-ai"]
+}

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { defaultStateDir, envSetting } from "./config.js";
 import { RequestBodyError } from "./http.js";
 import type { OCPromptPart } from "./types.js";
+import { isRecord } from "./guards.js";
 
 export function isPromptPart(value: unknown): value is OCPromptPart {
   if (typeof value !== "object" || value === null || !("type" in value)) return false;
@@ -51,21 +52,13 @@ export function parsePromptParts(value: unknown): OCPromptPart[] {
   return value;
 }
 
-function plainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** OpenChamber 2.x attachments (`files: [{uri, name?}]`, `agents: [{name, mention?}]`) as prompt parts. */
 export function v2PromptParts(text: string, files: unknown, agents: unknown): OCPromptPart[] {
   const parts: OCPromptPart[] = text === "" ? [] : [{ type: "text", text }];
   if (files !== undefined) {
     if (!Array.isArray(files)) throw new RequestBodyError(400, "files must be an array");
     for (const file of files) {
-      if (
-        !plainRecord(file) ||
-        typeof file.uri !== "string" ||
-        (file.name !== undefined && typeof file.name !== "string")
-      )
+      if (!isRecord(file) || typeof file.uri !== "string" || (file.name !== undefined && typeof file.name !== "string"))
         throw new RequestBodyError(400, "files must contain {uri, name?} attachments");
       // v2 carries no MIME type; an inline data URI still names its own.
       const mime = /^data:([^;,]+)/.exec(file.uri)?.[1] ?? "application/octet-stream";
@@ -80,12 +73,12 @@ export function v2PromptParts(text: string, files: unknown, agents: unknown): OC
   if (agents !== undefined) {
     if (!Array.isArray(agents)) throw new RequestBodyError(400, "agents must be an array");
     for (const agent of agents) {
-      const mention = plainRecord(agent) ? agent.mention : undefined;
+      const mention = isRecord(agent) ? agent.mention : undefined;
       if (
-        !plainRecord(agent) ||
+        !isRecord(agent) ||
         typeof agent.name !== "string" ||
         (mention !== undefined &&
-          (!plainRecord(mention) ||
+          (!isRecord(mention) ||
             typeof mention.start !== "number" ||
             typeof mention.end !== "number" ||
             typeof mention.text !== "string"))
@@ -94,7 +87,7 @@ export function v2PromptParts(text: string, files: unknown, agents: unknown): OC
       parts.push({
         type: "agent",
         name: agent.name,
-        ...(plainRecord(mention) &&
+        ...(isRecord(mention) &&
         typeof mention.text === "string" &&
         typeof mention.start === "number" &&
         typeof mention.end === "number"
@@ -139,7 +132,7 @@ export const CONTEXT_MESSAGE_TYPE = "antechamber.context";
 
 /** The OpenChamber message id of a native context entry, if the entry is one. */
 export function contextMessageID(entry: { type?: string; customType?: string; details?: unknown }): string | undefined {
-  if (entry.type !== "custom_message" || entry.customType !== CONTEXT_MESSAGE_TYPE || !plainRecord(entry.details))
+  if (entry.type !== "custom_message" || entry.customType !== CONTEXT_MESSAGE_TYPE || !isRecord(entry.details))
     return undefined;
   return typeof entry.details.messageID === "string" ? entry.details.messageID : undefined;
 }

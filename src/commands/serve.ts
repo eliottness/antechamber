@@ -5,6 +5,7 @@ import { recordRunningServer } from "../running-servers.js";
 import { selfUpdate } from "../self-update.js";
 import { AdapterServer, isLoopbackHost, serverPassword } from "../server.js";
 import { ADAPTER_VERSION } from "../version.js";
+import { errorMessage } from "../guards.js";
 
 interface ServeOptions {
   readonly port: number;
@@ -57,9 +58,7 @@ export async function serve(options: ServeOptions): Promise<void> {
     );
   } catch (error) {
     // Doctor and the OmO Work extension read the record; serving must not depend on it.
-    console.error(
-      `antechamber: cannot record the running version: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    console.error(`antechamber: cannot record the running version: ${errorMessage(error)}`);
   }
   if (compatible) console.log(`opencode server listening on ${server.url}`);
   else {
@@ -76,6 +75,6 @@ async function autoUpdate(): Promise<void> {
     if (result.updated)
       console.error(`antechamber: auto-update installed ${result.to} (running ${result.from}); it starts next time`);
   } catch (error) {
-    console.error(`antechamber: auto-update skipped: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`antechamber: auto-update skipped: ${errorMessage(error)}`);
   }
 }

@@ -48,7 +48,7 @@ export function backgroundResult(customType: unknown, content: unknown): Backgro
 }
 
 /** Retain only the command needed to label a later terminal completion. */
-export function backgroundCommands(result: ToolResult): { backgroundCommands?: Record<string, string> } {
+function backgroundCommands(result: ToolResult): { backgroundCommands?: Record<string, string> } {
   const details = result.details;
   if (details === null || typeof details !== "object" || !("toolCalls" in details)) return {};
   if (!Array.isArray(details.toolCalls)) return {};
@@ -68,7 +68,7 @@ export function backgroundCommands(result: ToolResult): { backgroundCommands?: R
 const LAUNCHED =
   /\b(?:running in background|auto-detached to background) with ID:\s*(bash_\d+)\b|Use bash_output\(\{ bash_id: "(bash_\d+)" \}\) only to peek/g;
 
-export function launchedShells(text: string): string[] {
+function launchedShells(text: string): string[] {
   return [...new Set([...text.matchAll(LAUNCHED)].map((match) => match[1] ?? match[2] ?? "").filter(Boolean))];
 }
 
@@ -76,7 +76,7 @@ export function launchedShells(text: string): string[] {
  * What a tool result leaves running: the background shells it started, and the eval cell
  * itself when it detached. The card keeps running until each one reports finishing.
  */
-export function backgroundWaits(callID: string, text: string, commands: Record<string, unknown> = {}): string[] {
+function backgroundWaits(callID: string, text: string, commands: Record<string, unknown> = {}): string[] {
   const waits = new Set<string>();
   for (const id of launchedShells(text)) waits.add(id);
   for (const id of Object.keys(commands)) waits.add(id);
@@ -105,7 +105,7 @@ function backgroundShellID(callID: string, waits: string[], agentStartedAtMs: nu
 }
 
 /** Keep a finished card running, with its result already shown, until `waits` report finishing. */
-export function holdForBackground(part: OCToolPart, waits: string[], final: Final, agentStartedAtMs?: number): void {
+function holdForBackground(part: OCToolPart, waits: string[], final: Final, agentStartedAtMs?: number): void {
   const state = part.state;
   if (state.status === "pending" || waits.length === 0) return;
   const title = state.status === "running" || state.status === "completed" ? state.title : undefined;

@@ -68,6 +68,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      - run: npm run knip
       - run: npm test
       - run: npm run build
       # OpenChamber installs https://github.com/eliottness/antechamber by cloning it, and never builds.

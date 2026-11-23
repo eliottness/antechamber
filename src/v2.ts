@@ -54,14 +54,14 @@ function zeroTokens(): V2Tokens {
 // v2 HTTP resource shapes
 // ---------------------------------------------------------------------
 
-export interface V2Tokens {
+interface V2Tokens {
   input: number;
   output: number;
   reasoning: number;
   cache: { read: number; write: number };
 }
 
-export interface V2Model {
+interface V2Model {
   id: string;
   modelID: string;
   providerID: string;
@@ -263,7 +263,7 @@ function toV2UserMessage(info: OCMessageWithParts): V2Message {
  * v2 assistant message: parts become `content` blocks. The UI rebuilds
  * text/reasoning part ids from per-type indices into this array.
  */
-export function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
+function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
   const i = info.info as OCAssistantMessage;
   const model = { id: i.modelID, providerID: i.providerID, variant: "default" };
   const content: Array<Record<string, unknown>> = [];

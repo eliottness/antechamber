@@ -12,6 +12,7 @@ import type {
   OCTextPart,
   OCUserMessage,
 } from "./types.js";
+import { errorMessage, isRecord } from "./guards.js";
 
 type CommandDescriptor = { name: string; description: string; template: "" };
 type SlashCommandInput = {
@@ -66,10 +67,6 @@ export const unsupportedShare = {
   name: "UnsupportedError",
   data: { message: "Sharing is not available with OmO" },
 } as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function id(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
@@ -493,7 +490,7 @@ export async function runShellCommand(context: ShellCommandContext): Promise<She
       emitShellMessage(context, message);
       return { kind: "completed", message };
     }
-    failShellMessage(message, command, error instanceof Error ? error.message : String(error));
+    failShellMessage(message, command, errorMessage(error));
     emitShellMessage(context, message);
     throw error;
   } finally {

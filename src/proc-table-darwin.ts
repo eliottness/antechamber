@@ -59,7 +59,7 @@ function alive(entry: PsEntry): boolean {
 }
 
 /** One `ps -A` row with its state and argv, for callers that match processes by command line. */
-export interface PsProcess extends ProcessIdentity {
+interface PsProcess extends ProcessIdentity {
   readonly state: string;
   readonly args: string;
 }

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { devNull } from "node:os";
 import { promisify } from "node:util";
+import { errorMessage } from "./guards.js";
 
 const exec = promisify(execFile);
 const GIT_EXEC_TIMEOUT_MS = 5_000;
@@ -218,6 +219,6 @@ export async function vcsRead(directory: string, operation: string, url: URL): P
     return [...statuses.values()].sort((left, right) => left.file.localeCompare(right.file));
   } catch (error) {
     if (error instanceof VcsError) throw error;
-    throw new VcsError(`Git VCS operation failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new VcsError(`Git VCS operation failed: ${errorMessage(error)}`);
   }
 }

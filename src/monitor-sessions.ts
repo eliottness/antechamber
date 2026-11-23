@@ -7,6 +7,7 @@ import { getAgentName } from "./agent-name.js";
 import { ocIdFor } from "./session-store.js";
 import type { ManagedSession } from "./sessions.js";
 import type { OCEvent, OCMessageWithParts, OCToolPart } from "./types.js";
+import { isRecord } from "./guards.js";
 
 /** Names OmO's terminal extension passes to `pi.rpc.emit` (core/extensions/builtin/monitor-state-event.js). */
 export const MONITOR_STATE_EVENT = "terminal_monitor_state";
@@ -51,10 +52,6 @@ interface Watch {
   lineCount: number;
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function finite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -63,8 +60,8 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-export function parseMonitor(value: unknown): MonitorSnapshot | undefined {
-  if (!record(value) || typeof value.id !== "string" || value.id === "") return undefined;
+function parseMonitor(value: unknown): MonitorSnapshot | undefined {
+  if (!isRecord(value) || typeof value.id !== "string" || value.id === "") return undefined;
   const startedAtMs = finite(value.startedAtMs);
   if (startedAtMs === null) return undefined;
   return {
@@ -102,7 +99,7 @@ function iso(ms: number | null): string | undefined {
   return ms === null ? undefined : new Date(ms).toISOString();
 }
 
-export function monitorSummary(monitor: MonitorSnapshot, ending?: MonitorEnding): string {
+function monitorSummary(monitor: MonitorSnapshot, ending?: MonitorEnding): string {
   const deadline = monitor.persistent ? "none (persistent)" : iso(monitor.deadlineMs);
   return [
     `Status: ${ending ? endingLabel(ending) : monitor.paused ? "paused" : "watching"}`,
@@ -170,14 +167,14 @@ export class MonitorSessions {
   }
 
   observe(parent: ManagedSession, ev: Record<string, unknown>): void {
-    if (!record(ev.data)) return;
+    if (!isRecord(ev.data)) return;
     if (ev.name === MONITOR_STATE_EVENT && Array.isArray(ev.data.monitors)) this.applyState(parent, ev.data.monitors);
     else if (ev.name === MONITOR_ENDED_EVENT) this.applyEnded(parent, ev.data);
   }
 
   /** A hidden `senpi-monitor:notification` custom message: append its lines to each watch it names. */
   notify(parent: ManagedSession, message: Record<string, unknown>): void {
-    if (typeof message.content !== "string" || !record(message.details) || !Array.isArray(message.details.monitors))
+    if (typeof message.content !== "string" || !isRecord(message.details) || !Array.isArray(message.details.monitors))
       return;
     const lines = message.content
       .replaceAll(/<\/?system-reminder>/g, "")
@@ -186,7 +183,7 @@ export class MonitorSessions {
       .filter((line) => line.trim() !== "");
     if (lines.length === 0) return;
     for (const entry of message.details.monitors) {
-      if (!record(entry) || typeof entry.id !== "string") continue;
+      if (!isRecord(entry) || typeof entry.id !== "string") continue;
       const watch = this.watches.get(this.childID(parent, entry.id));
       if (!watch) continue;
       watch.lines = [...watch.lines, ...lines].slice(-MAX_EVENT_LINES);
