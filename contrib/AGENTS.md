@@ -38,7 +38,7 @@ contrib/
 ## REPLAY (`replay/transcripts.ts`)
 - It reads the registry read-only (`sessions.sqlite`, else a pre-2.0 `sessions.json`), then copies the state dir, a `sessions.json` of the selected sessions (which the adapter under test imports) and each selected session's OmO JSONL into a temp sandbox, and starts OpenChamber with a private HOME and `OPENCODE_BINARY` set to a launcher for the build under test (`--antechamber`, default `dist/cli.js`).
   The agent binary is `/bin/false`, so nothing is revived and the real store is never written.
-- PASS means a `[data-turn-id]` section rendered (OpenChamber 2.x renders one per user-anchored turn). SKIP means the history has no user message. FAIL writes a screenshot and exits 1.
+- PASS means a turn rendered: a `[data-turn-id]` section, or a `[data-turn-row]` row since OpenChamber 2.7 (one per user-anchored turn). SKIP means the history has no user message. FAIL writes a screenshot and exits 1.
 - Roots only by default; `--children` adds subagent sessions and `--archived` adds archived ones. Point `--antechamber` at an installed `dist/cli.js` to get the "before" run.
 - The data is personal. Reports and screenshots stay on the machine; never commit them or paste transcript text into a PR.
 - It drives the installed OpenChamber 2.x `openchamber` (2.3.2 or newer). Use `--openchamber` to target another build.

@@ -9,7 +9,7 @@
  * so nothing is revived and nothing outside the sandbox is written.
  *
  *   npm run build && npm run replay -- [--antechamber dist/cli.js] [--session ses_x]... [--limit N]
- *     [--viewport mobile|desktop|both] [--children] [--archived] [--concurrency 4] [--keep]
+ *     [--viewport mobile|desktop|both] [--children] [--archived] [--keep]
  *
  * Exit code 1 when any session renders without a turn; failure screenshots go to --out.
  */
@@ -44,7 +44,6 @@ const { values } = parseArgs({
     viewport: { type: "string", default: "both" },
     children: { type: "boolean", default: false },
     archived: { type: "boolean", default: false },
-    concurrency: { type: "string", default: "4" },
     timeout: { type: "string", default: "20000" },
     out: { type: "string" },
     keep: { type: "boolean", default: false },
@@ -70,8 +69,11 @@ const VIEWPORTS: Viewport[] = [
   { name: "mobile", width: 390, height: 844 },
   { name: "desktop", width: 1280, height: 900 },
 ];
-/** OpenChamber renders each turn (a user message and its replies) as `section[data-turn-id]`. */
-const TURN_SELECTOR = "[data-turn-id]";
+/**
+ * OpenChamber renders each turn (a user message and its replies) as `section[data-turn-id]`, or since 2.7 as a
+ * `div[data-turn-row]` `TurnRow`; its own turn lookups query both.
+ */
+const TURN_SELECTOR = "[data-turn-id], [data-turn-row]";
 const STARTUP_TIMEOUT_MS = 90_000;
 
 function which(name: string): string | undefined {
@@ -365,7 +367,9 @@ async function main(): Promise<number> {
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.max(1, Number(values.concurrency)) }, worker));
+    // One job at a time: OpenChamber keeps the open project (`lastDirectory`, `activeProjectId`) in its server-side
+    // settings, so a parallel job's page moved another's to a different session or to an empty new one.
+    await worker();
 
     results.sort((a, b) => a.status.localeCompare(b.status) || a.session.localeCompare(b.session));
     for (const r of results)
