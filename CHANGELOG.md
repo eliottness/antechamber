@@ -7,6 +7,12 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- An OmO edit that makes several replacements in one call now shows in OpenChamber 2.x as an edit card with its
+  diff, like a single replacement, instead of a generic card listing the `edits` array as JSON. OpenCode 2.x has no
+  `multiedit` tool, so OpenChamber did not recognize the name.
+
 ## [2.0.16] - 2026-11-23
 
 ### Changed

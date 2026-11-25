@@ -91,6 +91,56 @@ test("single and multiple edits carry renderer strings and file metadata", () =>
   });
 });
 
+test("a multi-replacement edit reaches v2 as an edit card with its combined patch, live and in history", () => {
+  // OpenCode 2.x has no `multiedit`; OpenChamber 2.x draws a tool it does not know as its input JSON.
+  const fixture = JSON.parse(readFileSync(join(fixtures, "edit.json"), "utf8")) as {
+    samples: Array<{ arguments: { path: string; edits: unknown[] }; content: unknown; details: { patch: string } }>;
+  };
+  const sample = fixture.samples.find((candidate) => candidate.arguments.edits.length > 1)!;
+  const s = session("/nonexistent");
+  const translator = new V2EventTranslator();
+  const frames: { type: string; data: Record<string, unknown> }[] = [];
+  const manager = new SessionManager((directory, event) => {
+    if (event.type !== "todo.updated") frames.push(...translator.translate(directory, event));
+  });
+  const call = { id: "edit-call", name: "edit", arguments: sample.arguments };
+  manager["onPiEvent"](s, { type: "message_start", message: { role: "assistant" } });
+  manager["onPiEvent"](s, {
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: call },
+  });
+  manager["onPiEvent"](s, {
+    type: "tool_execution_start",
+    toolCallId: call.id,
+    toolName: "edit",
+    args: call.arguments,
+  });
+  const result = { content: sample.content, details: sample.details, isError: false };
+  manager["onPiEvent"](s, {
+    type: "tool_execution_end",
+    toolCallId: call.id,
+    toolName: "edit",
+    result,
+    isError: false,
+  });
+
+  const tool = frames.filter((frame) => frame.type.startsWith("session.tool.") && frame.data.id === call.id);
+  const names = tool.filter((frame) => frame.type === "session.tool.input.started").map((frame) => frame.data.name);
+  assert.ok(names.length > 0);
+  assert.deepEqual(new Set(names), new Set(["edit"]));
+  const success = tool.find((frame) => frame.type === "session.tool.success");
+  assert.ok(success !== undefined);
+  assert.equal((success.data.metadata as Record<string, unknown>).patch, sample.details.patch);
+
+  const card = s.messages?.[0];
+  assert.ok(card !== undefined);
+  const content = toV2Message(card).content?.find((part) => part.type === "tool");
+  assert.equal(content?.name, "edit");
+  const state = content?.state as { input: Record<string, unknown>; metadata: Record<string, unknown> };
+  assert.equal(state.input.filePath, sample.arguments.path);
+  assert.equal(state.metadata.patch, sample.details.patch);
+});
+
 test("write completion emits content-only metadata even when the result contains diffs", () => {
   const mapped = mapTool(
     "write",

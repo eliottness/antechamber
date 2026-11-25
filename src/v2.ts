@@ -300,11 +300,14 @@ function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
 
 /**
  * OpenCode 2.x renamed `bash` to `shell`; OpenChamber 2.x draws a shell card (command, live output) only for `shell`.
+ * It also dropped `multiedit`: OpenChamber 2.x draws an unknown tool as its input, so the `edits` array showed as
+ * JSON. As `edit`, the card hides the input and draws the call's combined `metadata.patch` as a diff.
  * A background `task` is OpenCode's background `subagent` call, the only call OpenChamber 2.x follows past its step.
  */
 function v2ToolName(part: Extract<OCPart, { type: "tool" }>): string {
   if (part.tool === "task" && part.state.status !== "pending" && part.state.input.background === true)
     return "subagent";
+  if (part.tool === "multiedit") return "edit";
   return part.tool === "bash" ? "shell" : part.tool;
 }
 
