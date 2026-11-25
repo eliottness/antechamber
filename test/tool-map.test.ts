@@ -96,7 +96,8 @@ test("a multi-replacement edit reaches v2 as an edit card with its combined patc
   const fixture = JSON.parse(readFileSync(join(fixtures, "edit.json"), "utf8")) as {
     samples: Array<{ arguments: { path: string; edits: unknown[] }; content: unknown; details: { patch: string } }>;
   };
-  const sample = fixture.samples.find((candidate) => candidate.arguments.edits.length > 1)!;
+  const sample = fixture.samples.find((candidate) => candidate.arguments.edits.length > 1);
+  assert.ok(sample !== undefined && typeof sample.details.patch === "string" && sample.details.patch !== "");
   const s = session("/nonexistent");
   const translator = new V2EventTranslator();
   const frames: { type: string; data: Record<string, unknown> }[] = [];
@@ -130,7 +131,10 @@ test("a multi-replacement edit reaches v2 as an edit card with its combined patc
   assert.deepEqual(new Set(names), new Set(["edit"]));
   const success = tool.find((frame) => frame.type === "session.tool.success");
   assert.ok(success !== undefined);
-  assert.equal((success.data.metadata as Record<string, unknown>).patch, sample.details.patch);
+  const live = success.data.metadata as { patch?: unknown; files?: Array<Record<string, unknown>> };
+  assert.equal(live.patch, sample.details.patch);
+  assert.equal(live.files?.[0]?.file, sample.arguments.path);
+  assert.equal(live.files?.[0]?.patch, sample.details.patch);
 
   const card = s.messages?.[0];
   assert.ok(card !== undefined);
@@ -138,7 +142,36 @@ test("a multi-replacement edit reaches v2 as an edit card with its combined patc
   assert.equal(content?.name, "edit");
   const state = content?.state as { input: Record<string, unknown>; metadata: Record<string, unknown> };
   assert.equal(state.input.filePath, sample.arguments.path);
-  assert.equal(state.metadata.patch, sample.details.patch);
+  assert.deepEqual(state.metadata.files, live.files);
+});
+
+test("a v2 edit card names its file in metadata.files, with the patch's line counts", () => {
+  // OpenChamber 2.x would otherwise take the file from the patch header, which drops a leading `a/`.
+  const patch = "--- a/report.ts\n+++ a/report.ts\n@@ -1,3 +1,3 @@\n-old\n+new\n keep\n@@ -9,2 +9,1 @@\n---x\n-gone\n";
+  const s = session("/nonexistent");
+  const manager = new SessionManager(() => {});
+  const edits = [
+    { oldText: "old", newText: "new" },
+    { oldText: "--x\ngone", newText: "" },
+  ];
+  const call = { id: "edit-call", name: "edit", arguments: { path: "a/report.ts", edits } };
+  manager["onPiEvent"](s, { type: "message_start", message: { role: "assistant" } });
+  manager["onPiEvent"](s, {
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: call },
+  });
+  const result = { content: [{ type: "text", text: "ok" }], details: { patch }, isError: false };
+  manager["onPiEvent"](s, {
+    type: "tool_execution_end",
+    toolCallId: call.id,
+    toolName: "edit",
+    result,
+    isError: false,
+  });
+  const content = toV2Message(s.messages![0]!).content?.find((part) => part.type === "tool");
+  assert.ok(content !== undefined);
+  const metadata = (content.state as { metadata: Record<string, unknown> }).metadata;
+  assert.deepEqual(metadata.files, [{ file: "a/report.ts", patch, additions: 1, deletions: 3, status: "modified" }]);
 });
 
 test("write completion emits content-only metadata even when the result contains diffs", () => {

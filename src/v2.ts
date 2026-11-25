@@ -25,6 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
 import { toV2Permission } from "./approvals.js";
+import { isRecord } from "./guards.js";
 import { questionFormID, toQuestionForm } from "./question-forms.js";
 import { v2PromptAttachments } from "./prompt-parts.js";
 import type {
@@ -312,6 +313,27 @@ function v2ToolName(part: Extract<OCPart, { type: "tool" }>): string {
 }
 
 /**
+ * OpenCode 2.x reports an edit's diff per file in `metadata.files` (FileDiff.Info). From the top-level patch alone,
+ * OpenChamber 2.x's Open file and Open diff buttons guess the file from the patch header, which drops a leading `a/`
+ * or `b/`, and target a file named "Diff" for a patch too long to preview. Given a `files` entry it takes the card's
+ * +/- counts from it, so they are counted here.
+ */
+function completedMetadata(name: string, metadata: Record<string, unknown> = {}): Record<string, unknown> {
+  const file = isRecord(metadata.filediff) ? metadata.filediff.file : undefined;
+  const patch = metadata.patch;
+  if (name !== "edit" || typeof file !== "string" || typeof patch !== "string") return metadata;
+  let additions = 0;
+  let deletions = 0;
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (inHunk && line.startsWith("+")) additions++;
+    else if (inHunk && line.startsWith("-")) deletions++;
+  }
+  return { ...metadata, files: [{ file, patch, additions, deletions, status: "modified" }] };
+}
+
+/**
  * A background task whose call returned while the child still runs. pi completes the step before the child ends, and
  * OpenChamber 2.x marks a running tool under a completed message "Interrupted". OpenCode 2.x settles such a call at
  * once with `{status: "running", sessionID}` in its metadata, and OpenChamber 2.x draws the row from the child
@@ -424,7 +446,7 @@ function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, un
       content: st.output !== "" ? [{ type: "text", text: st.output }] : [],
       output: st.output,
       title: st.title,
-      metadata: backgroundShell(part)?.metadata ?? st.metadata ?? {},
+      metadata: backgroundShell(part)?.metadata ?? completedMetadata(name, st.metadata),
     };
   } else {
     base.state = {
@@ -972,7 +994,7 @@ export class V2EventTranslator {
         this.frame(directory, "session.tool.success", {
           ...base,
           content: state.output !== "" ? [{ type: "text", text: state.output }] : [],
-          metadata: state.metadata ?? {},
+          metadata: completedMetadata(name, state.metadata),
           executed: false,
         }),
       );

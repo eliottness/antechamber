@@ -12,6 +12,9 @@ and this project uses [Semantic Versioning](https://semver.org/).
 - An OmO edit that makes several replacements in one call now shows in OpenChamber 2.x as an edit card with its
   diff, like a single replacement, instead of a generic card listing the `edits` array as JSON. OpenCode 2.x has no
   `multiedit` tool, so OpenChamber did not recognize the name.
+- The Open file and Open diff buttons of an expanded edit card in OpenChamber 2.x open the edited file. They guessed it
+  from the diff's header, which drops a leading `a/` or `b/`, and opened a file named "Diff" for a diff too long to
+  preview.
 
 ## [2.0.16] - 2026-11-23
 
