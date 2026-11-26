@@ -350,7 +350,10 @@ async function main(): Promise<number> {
             sessionId,
           );
           const turns = await until("a rendered turn", timeoutMs, async () => {
-            const count = await evaluate<number>(`document.querySelectorAll(${JSON.stringify(TURN_SELECTOR)}).length`);
+            // A 2.7 turn can span several rows, all carrying its turn ID.
+            const count = await evaluate<number>(
+              `new Set([...document.querySelectorAll(${JSON.stringify(TURN_SELECTOR)})].map((e) => e.dataset.turnId ?? e.dataset.turnRow)).size`,
+            );
             return count > 0 ? count : undefined;
           }).catch(() => 0);
           if (turns > 0) {
