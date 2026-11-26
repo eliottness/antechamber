@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.17] - 2026-11-26
+
 ### Fixed
 
 - An OmO edit that makes several replacements in one call now shows in OpenChamber 2.x as an edit card with its
