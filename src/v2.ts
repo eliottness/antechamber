@@ -316,11 +316,12 @@ function v2ToolName(part: Extract<OCPart, { type: "tool" }>): string {
  * OpenCode 2.x reports an edit's diff per file in `metadata.files` (FileDiff.Info). From the top-level patch alone,
  * OpenChamber 2.x's Open file and Open diff buttons guess the file from the patch header, which drops a leading `a/`
  * or `b/`, and target a file named "Diff" for a patch too long to preview. Given a `files` entry it takes the card's
- * +/- counts from it, so they are counted here.
+ * +/- counts from it, so they are counted here. The patch moves into the entry rather than being sent twice: every
+ * top-level reader falls back to it, and one SSE frame carries the whole call (`MAX_SSE_PENDING_BYTES`).
  */
 function completedMetadata(name: string, metadata: Record<string, unknown> = {}): Record<string, unknown> {
-  const file = isRecord(metadata.filediff) ? metadata.filediff.file : undefined;
-  const patch = metadata.patch;
+  const { patch, ...rest } = metadata;
+  const file = isRecord(rest.filediff) ? rest.filediff.file : undefined;
   if (name !== "edit" || typeof file !== "string" || typeof patch !== "string") return metadata;
   let additions = 0;
   let deletions = 0;
@@ -330,7 +331,7 @@ function completedMetadata(name: string, metadata: Record<string, unknown> = {})
     else if (inHunk && line.startsWith("+")) additions++;
     else if (inHunk && line.startsWith("-")) deletions++;
   }
-  return { ...metadata, files: [{ file, patch, additions, deletions, status: "modified" }] };
+  return { ...rest, files: [{ file, patch, additions, deletions, status: "modified" }] };
 }
 
 /**

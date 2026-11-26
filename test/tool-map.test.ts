@@ -132,7 +132,8 @@ test("a multi-replacement edit reaches v2 as an edit card with its combined patc
   const success = tool.find((frame) => frame.type === "session.tool.success");
   assert.ok(success !== undefined);
   const live = success.data.metadata as { patch?: unknown; files?: Array<Record<string, unknown>> };
-  assert.equal(live.patch, sample.details.patch);
+  // Sent once, in the entry: a second copy can push a large file's frame past the SSE buffer.
+  assert.equal(live.patch, undefined);
   assert.equal(live.files?.[0]?.file, sample.arguments.path);
   assert.equal(live.files?.[0]?.patch, sample.details.patch);
 
@@ -147,7 +148,7 @@ test("a multi-replacement edit reaches v2 as an edit card with its combined patc
 
 test("a v2 edit card names its file in metadata.files, with the patch's line counts", () => {
   // OpenChamber 2.x would otherwise take the file from the patch header, which drops a leading `a/`.
-  const patch = "--- a/report.ts\n+++ a/report.ts\n@@ -1,3 +1,3 @@\n-old\n+new\n keep\n@@ -9,2 +9,1 @@\n---x\n-gone\n";
+  const patch = "--- a/report.ts\n+++ a/report.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n keep\n@@ -9,2 +8,0 @@\n---x\n-gone\n";
   const s = session("/nonexistent");
   const manager = new SessionManager(() => {});
   const edits = [
