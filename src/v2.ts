@@ -25,6 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { getAgentName } from "./agent-name.js";
 import { toV2Permission } from "./approvals.js";
+import { isRecord } from "./guards.js";
 import { questionFormID, toQuestionForm } from "./question-forms.js";
 import { v2PromptAttachments } from "./prompt-parts.js";
 import type {
@@ -300,12 +301,37 @@ function toV2AssistantMessage(info: OCMessageWithParts): V2Message {
 
 /**
  * OpenCode 2.x renamed `bash` to `shell`; OpenChamber 2.x draws a shell card (command, live output) only for `shell`.
+ * It also dropped `multiedit`: OpenChamber 2.x draws an unknown tool as its input, so the `edits` array showed as
+ * JSON. As `edit`, the card hides the input and draws the call's combined `metadata.patch` as a diff.
  * A background `task` is OpenCode's background `subagent` call, the only call OpenChamber 2.x follows past its step.
  */
 function v2ToolName(part: Extract<OCPart, { type: "tool" }>): string {
   if (part.tool === "task" && part.state.status !== "pending" && part.state.input.background === true)
     return "subagent";
+  if (part.tool === "multiedit") return "edit";
   return part.tool === "bash" ? "shell" : part.tool;
+}
+
+/**
+ * OpenCode 2.x reports an edit's diff per file in `metadata.files` (FileDiff.Info). From the top-level patch alone,
+ * OpenChamber 2.x's Open file and Open diff buttons guess the file from the patch header, which drops a leading `a/`
+ * or `b/`, and target a file named "Diff" for a patch too long to preview. Given a `files` entry it takes the card's
+ * +/- counts from it, so they are counted here. The patch moves into the entry rather than being sent twice: every
+ * top-level reader falls back to it, and one SSE frame carries the whole call (`MAX_SSE_PENDING_BYTES`).
+ */
+function completedMetadata(name: string, metadata: Record<string, unknown> = {}): Record<string, unknown> {
+  const { patch, ...rest } = metadata;
+  const file = isRecord(rest.filediff) ? rest.filediff.file : undefined;
+  if (name !== "edit" || typeof file !== "string" || typeof patch !== "string") return metadata;
+  let additions = 0;
+  let deletions = 0;
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (inHunk && line.startsWith("+")) additions++;
+    else if (inHunk && line.startsWith("-")) deletions++;
+  }
+  return { ...rest, files: [{ file, patch, additions, deletions, status: "modified" }] };
 }
 
 /**
@@ -421,7 +447,7 @@ function toolContent(part: Extract<OCPart, { type: "tool" }>): Record<string, un
       content: st.output !== "" ? [{ type: "text", text: st.output }] : [],
       output: st.output,
       title: st.title,
-      metadata: backgroundShell(part)?.metadata ?? st.metadata ?? {},
+      metadata: backgroundShell(part)?.metadata ?? completedMetadata(name, st.metadata),
     };
   } else {
     base.state = {
@@ -969,7 +995,7 @@ export class V2EventTranslator {
         this.frame(directory, "session.tool.success", {
           ...base,
           content: state.output !== "" ? [{ type: "text", text: state.output }] : [],
-          metadata: state.metadata ?? {},
+          metadata: completedMetadata(name, state.metadata),
           executed: false,
         }),
       );

@@ -91,6 +91,90 @@ test("single and multiple edits carry renderer strings and file metadata", () =>
   });
 });
 
+test("a multi-replacement edit reaches v2 as an edit card with its combined patch, live and in history", () => {
+  // OpenCode 2.x has no `multiedit`; OpenChamber 2.x draws a tool it does not know as its input JSON.
+  const fixture = JSON.parse(readFileSync(join(fixtures, "edit.json"), "utf8")) as {
+    samples: Array<{ arguments: { path: string; edits: unknown[] }; content: unknown; details: { patch: string } }>;
+  };
+  const sample = fixture.samples.find((candidate) => candidate.arguments.edits.length > 1);
+  assert.ok(sample !== undefined && typeof sample.details.patch === "string" && sample.details.patch !== "");
+  const s = session("/nonexistent");
+  const translator = new V2EventTranslator();
+  const frames: { type: string; data: Record<string, unknown> }[] = [];
+  const manager = new SessionManager((directory, event) => {
+    if (event.type !== "todo.updated") frames.push(...translator.translate(directory, event));
+  });
+  const call = { id: "edit-call", name: "edit", arguments: sample.arguments };
+  manager["onPiEvent"](s, { type: "message_start", message: { role: "assistant" } });
+  manager["onPiEvent"](s, {
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: call },
+  });
+  manager["onPiEvent"](s, {
+    type: "tool_execution_start",
+    toolCallId: call.id,
+    toolName: "edit",
+    args: call.arguments,
+  });
+  const result = { content: sample.content, details: sample.details, isError: false };
+  manager["onPiEvent"](s, {
+    type: "tool_execution_end",
+    toolCallId: call.id,
+    toolName: "edit",
+    result,
+    isError: false,
+  });
+
+  const tool = frames.filter((frame) => frame.type.startsWith("session.tool.") && frame.data.id === call.id);
+  const names = tool.filter((frame) => frame.type === "session.tool.input.started").map((frame) => frame.data.name);
+  assert.ok(names.length > 0);
+  assert.deepEqual(new Set(names), new Set(["edit"]));
+  const success = tool.find((frame) => frame.type === "session.tool.success");
+  assert.ok(success !== undefined);
+  const live = success.data.metadata as { patch?: unknown; files?: Array<Record<string, unknown>> };
+  // Sent once, in the entry: a second copy can push a large file's frame past the SSE buffer.
+  assert.equal(live.patch, undefined);
+  assert.equal(live.files?.[0]?.file, sample.arguments.path);
+  assert.equal(live.files?.[0]?.patch, sample.details.patch);
+
+  const card = s.messages?.[0];
+  assert.ok(card !== undefined);
+  const content = toV2Message(card).content?.find((part) => part.type === "tool");
+  assert.equal(content?.name, "edit");
+  const state = content?.state as { input: Record<string, unknown>; metadata: Record<string, unknown> };
+  assert.equal(state.input.filePath, sample.arguments.path);
+  assert.deepEqual(state.metadata.files, live.files);
+});
+
+test("a v2 edit card names its file in metadata.files, with the patch's line counts", () => {
+  // OpenChamber 2.x would otherwise take the file from the patch header, which drops a leading `a/`.
+  const patch = "--- a/report.ts\n+++ a/report.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n keep\n@@ -9,2 +8,0 @@\n---x\n-gone\n";
+  const s = session("/nonexistent");
+  const manager = new SessionManager(() => {});
+  const edits = [
+    { oldText: "old", newText: "new" },
+    { oldText: "--x\ngone", newText: "" },
+  ];
+  const call = { id: "edit-call", name: "edit", arguments: { path: "a/report.ts", edits } };
+  manager["onPiEvent"](s, { type: "message_start", message: { role: "assistant" } });
+  manager["onPiEvent"](s, {
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: call },
+  });
+  const result = { content: [{ type: "text", text: "ok" }], details: { patch }, isError: false };
+  manager["onPiEvent"](s, {
+    type: "tool_execution_end",
+    toolCallId: call.id,
+    toolName: "edit",
+    result,
+    isError: false,
+  });
+  const content = toV2Message(s.messages![0]!).content?.find((part) => part.type === "tool");
+  assert.ok(content !== undefined);
+  const metadata = (content.state as { metadata: Record<string, unknown> }).metadata;
+  assert.deepEqual(metadata.files, [{ file: "a/report.ts", patch, additions: 1, deletions: 3, status: "modified" }]);
+});
+
 test("write completion emits content-only metadata even when the result contains diffs", () => {
   const mapped = mapTool(
     "write",
