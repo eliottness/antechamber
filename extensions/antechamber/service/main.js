@@ -107,7 +107,11 @@ function launchStampPath(home, launcher) {
   const key = createHash("sha256").update(existsSync2(launcher) ? realpathSync(launcher) : launcher).digest("hex").slice(0, 16);
   return join2(home, ".antechamber", "launches", key);
 }
-function lastLaunch(stamp) {
+function writeStamp(stamp, now = Date.now()) {
+  mkdirSync(dirname2(stamp), { recursive: true });
+  writeFileSync2(stamp, String(now));
+}
+function readStamp(stamp) {
   if (!existsSync2(stamp)) return void 0;
   const at = Number(readFileSync2(stamp, "utf8"));
   return Number.isFinite(at) ? at : void 0;
@@ -868,18 +872,27 @@ function createService(options) {
   const graph = createServer(options.token);
   const work = createServer2({ token: options.token });
   let installing;
-  let activatedAt;
   const launcher = launcherPath(options.extensionDir);
   const launchStamp = launchStampPath(options.home, launcher);
+  const switchStamp = `${launchStamp}.switched`;
   const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
+  const readSettings = (settingsPath) => {
+    try {
+      const configured = configuredBinary(settingsPath);
+      return configured === void 0 ? {} : { configured };
+    } catch (error) {
+      return { error: `${settingsPath} could not be read: ${error.message}` };
+    }
+  };
   const activate = (settingsPath) => {
     const activated = activateLauncher(settingsPath, launcher, new Date(deps.now()));
-    if (activated.backup !== void 0) activatedAt = deps.now();
+    if (activated.backup !== void 0) writeStamp(switchStamp, deps.now());
     return activated;
   };
   const activateUnasked = () => {
     const settingsPath = findSettings();
     if (settingsPath === void 0 || runtimeState(options.paths, deps).state !== "ready") return;
+    if (readStamp(switchStamp) !== void 0) return;
     try {
       const configured = configuredBinary(settingsPath);
       if (configured !== launcher && mayActivateUnasked(configured)) activate(settingsPath);
@@ -898,8 +911,9 @@ function createService(options) {
   const status = () => {
     const settingsPath = findSettings();
     const current = runtimeState(options.paths, deps);
-    const configured = settingsPath === void 0 ? void 0 : configuredBinary(settingsPath);
+    const { configured, error: settingsError } = settingsPath === void 0 ? {} : readSettings(settingsPath);
     const active = configured === launcher;
+    const switchedAt = readStamp(switchStamp);
     const base = {
       state: installing && current.state !== "ready" ? "installing" : current.state,
       spec: options.paths.spec,
@@ -908,7 +922,8 @@ function createService(options) {
       settings: settingsPath ?? null,
       configured: configured?.trim() ? configured : null,
       active,
-      needsReload: active && activatedAt !== void 0 && (lastLaunch(launchStamp) ?? 0) < activatedAt
+      ...settingsError ? { settingsError } : {},
+      needsReload: active && switchedAt !== void 0 && (readStamp(launchStamp) ?? 0) < switchedAt
     };
     if (current.state === "ready")
       return {
@@ -948,9 +963,11 @@ function createService(options) {
       if (settingsPath === void 0)
         return send(res, 409, {
           error: "settings-not-found",
-          detail: "Set Settings -> OpenCode CLI to the launcher by hand."
+          detail: "Set Settings -> General -> OpenCode CLI to the launcher by hand."
         });
       if (runtimeState(options.paths, deps).state !== "ready") return send(res, 409, { error: "runtime-not-ready" });
+      const unreadable = readSettings(settingsPath).error;
+      if (unreadable) return send(res, 409, { error: "settings-unreadable", detail: unreadable });
       const activated = activate(settingsPath);
       return send(res, 200, { ...status(), ...activated });
     }

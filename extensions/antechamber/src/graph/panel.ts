@@ -433,11 +433,15 @@ function runtimeLine(status: RuntimeStatus): string {
 let runtime: RuntimeStatus | undefined;
 let runtimeError: string | undefined;
 let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
+let runtimeTurn = 0;
+let shownNotice = "";
 
 function renderRuntime() {
   const notice = runtime && runtimeNotice(runtime);
   ui.notice.hidden = !notice;
-  if (notice) {
+  // The notice is a live region: rebuilding it unchanged on every poll would make screen readers repeat it.
+  const key = JSON.stringify(notice ?? null);
+  if (notice && key !== shownNotice) {
     ui.notice.dataset.tone = notice.tone;
     const children: HTMLElement[] = [el("span", "", notice.text)];
     if (notice.code) children.push(el("code", "", notice.code));
@@ -450,6 +454,7 @@ function renderRuntime() {
     }
     ui.notice.replaceChildren(...children);
   }
+  shownNotice = key;
   const box = $<HTMLElement>("#runtime");
   if (runtimeError !== undefined || !runtime) {
     box.dataset.state = "failed";
@@ -461,27 +466,31 @@ function renderRuntime() {
     el("strong", "", "Runtime"),
     el("span", "", runtimeLine(runtime)),
     ...(runtime.active
-      ? [el("span", "", "Settings → OpenCode CLI is set to this launcher.")]
-      : [el("span", "", "Launcher for Settings → OpenCode CLI:"), el("code", "", runtime.launcher)]),
+      ? [el("span", "", "Settings → General → OpenCode CLI is set to this launcher.")]
+      : [el("span", "", "Launcher for Settings → General → OpenCode CLI:"), el("code", "", runtime.launcher)]),
   );
 }
 
 async function loadRuntime(action?: "install" | "activate") {
   clearTimeout(runtimeTimer);
+  const turn = ++runtimeTurn;
   try {
     const response = await host.serviceRequest({
       method: action ? "POST" : "GET",
       path: action ? `/runtime/${action}` : "/runtime",
     });
     const body = JSON.parse(response.body) as RuntimeStatus & { error?: string; detail?: string };
+    if (turn !== runtimeTurn) return;
     if (response.status >= 400) throw new Error(body.detail ?? body.error ?? `HTTP ${response.status}`);
     runtime = body;
     runtimeError = undefined;
   } catch (error) {
+    if (turn !== runtimeTurn) return;
     runtimeError = errorText(error).filter(Boolean).join(": ");
     if (action) void host.toast({ kind: "error", message: runtimeError }).catch(() => undefined);
   }
   renderRuntime();
+  clearTimeout(runtimeTimer);
   if (!document.hidden) runtimeTimer = setTimeout(() => void loadRuntime(), noticePollMs(runtime));
 }
 

@@ -15,9 +15,10 @@ import {
   type InstallDeps,
   type RuntimePaths,
   type RuntimeState,
-  lastLaunch,
   launchStampPath,
+  readStamp,
   runtimeState,
+  writeStamp,
 } from "./runtime/runtime.ts";
 import { createServer as createWorkServer } from "./work/routes.ts";
 
@@ -53,6 +54,8 @@ export interface RuntimeStatus {
   readonly settings: string | null;
   /** Settings -> OpenCode CLI as it stands; `null` when unset or when `settings` is unknown. */
   readonly configured: string | null;
+  /** Why `settings` could not be read (invalid JSON, say); the CLI is then left alone. */
+  readonly settingsError?: string;
   /** Whether Settings -> OpenCode CLI already names this launcher. */
   readonly active: boolean;
   /** The launcher was made the OpenCode CLI after OpenChamber last started it: Restart OpenCode switches over. */
@@ -69,20 +72,30 @@ export function createService(options: ServiceOptions): http.Server {
   const graph = createGraphServer(options.token);
   const work = createWorkServer({ token: options.token });
   let installing: Promise<unknown> | undefined;
-  /** When this service last changed Settings -> OpenCode CLI to the launcher. */
-  let activatedAt: number | undefined;
 
   const launcher = launcherPath(options.extensionDir);
   const launchStamp = launchStampPath(options.home, launcher);
+  // When this launcher was made the OpenCode CLI. On disk, so the restart prompt survives a service restart and the
+  // unasked switch happens once: a CLI the user picks afterwards stays theirs.
+  const switchStamp = `${launchStamp}.switched`;
   const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
+  const readSettings = (settingsPath: string): { configured?: string; error?: string } => {
+    try {
+      const configured = configuredBinary(settingsPath);
+      return configured === undefined ? {} : { configured };
+    } catch (error) {
+      return { error: `${settingsPath} could not be read: ${(error as Error).message}` };
+    }
+  };
   const activate = (settingsPath: string) => {
     const activated = activateLauncher(settingsPath, launcher, new Date(deps.now()));
-    if (activated.backup !== undefined) activatedAt = deps.now();
+    if (activated.backup !== undefined) writeStamp(switchStamp, deps.now());
     return activated;
   };
   const activateUnasked = () => {
     const settingsPath = findSettings();
     if (settingsPath === undefined || runtimeState(options.paths, deps).state !== "ready") return;
+    if (readStamp(switchStamp) !== undefined) return;
     try {
       const configured = configuredBinary(settingsPath);
       if (configured !== launcher && mayActivateUnasked(configured)) activate(settingsPath);
@@ -104,8 +117,9 @@ export function createService(options: ServiceOptions): http.Server {
   const status = (): RuntimeStatus => {
     const settingsPath = findSettings();
     const current = runtimeState(options.paths, deps);
-    const configured = settingsPath === undefined ? undefined : configuredBinary(settingsPath);
+    const { configured, error: settingsError } = settingsPath === undefined ? {} : readSettings(settingsPath);
     const active = configured === launcher;
+    const switchedAt = readStamp(switchStamp);
     const base = {
       state: installing && current.state !== "ready" ? "installing" : current.state,
       spec: options.paths.spec,
@@ -114,7 +128,8 @@ export function createService(options: ServiceOptions): http.Server {
       settings: settingsPath ?? null,
       configured: configured?.trim() ? configured : null,
       active,
-      needsReload: active && activatedAt !== undefined && (lastLaunch(launchStamp) ?? 0) < activatedAt,
+      ...(settingsError ? { settingsError } : {}),
+      needsReload: active && switchedAt !== undefined && (readStamp(launchStamp) ?? 0) < switchedAt,
     } as const;
     if (current.state === "ready")
       return {
@@ -155,9 +170,11 @@ export function createService(options: ServiceOptions): http.Server {
       if (settingsPath === undefined)
         return send(res, 409, {
           error: "settings-not-found",
-          detail: "Set Settings -> OpenCode CLI to the launcher by hand.",
+          detail: "Set Settings -> General -> OpenCode CLI to the launcher by hand.",
         });
       if (runtimeState(options.paths, deps).state !== "ready") return send(res, 409, { error: "runtime-not-ready" });
+      const unreadable = readSettings(settingsPath).error;
+      if (unreadable) return send(res, 409, { error: "settings-unreadable", detail: unreadable });
       const activated = activate(settingsPath);
       return send(res, 200, { ...status(), ...activated });
     }

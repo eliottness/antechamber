@@ -128,12 +128,12 @@ export function launchStampPath(home: string, launcher: string): string {
   return join(home, ".antechamber", "launches", key);
 }
 
-export function recordLaunch(stamp: string, now: number = Date.now()): void {
+export function writeStamp(stamp: string, now: number = Date.now()): void {
   mkdirSync(dirname(stamp), { recursive: true });
   writeFileSync(stamp, String(now));
 }
 
-export function lastLaunch(stamp: string): number | undefined {
+export function readStamp(stamp: string): number | undefined {
   if (!existsSync(stamp)) return undefined;
   const at = Number(readFileSync(stamp, "utf8"));
   return Number.isFinite(at) ? at : undefined;

@@ -12,14 +12,21 @@ export interface RuntimeNotice {
 }
 
 export function runtimeNotice(status: RuntimeStatus): RuntimeNotice | undefined {
-  if (status.state === "missing" || status.state === "installing")
+  if (status.state === "installing")
     return { tone: "info", text: `Setting up antechamber ${status.spec} and OmO. This happens once per version.` };
+  if (status.state === "missing")
+    return {
+      tone: "warn",
+      text: `antechamber ${status.spec} is not installed yet.`,
+      ...(status.bun ? { action: { label: "Install now", path: "install" } } : {}),
+    };
   if (status.state === "failed")
     return {
       tone: "bad",
       text: `antechamber could not be installed: ${status.error ?? "unknown error"}`,
       ...(status.bun ? { action: { label: "Retry install", path: "install" } } : {}),
     };
+  if (status.settingsError) return { tone: "bad", text: status.settingsError };
   if (status.needsReload)
     return {
       tone: "info",
@@ -29,7 +36,7 @@ export function runtimeNotice(status: RuntimeStatus): RuntimeNotice | undefined 
   if (status.settings === null)
     return {
       tone: "warn",
-      text: "Sessions do not run on OmO yet. Set Settings → OpenCode CLI to this launcher:",
+      text: "Sessions do not run on OmO yet. Set Settings → General → OpenCode CLI to this launcher:",
       code: status.launcher,
     };
   return {
@@ -41,6 +48,6 @@ export function runtimeNotice(status: RuntimeStatus): RuntimeNotice | undefined 
 
 export function noticePollMs(status: RuntimeStatus | undefined): number {
   if (status === undefined) return 10_000;
-  if (status.state === "missing" || status.state === "installing" || status.needsReload) return 2_000;
+  if (status.state === "installing" || status.needsReload) return 2_000;
   return status.active ? 30_000 : 5_000;
 }

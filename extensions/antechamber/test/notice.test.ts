@@ -38,6 +38,21 @@ test("a folder install gets the launcher path to paste instead of a button", () 
   assert.equal(notice?.code, ready.launcher);
 });
 
+test("a missing runtime with nothing installing offers Install now", () => {
+  assert.equal(runtimeNotice({ ...ready, state: "missing", active: false })?.action?.path, "install");
+});
+
+test("an unreadable settings file is shown as an error with no switch button", () => {
+  const notice = runtimeNotice({
+    ...ready,
+    active: false,
+    configured: null,
+    settingsError: "settings.json could not be read",
+  });
+  assert.equal(notice?.tone, "bad");
+  assert.equal(notice?.action, undefined);
+});
+
 test("installing shows progress; a failed install offers a retry only when Bun exists", () => {
   assert.equal(runtimeNotice({ ...ready, state: "installing", active: false })?.action, undefined);
   assert.equal(runtimeNotice({ ...ready, state: "failed", error: "404" })?.action?.path, "install");

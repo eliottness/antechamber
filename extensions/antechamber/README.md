@@ -34,13 +34,15 @@ It replaces the separate OmO Graph, OmO Work and OmO Compatibility extensions of
 
 The service runs from approval on (`keepRunning`; OpenChamber 2.7+, older hosts start it when the panel or the Work
 section first opens). It installs the runtime, then sets `opencodeBinary` in OpenChamber's `settings.json` to the
-launcher, keeping a `settings.json.bak-antechamber-<stamp>` copy. It does so unasked only when `opencodeBinary` is
-unset or names another `opencode-antechamber` launcher; a CLI you picked yourself stays until you press **Use
-antechamber as OpenCode CLI**. OpenChamber reads the setting each time it starts OpenCode, so the OmO panel and the
-Work section ask for **Restart OpenCode** until the launcher has started once since the switch. They show nothing
-once antechamber runs. A folder install has no OpenChamber data dir around it, so they show the launcher path to
-paste into **Settings → OpenCode CLI** instead. The panel's settings (the sliders icon) list the installed versions
-and the launcher path.
+launcher, keeping a `settings.json.bak-antechamber-<stamp>` copy. It does so unasked once per install location, and
+only when `opencodeBinary` is unset or names another `opencode-antechamber` launcher (an older install, a checkout, or
+the npm `--auto-update` launcher); a CLI you picked yourself, then or later, stays until you press **Use antechamber
+as OpenCode CLI**. OpenChamber reads the setting each time it starts OpenCode, so the OmO panel and the Work section
+ask for **Restart OpenCode** until the launcher has started once since the switch; the launcher records its starts,
+and the service its switch, under `~/.antechamber/launches/`. They show nothing once antechamber runs. A folder
+install has no OpenChamber data dir around it, so they show the launcher path to paste into **Settings → General →
+OpenCode CLI** instead. The panel's settings (the sliders icon) list the installed versions, and the launcher path
+while it is not the OpenCode CLI.
 
 Other ways to add it: a **Folder** (`extensions/antechamber` of an npm install or a built checkout; `antechamber
 setup` prints it), or the release **ZIP**
@@ -62,6 +64,9 @@ Every antechamber release publishes the extension at its own version to the `ext
 OpenChamber offers it under **Update** in Settings → Extensions. Updating the extension is updating antechamber and
 OmO: the next time OpenChamber starts its server, the launcher installs the new pair. OpenChamber's own OpenCode
 Update action runs the launcher's `upgrade`, which only points here.
+
+Updating from a release before 2.0.18 asks you to approve the local service again, because it now keeps running with
+OpenChamber (`keepRunning`) and OpenChamber 2.7+ shows that in its approval.
 
 The previous runtime stays installed for an adapter that is still running from it; older ones are removed.
 

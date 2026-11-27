@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { launcherPath } from "./activate.ts";
-import { defaultEnv, ensureRuntime, findBun, launchStampPath, recordLaunch, runtimePaths } from "./runtime.ts";
+import { defaultEnv, ensureRuntime, findBun, launchStampPath, runtimePaths, writeStamp } from "./runtime.ts";
 
 declare const __OPENCODE_API_VERSION__: string;
 
@@ -22,7 +22,7 @@ if (command === "version") {
     const runtime = await ensureRuntime(paths, findBun(env) ?? process.execPath);
     // Tells the extension's service that OpenChamber now runs antechamber, so it stops asking for a reload.
     try {
-      recordLaunch(launchStampPath(env.home, launcherPath(extensionDir)));
+      writeStamp(launchStampPath(env.home, launcherPath(extensionDir)));
     } catch (error) {
       console.error(
         `opencode-antechamber: could not record the launch: ${error instanceof Error ? error.message : error}`,

@@ -22,6 +22,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let showSettings = false;
 let runtime: RuntimeStatus | undefined;
 let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
+let runtimeTurn = 0;
 /** Phases the reader opened or closed; others follow the phase in progress. */
 const phaseChoice = new Map<string, boolean>();
 const pending = new Set<string>();
@@ -123,12 +124,17 @@ async function act(key: string, method: "POST", path: string, extra: Record<stri
 
 async function loadRuntime(action?: "install" | "activate"): Promise<void> {
   clearTimeout(runtimeTimer);
+  const turn = ++runtimeTurn;
   try {
-    runtime = JSON.parse(await service(action ? "POST" : "GET", action ? `/runtime/${action}` : "/runtime"));
+    const body = await service(action ? "POST" : "GET", action ? `/runtime/${action}` : "/runtime");
+    if (turn !== runtimeTurn) return;
+    runtime = JSON.parse(body);
   } catch (cause) {
+    if (turn !== runtimeTurn) return;
     if (action) void host.toast({ kind: "error", message: (cause as Error).message }).catch(() => undefined);
   }
   render();
+  clearTimeout(runtimeTimer);
   if (!document.hidden) runtimeTimer = setTimeout(() => void loadRuntime(), noticePollMs(runtime));
 }
 

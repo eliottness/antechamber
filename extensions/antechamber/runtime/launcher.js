@@ -78,7 +78,7 @@ function launchStampPath(home, launcher) {
   const key = createHash("sha256").update(existsSync(launcher) ? realpathSync(launcher) : launcher).digest("hex").slice(0, 16);
   return join2(home, ".antechamber", "launches", key);
 }
-function recordLaunch(stamp, now = Date.now()) {
+function writeStamp(stamp, now = Date.now()) {
   mkdirSync(dirname2(stamp), { recursive: true });
   writeFileSync(stamp, String(now));
 }
@@ -216,7 +216,7 @@ if (command === "version") {
     const paths = runtimePaths(version, env);
     const runtime = await ensureRuntime(paths, findBun(env) ?? process.execPath);
     try {
-      recordLaunch(launchStampPath(env.home, launcherPath(extensionDir)));
+      writeStamp(launchStampPath(env.home, launcherPath(extensionDir)));
     } catch (error) {
       console.error(
         `opencode-antechamber: could not record the launch: ${error instanceof Error ? error.message : error}`

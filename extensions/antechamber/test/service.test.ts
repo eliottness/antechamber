@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type InstallDeps, launchStampPath, recordLaunch, runtimePaths } from "../src/runtime/runtime.ts";
+import { type InstallDeps, launchStampPath, runtimePaths, writeStamp } from "../src/runtime/runtime.ts";
 import { createService, type RuntimeStatus } from "../src/service.ts";
 
 const TOKEN = "service-test-token";
@@ -15,8 +15,10 @@ async function start(
   deps: InstallDeps,
   extensionPath = "ext",
   autoActivate = false,
+  /** An earlier start's root: a restart of the service over the same files. */
+  existing?: string,
 ) {
-  const root = mkdtempSync(join(tmpdir(), "antechamber-service-"));
+  const root = existing ?? mkdtempSync(join(tmpdir(), "antechamber-service-"));
   const paths = runtimePaths("2.0.0", { env: { ANTECHAMBER_RUNTIME_DIR: join(root, "runtime") }, home: root });
   const server = createService({
     token: TOKEN,
@@ -30,7 +32,7 @@ async function start(
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   t.after(() => {
     server.close();
-    rmSync(root, { recursive: true, force: true });
+    if (!existing) rmSync(root, { recursive: true, force: true });
   });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = async (method: string, path: string, token = TOKEN) => {
@@ -157,8 +159,39 @@ test("once installed, the service makes itself the OpenCode CLI when none is set
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { themeId: "dark", opencodeBinary: launcher });
   assert.equal(status.active, true);
   assert.equal(status.needsReload, true, "OpenChamber still runs the OpenCode it started before the switch");
-  recordLaunch(launchStampPath(root, launcher), Date.now() + 1000);
+  writeStamp(launchStampPath(root, launcher), Date.now() + 1000);
   assert.equal((await settled()).needsReload, false, "a launch after the switch means antechamber now runs");
+});
+
+test("a restarted service still asks for the restart, and never switches the CLI unasked a second time", async (t) => {
+  const { file, root } = await autoInstall(t, { themeId: "dark" });
+  const restart = () => start(t, "/bin/bun", installer().deps, REPO_INSTALL, true, root);
+  const again = await restart();
+  assert.equal((await again.call("GET", "/runtime")).body.needsReload, true, "the switch is remembered on disk");
+
+  writeFileSync(file, JSON.stringify({ themeId: "dark" }), "utf8");
+  const later = await restart();
+  const status = (await later.call("GET", "/runtime")).body as unknown as RuntimeStatus;
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).opencodeBinary, undefined, "the user's later choice stands");
+  assert.equal(status.active, false);
+});
+
+test("an unreadable settings.json is reported instead of taking the service down", async (t) => {
+  const { deps, finished } = installer();
+  const { call, root } = await start(t, "/bin/bun", deps, REPO_INSTALL, true);
+  mkdirSync(join(root, "data"), { recursive: true });
+  writeFileSync(join(root, "data", "settings.json"), "{ not json");
+  await call("POST", "/runtime/install");
+  await finished;
+  const { status, body } = await call("GET", "/runtime");
+  assert.equal(status, 200);
+  assert.match(String(body.settingsError), /could not be read/);
+  assert.equal(body.active, false);
+  const refused = await call("POST", "/runtime/activate");
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, "settings-unreadable");
+  assert.equal(readFileSync(join(root, "data", "settings.json"), "utf8"), "{ not json", "the file is left as it was");
+  assert.equal((await call("GET", "/health")).status, 200, "the service is still up");
 });
 
 test("the service replaces another antechamber launcher without asking", async (t) => {

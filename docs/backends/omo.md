@@ -152,7 +152,7 @@ If `python3` or pidfd support isn't available (a Linux kernel too old, or a
 platform that is neither Linux nor macOS), this teardown step is skipped with a warning instead of crashing
 antechamber's shutdown. The agent process itself (the one antechamber spawned
 directly) is still reaped normally; only the detached task-host supervisor
-cleanup is affected. See the [Platform notes](../../README.md#platform-notes)
+cleanup is affected. See [Platform support](../installation.md#platform-support)
 in the README.
 
 ## Example: running OmO-backed antechamber as a systemd user service
