@@ -7,6 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Installing the OpenChamber extension now sets antechamber up with no clicks in its panel: on OpenChamber 2.7+ the
+  extension's service starts as soon as it is approved, installs antechamber and OmO, and makes itself the OpenCode
+  CLI when none is set or another antechamber launcher is. The OmO panel and the OmO Work section then ask for
+  **Restart OpenCode** until antechamber runs. A custom OpenCode CLI is left alone; the panel and the section show a
+  **Use antechamber as OpenCode CLI** button instead of hiding it in the panel's settings.
+
 ## [2.0.17] - 2026-11-26
 
 ### Fixed

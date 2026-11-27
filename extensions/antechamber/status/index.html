@@ -63,6 +63,13 @@
       .action.danger { color: var(--bad-text); }
       .action[disabled] { opacity: .5; cursor: default; }
       .note { padding: 2px 4px; color: var(--muted); }
+      .notice { display: grid; gap: 6px; justify-items: start; padding: 7px 9px; border-radius: 6px; border-left: 3px solid var(--notice);
+        background: color-mix(in srgb, var(--notice) 12%, transparent); --notice: var(--run); }
+      .notice.n-warn { --notice: var(--warn); }
+      .notice.n-bad { --notice: var(--bad); }
+      .notice > span { justify-self: stretch; min-width: 0; overflow-wrap: anywhere; }
+      .notice code { font: 11px var(--mono); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+      .notice .primary { min-height: 24px; max-width: 100%; padding: 4px 10px; border-radius: 5px; background: var(--oc-primary, var(--run)); color: var(--oc-primary-fg, #001); font-weight: 600; }
       .note.is-error { color: var(--bad-text); }
       .settings { display: grid; gap: 6px; padding: 6px 8px; border-radius: 5px; background: var(--surface); }
       .settings label { display: grid; gap: 3px; font-size: 11px; color: var(--muted); }

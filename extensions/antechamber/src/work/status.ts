@@ -2,6 +2,8 @@ import { connectHost, type HostReadyContext } from "@openchamber/sdk";
 import { applyHostReady } from "@openchamber/sdk/ui";
 import { isActive, parseWorkStatus, type WorkStatus } from "./model.ts";
 import { focusPhase, formatDuration, isEmpty, summarizePhase, type Tone, wakeSourceLabel } from "./view.ts";
+import { noticePollMs, runtimeNotice } from "../runtime/notice.ts";
+import type { RuntimeStatus } from "../service.ts";
 
 const POLL_ACTIVE_MS = 1500;
 const POLL_IDLE_MS = 5000;
@@ -18,6 +20,8 @@ let error: string | null = null;
 let generation = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let showSettings = false;
+let runtime: RuntimeStatus | undefined;
+let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
 /** Phases the reader opened or closed; others follow the phase in progress. */
 const phaseChoice = new Map<string, boolean>();
 const pending = new Set<string>();
@@ -115,6 +119,31 @@ async function act(key: string, method: "POST", path: string, extra: Record<stri
     pending.delete(key);
     void refresh();
   }
+}
+
+async function loadRuntime(action?: "install" | "activate"): Promise<void> {
+  clearTimeout(runtimeTimer);
+  try {
+    runtime = JSON.parse(await service(action ? "POST" : "GET", action ? `/runtime/${action}` : "/runtime"));
+  } catch (cause) {
+    if (action) void host.toast({ kind: "error", message: (cause as Error).message }).catch(() => undefined);
+  }
+  render();
+  if (!document.hidden) runtimeTimer = setTimeout(() => void loadRuntime(), noticePollMs(runtime));
+}
+
+function noticeBlock(): HTMLElement | null {
+  const notice = runtime && runtimeNotice(runtime);
+  if (!notice) return null;
+  const action = notice.action;
+  return h(
+    "div",
+    { class: `notice n-${notice.tone}`, role: "status" },
+    h("span", {}, notice.text),
+    notice.code && h("code", {}, notice.code),
+    action &&
+      h("button", { class: "primary", type: "button", click: () => void loadRuntime(action.path) }, action.label),
+  );
 }
 
 function group(label: string, count: string | null, ...rows: Child[]): HTMLElement {
@@ -279,7 +308,7 @@ function settingsForm(): HTMLElement {
 
 function render(): void {
   tickers = [];
-  const children: Child[] = [];
+  const children: Child[] = [noticeBlock()];
   if (showSettings) children.push(settingsForm());
   if (sessionId === null) children.push(h("div", { class: "note" }, "Open a session to see its background work."));
   else if (status === null && error === null) children.push(h("div", { class: "note" }, "Loading…"));
@@ -310,7 +339,9 @@ new ResizeObserver(() => {
 }).observe(root);
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void refresh();
+  if (document.hidden) return;
+  void refresh();
+  if (started) void loadRuntime();
 });
 
 host.onStatusControl((event) => {
@@ -319,8 +350,13 @@ host.onStatusControl((event) => {
   render();
 });
 
+let started = false;
 host.onReady((context: HostReadyContext) => {
   applyHostReady(context, document.documentElement);
+  if (!started) {
+    started = true;
+    void loadRuntime();
+  }
   if (context.features?.statusControls)
     void host.setStatusControls([{ kind: "button", id: "data-path", label: "Data path" }]).catch(() => undefined);
 });

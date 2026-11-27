@@ -19,6 +19,8 @@ test("OpenChamber 2.x accepts the one manifest: Graph panel and page, Work secti
   assert.equal(page?.entry, "panel/index.html");
   assert.equal(section?.entry, "status/index.html");
   assert.deepEqual(contributes.service, { entry: "service/main.js", runtime: "host", permissions: { exec: ["bun"] } });
+  // OpenChamber 2.7+ starts the service on approval and with the app, so it sets itself up; older hosts drop the key.
+  assert.equal(pkg.openchamber.contributes.service.keepRunning, true);
   assert.deepEqual(
     contributes.tools?.map((tool) => tool.match),
     ["shell", "task", "agent"],

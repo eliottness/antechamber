@@ -1,15 +1,22 @@
 import { timingSafeEqual } from "node:crypto";
 import type http from "node:http";
 import { createServer as createHttpServer } from "node:http";
-import { join } from "node:path";
 import { createServer as createGraphServer } from "./graph/routes.ts";
-import { activateLauncher, configuredBinary, openchamberSettingsPath } from "./runtime/activate.ts";
+import {
+  activateLauncher,
+  configuredBinary,
+  launcherPath,
+  mayActivateUnasked,
+  openchamberSettingsPath,
+} from "./runtime/activate.ts";
 import {
   defaultDeps,
   ensureRuntime,
   type InstallDeps,
   type RuntimePaths,
   type RuntimeState,
+  lastLaunch,
+  launchStampPath,
   runtimeState,
 } from "./runtime/runtime.ts";
 import { createServer as createWorkServer } from "./work/routes.ts";
@@ -19,9 +26,16 @@ export interface ServiceOptions {
   readonly extensionDir: string;
   readonly paths: RuntimePaths;
   readonly bun: string | undefined;
+  /** The home directory the launcher stamps its starts under (see `launchStampPath`). */
+  readonly home: string;
   readonly deps?: InstallDeps;
   /** Install the runtime as soon as the service starts, so OpenChamber's first launch finds it ready. */
   readonly prewarm?: boolean;
+  /**
+   * Once the runtime is ready, point OpenChamber's OpenCode CLI at the launcher when that needs no consent
+   * (see `mayActivateUnasked`), so installing the extension is all it takes.
+   */
+  readonly autoActivate?: boolean;
   /** Overrides where OpenChamber's settings.json is looked up (tests). */
   readonly settingsPath?: string;
 }
@@ -37,8 +51,12 @@ export interface RuntimeStatus {
   readonly error?: string;
   /** OpenChamber's settings.json, when the install location reveals it; `null` for folder installs. */
   readonly settings: string | null;
+  /** Settings -> OpenCode CLI as it stands; `null` when unset or when `settings` is unknown. */
+  readonly configured: string | null;
   /** Whether Settings -> OpenCode CLI already names this launcher. */
   readonly active: boolean;
+  /** The launcher was made the OpenCode CLI after OpenChamber last started it: Restart OpenCode switches over. */
+  readonly needsReload: boolean;
 }
 
 /**
@@ -51,27 +69,52 @@ export function createService(options: ServiceOptions): http.Server {
   const graph = createGraphServer(options.token);
   const work = createWorkServer({ token: options.token });
   let installing: Promise<unknown> | undefined;
+  /** When this service last changed Settings -> OpenCode CLI to the launcher. */
+  let activatedAt: number | undefined;
 
+  const launcher = launcherPath(options.extensionDir);
+  const launchStamp = launchStampPath(options.home, launcher);
+  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
+  const activate = (settingsPath: string) => {
+    const activated = activateLauncher(settingsPath, launcher, new Date(deps.now()));
+    if (activated.backup !== undefined) activatedAt = deps.now();
+    return activated;
+  };
+  const activateUnasked = () => {
+    const settingsPath = findSettings();
+    if (settingsPath === undefined || runtimeState(options.paths, deps).state !== "ready") return;
+    try {
+      const configured = configuredBinary(settingsPath);
+      if (configured !== launcher && mayActivateUnasked(configured)) activate(settingsPath);
+    } catch (error) {
+      console.error(`antechamber: could not set the OpenCode CLI in ${settingsPath}: ${(error as Error).message}`);
+    }
+  };
   const install = () => {
     installing ??= ensureRuntime(options.paths, options.bun, deps)
+      .then(() => {
+        if (options.autoActivate) activateUnasked();
+      })
       .catch(() => undefined)
       .finally(() => {
         installing = undefined;
       });
     return installing;
   };
-  const launcher = join(options.extensionDir, "bin", "opencode-antechamber");
-  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
   const status = (): RuntimeStatus => {
     const settingsPath = findSettings();
     const current = runtimeState(options.paths, deps);
+    const configured = settingsPath === undefined ? undefined : configuredBinary(settingsPath);
+    const active = configured === launcher;
     const base = {
       state: installing && current.state !== "ready" ? "installing" : current.state,
       spec: options.paths.spec,
       launcher,
       bun: options.bun ?? null,
       settings: settingsPath ?? null,
-      active: settingsPath !== undefined && configuredBinary(settingsPath) === launcher,
+      configured: configured?.trim() ? configured : null,
+      active,
+      needsReload: active && activatedAt !== undefined && (lastLaunch(launchStamp) ?? 0) < activatedAt,
     } as const;
     if (current.state === "ready")
       return {
@@ -85,6 +128,7 @@ export function createService(options: ServiceOptions): http.Server {
     return base;
   };
   if (options.prewarm && options.bun && runtimeState(options.paths, deps).state === "missing") void install();
+  else if (options.autoActivate) activateUnasked();
 
   const expected = Buffer.from(`Bearer ${options.token}`);
   const send = (res: http.ServerResponse, code: number, body: unknown) => {
@@ -114,7 +158,7 @@ export function createService(options: ServiceOptions): http.Server {
           detail: "Set Settings -> OpenCode CLI to the launcher by hand.",
         });
       if (runtimeState(options.paths, deps).state !== "ready") return send(res, 409, { error: "runtime-not-ready" });
-      const activated = activateLauncher(settingsPath, launcher);
+      const activated = activate(settingsPath);
       return send(res, 200, { ...status(), ...activated });
     }
     return send(res, 404, { error: "not-found" });

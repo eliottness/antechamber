@@ -5,9 +5,19 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
 /** A lock older than this is a crashed installer, never a slow one (installs take seconds to a few minutes). */
 export const STALE_LOCK_MS = 15 * 60_000;
@@ -103,6 +113,30 @@ function installed(dir: string): InstalledRuntime | undefined {
   if (!existsSync(cli) || typeof antechamber !== "string") return undefined;
   const omo = readJson(join(dir, "node_modules", "omo-ai", "package.json"))?.version;
   return { dir, cli, antechamber, omo: typeof omo === "string" ? omo : undefined };
+}
+
+/**
+ * Where `launcher` stamps each start. Kept under HOME and keyed by the launcher's real path, not in the runtime dir:
+ * OpenChamber starts the extension's service with a minimal environment, so HOME is all it shares with the launcher,
+ * and two OpenChamber installs on one machine keep separate stamps.
+ */
+export function launchStampPath(home: string, launcher: string): string {
+  const key = createHash("sha256")
+    .update(existsSync(launcher) ? realpathSync(launcher) : launcher)
+    .digest("hex")
+    .slice(0, 16);
+  return join(home, ".antechamber", "launches", key);
+}
+
+export function recordLaunch(stamp: string, now: number = Date.now()): void {
+  mkdirSync(dirname(stamp), { recursive: true });
+  writeFileSync(stamp, String(now));
+}
+
+export function lastLaunch(stamp: string): number | undefined {
+  if (!existsSync(stamp)) return undefined;
+  const at = Number(readFileSync(stamp, "utf8"));
+  return Number.isFinite(at) ? at : undefined;
 }
 
 function lockHeld(lock: string, deps: Pick<InstallDeps, "now" | "pidAlive">): boolean {

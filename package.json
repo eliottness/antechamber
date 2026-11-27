@@ -117,6 +117,7 @@
       "service": {
         "entry": "extensions/antechamber/service/main.js",
         "runtime": "host",
+        "keepRunning": true,
         "permissions": {
           "exec": [
             "bun"

@@ -14,14 +14,27 @@ export function openchamberSettingsPath(extensionDir: string): string | undefine
   return undefined;
 }
 
+export function launcherPath(extensionDir: string): string {
+  return join(extensionDir, "bin", "opencode-antechamber");
+}
+
 export function configuredBinary(settings: string): string | undefined {
   const value = (JSON.parse(readFileSync(settings, "utf8")) as { opencodeBinary?: unknown }).opencodeBinary;
   return typeof value === "string" ? value : undefined;
 }
 
 /**
+ * Whether the service may point OpenChamber at its launcher without asking: nothing is configured yet (OpenChamber's
+ * own OpenCode), or another antechamber launcher is (an older install, a checkout, the npm auto-update launcher).
+ * A CLI the user picked by hand stays theirs to replace.
+ */
+export function mayActivateUnasked(configured: string | undefined): boolean {
+  return !configured?.trim() || basename(configured) === "opencode-antechamber";
+}
+
+/**
  * Points OpenChamber's OpenCode CLI at `launcher`, as Settings -> OpenCode CLI would: OpenChamber reads
- * `opencodeBinary` from settings.json each time it starts OpenCode, so Reload OpenCode applies it. The previous file
+ * `opencodeBinary` from settings.json each time it starts OpenCode, so Restart OpenCode applies it. The previous file
  * is kept beside it; every other setting is preserved.
  */
 export function activateLauncher(settings: string, launcher: string, now: Date = new Date()): { backup?: string } {

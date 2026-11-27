@@ -4,6 +4,8 @@ import type { GraphNode, TaskGraph } from "./graph.ts";
 import { CARD_H, CARD_W, layoutGraph, reach, type Layout } from "./layout.ts";
 import { compact, shortModel, statusLine } from "./format.ts";
 import { PanGesture } from "./pan.ts";
+import { noticePollMs, runtimeNotice } from "../runtime/notice.ts";
+import type { RuntimeStatus } from "../service.ts";
 import { GraphPoller, type PollView } from "./poller.ts";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -27,6 +29,7 @@ const ui = {
   empty: $<HTMLDivElement>("#empty"),
   inspector: $<HTMLElement>("#inspector"),
   settings: $<HTMLFormElement>("#settings"),
+  notice: $<HTMLElement>("#notice"),
 };
 
 let currentSession: string | null = null;
@@ -419,17 +422,6 @@ const poller = new GraphPoller({
   isHidden: () => document.hidden,
 });
 
-type RuntimeStatus = {
-  state: "ready" | "installing" | "missing" | "failed";
-  spec: string;
-  launcher: string;
-  antechamber?: string;
-  omo?: string;
-  error?: string;
-  settings: string | null;
-  active: boolean;
-};
-
 function runtimeLine(status: RuntimeStatus): string {
   if (status.state === "ready")
     return `antechamber ${status.antechamber}${status.omo ? ` with OmO ${status.omo}` : ""} is installed.`;
@@ -438,42 +430,59 @@ function runtimeLine(status: RuntimeStatus): string {
   return `antechamber ${status.spec} is not installed yet.`;
 }
 
-async function showRuntime(action: "status" | "install" | "activate" = "status") {
+let runtime: RuntimeStatus | undefined;
+let runtimeError: string | undefined;
+let runtimeTimer: ReturnType<typeof setTimeout> | undefined;
+
+function renderRuntime() {
+  const notice = runtime && runtimeNotice(runtime);
+  ui.notice.hidden = !notice;
+  if (notice) {
+    ui.notice.dataset.tone = notice.tone;
+    const children: HTMLElement[] = [el("span", "", notice.text)];
+    if (notice.code) children.push(el("code", "", notice.code));
+    if (notice.action) {
+      const { label, path } = notice.action;
+      const button = el("button", "", label);
+      button.type = "button";
+      button.addEventListener("click", () => void loadRuntime(path));
+      children.push(button);
+    }
+    ui.notice.replaceChildren(...children);
+  }
   const box = $<HTMLElement>("#runtime");
+  if (runtimeError !== undefined || !runtime) {
+    box.dataset.state = "failed";
+    box.replaceChildren(el("strong", "", "Runtime"), el("span", "", runtimeError ?? "Checking…"));
+    return;
+  }
+  box.dataset.state = runtime.state;
+  box.replaceChildren(
+    el("strong", "", "Runtime"),
+    el("span", "", runtimeLine(runtime)),
+    ...(runtime.active
+      ? [el("span", "", "Settings → OpenCode CLI is set to this launcher.")]
+      : [el("span", "", "Launcher for Settings → OpenCode CLI:"), el("code", "", runtime.launcher)]),
+  );
+}
+
+async function loadRuntime(action?: "install" | "activate") {
+  clearTimeout(runtimeTimer);
   try {
     const response = await host.serviceRequest({
-      method: action === "status" ? "GET" : "POST",
-      path: action === "status" ? "/runtime" : `/runtime/${action}`,
+      method: action ? "POST" : "GET",
+      path: action ? `/runtime/${action}` : "/runtime",
     });
-    const status = JSON.parse(response.body) as RuntimeStatus;
-    box.dataset.state = status.state;
-    const retry = el("button", "", status.state === "failed" ? "Retry install" : "Install now");
-    retry.type = "button";
-    retry.addEventListener("click", () => void showRuntime("install"));
-    const children: HTMLElement[] = [el("strong", "", "Runtime"), el("span", "", runtimeLine(status))];
-    if (status.active) children.push(el("span", "", "Settings → OpenCode CLI is set to this launcher."));
-    else if (status.state === "ready" && status.settings) {
-      const use = el("button", "", "Use as OpenCode CLI");
-      use.type = "button";
-      use.addEventListener("click", () => void showRuntime("activate"));
-      const row = el("div", "row");
-      row.append(use);
-      children.push(row);
-    } else
-      children.push(el("span", "", "OpenCode CLI path for Settings → OpenCode CLI:"), el("code", "", status.launcher));
-    if (action === "activate" && status.active)
-      children.push(el("span", "", "Saved. Reload OpenCode (Settings → OpenCode) to switch to it."));
-    if (status.state === "missing" || status.state === "failed") {
-      const row = el("div", "row");
-      row.append(retry);
-      children.push(row);
-    }
-    box.replaceChildren(...children);
-    if (status.state === "installing") setTimeout(() => void showRuntime(), 2000);
+    const body = JSON.parse(response.body) as RuntimeStatus & { error?: string; detail?: string };
+    if (response.status >= 400) throw new Error(body.detail ?? body.error ?? `HTTP ${response.status}`);
+    runtime = body;
+    runtimeError = undefined;
   } catch (error) {
-    box.dataset.state = "failed";
-    box.replaceChildren(el("strong", "", "Runtime"), el("span", "", errorText(error).join(": ")));
+    runtimeError = errorText(error).filter(Boolean).join(": ");
+    if (action) void host.toast({ kind: "error", message: runtimeError }).catch(() => undefined);
   }
+  renderRuntime();
+  if (!document.hidden) runtimeTimer = setTimeout(() => void loadRuntime(), noticePollMs(runtime));
 }
 
 const settingsToggle = $<HTMLButtonElement>("#btn-settings");
@@ -481,7 +490,7 @@ settingsToggle.addEventListener("click", () => {
   ui.settings.hidden = !ui.settings.hidden;
   settingsToggle.setAttribute("aria-expanded", String(!ui.settings.hidden));
   if (!ui.settings.hidden) {
-    void showRuntime();
+    void loadRuntime();
     ui.settings.querySelector("input")?.focus();
   }
 });
@@ -511,6 +520,7 @@ host.onReady((context: HostReadyContext) => {
   ui.app.dataset.surface = context.surface;
   if (started) return;
   started = true;
+  void loadRuntime();
   currentSession = context.session?.id ?? currentSession;
   void host.storage
     .get("paths")
@@ -538,7 +548,9 @@ host.onSession((next) => {
 });
 host.onSessionLifecycle(() => void poller.refresh());
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void poller.refresh();
+  if (document.hidden) return;
+  void poller.refresh();
+  if (started) void loadRuntime();
 });
 window.addEventListener("resize", () => {
   if (layout && view.k <= 1) applyView();
