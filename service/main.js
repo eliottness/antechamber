@@ -1,14 +1,59 @@
 // extensions/antechamber/src/service-main.ts
 import { chmodSync as chmodSync2, readFileSync as readFileSync5 } from "node:fs";
-import { dirname as dirname2, join as join6, resolve as resolve4 } from "node:path";
+import { dirname as dirname3, join as join5, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// extensions/antechamber/src/runtime/activate.ts
+import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+function openchamberSettingsPath(extensionDir2) {
+  for (let dir = extensionDir2; dirname(dir) !== dir; dir = dirname(dir)) {
+    if (basename(dirname(dir)) !== "extensions") continue;
+    const settings = join(dirname(dirname(dir)), "settings.json");
+    if (existsSync(settings)) return settings;
+  }
+  return void 0;
+}
+function launcherPath(extensionDir2) {
+  return join(extensionDir2, "bin", "opencode-antechamber");
+}
+function configuredBinary(settings) {
+  const value = JSON.parse(readFileSync(settings, "utf8")).opencodeBinary;
+  return typeof value === "string" ? value : void 0;
+}
+function mayActivateUnasked(configured) {
+  return !configured?.trim() || basename(configured) === "opencode-antechamber";
+}
+function activateLauncher(settings, launcher, now = /* @__PURE__ */ new Date()) {
+  const data = JSON.parse(readFileSync(settings, "utf8"));
+  if (data.opencodeBinary === launcher) return {};
+  const backup = `${settings}.bak-antechamber-${now.toISOString().replace(/\D/g, "").slice(0, 14)}`;
+  if (!existsSync(backup)) copyFileSync(settings, backup);
+  const mode = statSync(settings).mode & 511;
+  const temporary = `${settings}.antechamber-${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify({ ...data, opencodeBinary: launcher }, null, 2)}
+`, { mode });
+  chmodSync(temporary, mode);
+  renameSync(temporary, settings);
+  return { backup };
+}
 
 // extensions/antechamber/src/runtime/runtime.ts
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync as existsSync2,
+  mkdirSync,
+  readdirSync,
+  readFileSync as readFileSync2,
+  realpathSync,
+  renameSync as renameSync2,
+  rmSync,
+  statSync as statSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname as dirname2, isAbsolute, join as join2, resolve } from "node:path";
 var STALE_LOCK_MS = 15 * 6e4;
 var INSTALL_TIMEOUT_MS = 10 * 6e4;
 var READY = ".ready.json";
@@ -18,25 +63,25 @@ function defaultEnv() {
 }
 function runtimeRoot({ env: env2, home }) {
   const configured = env2.ANTECHAMBER_RUNTIME_DIR?.trim();
-  return configured ? resolve(configured) : join(home, ".antechamber", "runtime");
+  return configured ? resolve(configured) : join2(home, ".antechamber", "runtime");
 }
 function runtimePaths(version2, runtime) {
   const root = runtimeRoot(runtime);
   const override = runtime.env.ANTECHAMBER_RUNTIME_SPEC?.trim();
-  if (!override) return { root, spec: version2, key: version2, dir: join(root, version2) };
+  if (!override) return { root, spec: version2, key: version2, dir: join2(root, version2) };
   const spec = isAbsolute(override) ? override : resolve(override);
-  const stamp = existsSync(spec) ? `${statSync(spec).mtimeMs}:${statSync(spec).size}` : "";
+  const stamp = existsSync2(spec) ? `${statSync2(spec).mtimeMs}:${statSync2(spec).size}` : "";
   const key = `local-${createHash("sha256").update(`${spec}
 ${stamp}`).digest("hex").slice(0, 12)}`;
-  return { root, spec: `file:${spec}`, key, dir: join(root, key) };
+  return { root, spec: `file:${spec}`, key, dir: join2(root, key) };
 }
-function findBun({ env: env2, home }, exists = existsSync) {
+function findBun({ env: env2, home }, exists = existsSync2) {
   for (const dir of (env2.PATH ?? "").split(delimiter)) {
-    if (dir && exists(join(dir, "bun"))) return join(dir, "bun");
+    if (dir && exists(join2(dir, "bun"))) return join2(dir, "bun");
   }
   for (const candidate of [
-    join(env2.BUN_INSTALL ?? join(home, ".bun"), "bin", "bun"),
-    join(home, ".bun", "bin", "bun")
+    join2(env2.BUN_INSTALL ?? join2(home, ".bun"), "bin", "bun"),
+    join2(home, ".bun", "bin", "bun")
   ]) {
     if (exists(candidate)) return candidate;
   }
@@ -44,28 +89,41 @@ function findBun({ env: env2, home }, exists = existsSync) {
 }
 function readJson(path) {
   try {
-    const value = JSON.parse(readFileSync(path, "utf8"));
+    const value = JSON.parse(readFileSync2(path, "utf8"));
     return typeof value === "object" && value !== null ? value : void 0;
   } catch {
     return void 0;
   }
 }
 function installed(dir) {
-  if (!existsSync(join(dir, READY))) return void 0;
-  const cli = join(dir, "node_modules", "antechamber", "dist", "cli.js");
-  const antechamber = readJson(join(dir, "node_modules", "antechamber", "package.json"))?.version;
-  if (!existsSync(cli) || typeof antechamber !== "string") return void 0;
-  const omo = readJson(join(dir, "node_modules", "omo-ai", "package.json"))?.version;
+  if (!existsSync2(join2(dir, READY))) return void 0;
+  const cli = join2(dir, "node_modules", "antechamber", "dist", "cli.js");
+  const antechamber = readJson(join2(dir, "node_modules", "antechamber", "package.json"))?.version;
+  if (!existsSync2(cli) || typeof antechamber !== "string") return void 0;
+  const omo = readJson(join2(dir, "node_modules", "omo-ai", "package.json"))?.version;
   return { dir, cli, antechamber, omo: typeof omo === "string" ? omo : void 0 };
+}
+function launchStampPath(home, launcher) {
+  const key = createHash("sha256").update(existsSync2(launcher) ? realpathSync(launcher) : launcher).digest("hex").slice(0, 16);
+  return join2(home, ".antechamber", "launches", key);
+}
+function writeStamp(stamp, now = Date.now()) {
+  mkdirSync(dirname2(stamp), { recursive: true });
+  writeFileSync2(stamp, String(now));
+}
+function readStamp(stamp) {
+  if (!existsSync2(stamp)) return void 0;
+  const at = Number(readFileSync2(stamp, "utf8"));
+  return Number.isFinite(at) ? at : void 0;
 }
 function lockHeld(lock, deps) {
   let mtime;
   try {
-    mtime = statSync(lock).mtimeMs;
+    mtime = statSync2(lock).mtimeMs;
   } catch {
     return false;
   }
-  const pid = Number.parseInt(readFileSync(join(lock, "pid"), { encoding: "utf8", flag: "a+" }), 10);
+  const pid = Number.parseInt(readFileSync2(join2(lock, "pid"), { encoding: "utf8", flag: "a+" }), 10);
   if (deps.now() - mtime > STALE_LOCK_MS) return false;
   return !Number.isInteger(pid) || deps.pidAlive(pid);
 }
@@ -73,7 +131,7 @@ function runtimeState(paths, deps = defaultDeps()) {
   const runtime = installed(paths.dir);
   if (runtime) return { state: "ready", runtime };
   if (lockHeld(`${paths.dir}.lock`, deps)) return { state: "installing" };
-  const error = existsSync(`${paths.dir}.error`) ? readFileSync(`${paths.dir}.error`, "utf8") : void 0;
+  const error = existsSync2(`${paths.dir}.error`) ? readFileSync2(`${paths.dir}.error`, "utf8") : void 0;
   return error ? { state: "failed", error } : { state: "missing" };
 }
 function tryLock(lock, deps) {
@@ -85,11 +143,11 @@ function tryLock(lock, deps) {
     rmSync(lock, { recursive: true, force: true });
     return tryLock(lock, deps);
   }
-  writeFileSync(join(lock, "pid"), String(process.pid));
+  writeFileSync2(join2(lock, "pid"), String(process.pid));
   return true;
 }
 function prune(paths) {
-  const others = readdirSync(paths.root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name !== paths.key && !/\.(lock|tmp-.*)$/.test(entry.name)).map((entry) => join(paths.root, entry.name)).filter((dir) => existsSync(join(dir, READY)) && !existsSync(`${dir}.lock`)).map((dir) => ({ dir, at: Number(readJson(join(dir, READY))?.installedAt ?? 0) })).sort((a, b) => b.at - a.at);
+  const others = readdirSync(paths.root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name !== paths.key && !/\.(lock|tmp-.*)$/.test(entry.name)).map((entry) => join2(paths.root, entry.name)).filter((dir) => existsSync2(join2(dir, READY)) && !existsSync2(`${dir}.lock`)).map((dir) => ({ dir, at: Number(readJson(join2(dir, READY))?.installedAt ?? 0) })).sort((a, b) => b.at - a.at);
   for (const { dir } of others.slice(1)) rmSync(dir, { recursive: true, force: true });
 }
 async function installOnce(paths, bun, deps) {
@@ -103,14 +161,14 @@ async function installOnce(paths, bun, deps) {
       // omo-ai's postinstall prepares its engine; Bun skips dependency scripts unless trusted.
       trustedDependencies: ["omo-ai"]
     };
-    writeFileSync(join(staging, "package.json"), `${JSON.stringify(manifest, null, 2)}
+    writeFileSync2(join2(staging, "package.json"), `${JSON.stringify(manifest, null, 2)}
 `);
     await deps.install(bun, staging);
-    writeFileSync(join(staging, READY), `${JSON.stringify({ spec: paths.spec, installedAt: deps.now() })}
+    writeFileSync2(join2(staging, READY), `${JSON.stringify({ spec: paths.spec, installedAt: deps.now() })}
 `);
     if (!installed(staging)) throw new Error(`bun install did not produce node_modules/antechamber/dist/cli.js`);
     rmSync(paths.dir, { recursive: true, force: true });
-    renameSync(staging, paths.dir);
+    renameSync2(staging, paths.dir);
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;
@@ -139,7 +197,7 @@ async function ensureRuntime(paths, bun, deps = defaultDeps()) {
       return runtime;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      writeFileSync(`${paths.dir}.error`, message.slice(-ERROR_TAIL_CHARS));
+      writeFileSync2(`${paths.dir}.error`, message.slice(-ERROR_TAIL_CHARS));
       throw error;
     } finally {
       rmSync(lock, { recursive: true, force: true });
@@ -190,7 +248,6 @@ function defaultDeps() {
 // extensions/antechamber/src/service.ts
 import { timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
-import { join as join5 } from "node:path";
 
 // extensions/antechamber/src/graph/routes.ts
 import http from "node:http";
@@ -446,19 +503,19 @@ function buildGraph(sessionId, tasks, registry) {
 }
 
 // extensions/antechamber/src/graph/store.ts
-import { lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
+import { lstatSync, readdirSync as readdirSync2, readFileSync as readFileSync3, statSync as statSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 function expandHome(path) {
   if (path === "~") return homedir2();
-  return path.startsWith("~/") ? join2(homedir2(), path.slice(2)) : path;
+  return path.startsWith("~/") ? join3(homedir2(), path.slice(2)) : path;
 }
 function defaultRoots() {
   const home = homedir2();
   return {
-    agentDirs: [join2(home, ".omo", "agent"), join2(home, ".pi", "agent")],
-    stateDirs: [join2(home, ".config", "antechamber"), join2(home, ".config", "openchamber-pi-connector")]
+    agentDirs: [join3(home, ".omo", "agent"), join3(home, ".pi", "agent")],
+    stateDirs: [join3(home, ".config", "antechamber"), join3(home, ".config", "openchamber-pi-connector")]
   };
 }
 function isMissing(error) {
@@ -485,7 +542,7 @@ var JsonCache = class {
   read(path, accept) {
     let stat;
     try {
-      stat = statSync2(path);
+      stat = statSync3(path);
     } catch (error) {
       if (isMissing(error)) {
         this.entries.delete(path);
@@ -497,7 +554,7 @@ var JsonCache = class {
     if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.value;
     let value;
     try {
-      value = accept(JSON.parse(readFileSync2(path, "utf8")));
+      value = accept(JSON.parse(readFileSync3(path, "utf8")));
     } catch (error) {
       if (error instanceof SyntaxError || isMissing(error)) return hit?.value;
       throw error;
@@ -511,11 +568,11 @@ var RegistryReader = class {
   databases = /* @__PURE__ */ new Map();
   files = new JsonCache();
   read(dir) {
-    const path = join2(dir, "sessions.sqlite");
+    const path = join3(dir, "sessions.sqlite");
     if (!isRegularFile(path)) {
       this.databases.get(path)?.db.close();
       this.databases.delete(path);
-      return this.files.read(join2(dir, "sessions.json"), normalizeRegistry);
+      return this.files.read(join3(dir, "sessions.json"), normalizeRegistry);
     }
     let open = this.databases.get(path);
     if (!open) {
@@ -544,18 +601,18 @@ var TaskStore = class {
   storeDirs() {
     const dirs = /* @__PURE__ */ new Set();
     for (const agent of this.roots.agentDirs) {
-      const registry = this.json.read(join2(agent, "rpc", "task-stores.json"), (v) => isRecord(v) ? v : void 0);
+      const registry = this.json.read(join3(agent, "rpc", "task-stores.json"), (v) => isRecord(v) ? v : void 0);
       if (isRecord(registry?.stores)) for (const dir of Object.keys(registry.stores)) dirs.add(dir);
-      for (const project of list(join2(agent, "projects"))) dirs.add(join2(agent, "projects", project, "senpi-task"));
+      for (const project of list(join3(agent, "projects"))) dirs.add(join3(agent, "projects", project, "senpi-task"));
     }
     return [...dirs];
   }
   loadTasks() {
     const out = /* @__PURE__ */ new Map();
     for (const dir of this.storeDirs()) {
-      for (const file of list(join2(dir, "tasks"))) {
+      for (const file of list(join3(dir, "tasks"))) {
         if (!file.endsWith(".json")) continue;
-        const path = join2(dir, "tasks", file);
+        const path = join3(dir, "tasks", file);
         if (!isRegularFile(path)) continue;
         const task = this.tasks.read(path, normalizeTask);
         if (task) out.set(JSON.stringify([task.parent_session_id, task.task_id]), task);
@@ -666,35 +723,6 @@ function createServer(token2, makeStore = (r) => new TaskStore(r)) {
     }
     return json(res, 404, { error: "not-found" });
   });
-}
-
-// extensions/antechamber/src/runtime/activate.ts
-import { chmodSync, copyFileSync, existsSync as existsSync2, readFileSync as readFileSync3, renameSync as renameSync2, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename, dirname, join as join3 } from "node:path";
-function openchamberSettingsPath(extensionDir2) {
-  for (let dir = extensionDir2; dirname(dir) !== dir; dir = dirname(dir)) {
-    if (basename(dirname(dir)) !== "extensions") continue;
-    const settings = join3(dirname(dirname(dir)), "settings.json");
-    if (existsSync2(settings)) return settings;
-  }
-  return void 0;
-}
-function configuredBinary(settings) {
-  const value = JSON.parse(readFileSync3(settings, "utf8")).opencodeBinary;
-  return typeof value === "string" ? value : void 0;
-}
-function activateLauncher(settings, launcher, now = /* @__PURE__ */ new Date()) {
-  const data = JSON.parse(readFileSync3(settings, "utf8"));
-  if (data.opencodeBinary === launcher) return {};
-  const backup = `${settings}.bak-antechamber-${now.toISOString().replace(/\D/g, "").slice(0, 14)}`;
-  if (!existsSync2(backup)) copyFileSync(settings, backup);
-  const mode = statSync3(settings).mode & 511;
-  const temporary = `${settings}.antechamber-${process.pid}.tmp`;
-  writeFileSync2(temporary, `${JSON.stringify({ ...data, opencodeBinary: launcher }, null, 2)}
-`, { mode });
-  chmodSync(temporary, mode);
-  renameSync2(temporary, settings);
-  return { backup };
 }
 
 // extensions/antechamber/src/work/routes.ts
@@ -844,24 +872,58 @@ function createService(options) {
   const graph = createServer(options.token);
   const work = createServer2({ token: options.token });
   let installing;
+  const launcher = launcherPath(options.extensionDir);
+  const launchStamp = launchStampPath(options.home, launcher);
+  const switchStamp = `${launchStamp}.switched`;
+  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
+  const readSettings = (settingsPath) => {
+    try {
+      const configured = configuredBinary(settingsPath);
+      return configured === void 0 ? {} : { configured };
+    } catch (error) {
+      return { error: `${settingsPath} could not be read: ${error.message}` };
+    }
+  };
+  const activate = (settingsPath) => {
+    const activated = activateLauncher(settingsPath, launcher, new Date(deps.now()));
+    if (activated.backup !== void 0) writeStamp(switchStamp, deps.now());
+    return activated;
+  };
+  const activateUnasked = () => {
+    const settingsPath = findSettings();
+    if (settingsPath === void 0 || runtimeState(options.paths, deps).state !== "ready") return;
+    if (readStamp(switchStamp) !== void 0) return;
+    try {
+      const configured = configuredBinary(settingsPath);
+      if (configured !== launcher && mayActivateUnasked(configured)) activate(settingsPath);
+    } catch (error) {
+      console.error(`antechamber: could not set the OpenCode CLI in ${settingsPath}: ${error.message}`);
+    }
+  };
   const install = () => {
-    installing ??= ensureRuntime(options.paths, options.bun, deps).catch(() => void 0).finally(() => {
+    installing ??= ensureRuntime(options.paths, options.bun, deps).then(() => {
+      if (options.autoActivate) activateUnasked();
+    }).catch(() => void 0).finally(() => {
       installing = void 0;
     });
     return installing;
   };
-  const launcher = join5(options.extensionDir, "bin", "opencode-antechamber");
-  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
   const status = () => {
     const settingsPath = findSettings();
     const current = runtimeState(options.paths, deps);
+    const { configured, error: settingsError } = settingsPath === void 0 ? {} : readSettings(settingsPath);
+    const active = configured === launcher;
+    const switchedAt = readStamp(switchStamp);
     const base = {
       state: installing && current.state !== "ready" ? "installing" : current.state,
       spec: options.paths.spec,
       launcher,
       bun: options.bun ?? null,
       settings: settingsPath ?? null,
-      active: settingsPath !== void 0 && configuredBinary(settingsPath) === launcher
+      configured: configured?.trim() ? configured : null,
+      active,
+      ...settingsError ? { settingsError } : {},
+      needsReload: active && switchedAt !== void 0 && (readStamp(launchStamp) ?? 0) < switchedAt
     };
     if (current.state === "ready")
       return {
@@ -875,6 +937,7 @@ function createService(options) {
     return base;
   };
   if (options.prewarm && options.bun && runtimeState(options.paths, deps).state === "missing") void install();
+  else if (options.autoActivate) activateUnasked();
   const expected = Buffer.from(`Bearer ${options.token}`);
   const send = (res, code, body) => {
     res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -900,10 +963,12 @@ function createService(options) {
       if (settingsPath === void 0)
         return send(res, 409, {
           error: "settings-not-found",
-          detail: "Set Settings -> OpenCode CLI to the launcher by hand."
+          detail: "Set Settings -> General -> OpenCode CLI to the launcher by hand."
         });
       if (runtimeState(options.paths, deps).state !== "ready") return send(res, 409, { error: "runtime-not-ready" });
-      const activated = activateLauncher(settingsPath, launcher);
+      const unreadable = readSettings(settingsPath).error;
+      if (unreadable) return send(res, 409, { error: "settings-unreadable", detail: unreadable });
+      const activated = activate(settingsPath);
       return send(res, 200, { ...status(), ...activated });
     }
     return send(res, 404, { error: "not-found" });
@@ -917,14 +982,16 @@ if (!port || !token) {
   console.error("OPENCHAMBER_SERVICE_PORT and OPENCHAMBER_SERVICE_TOKEN are required");
   process.exit(1);
 }
-var extensionDir = resolve4(dirname2(fileURLToPath(import.meta.url)), "..");
-var { version } = JSON.parse(readFileSync5(join6(extensionDir, "package.json"), "utf8"));
-chmodSync2(join6(extensionDir, "bin", "opencode-antechamber"), 493);
+var extensionDir = resolve4(dirname3(fileURLToPath(import.meta.url)), "..");
+var { version } = JSON.parse(readFileSync5(join5(extensionDir, "package.json"), "utf8"));
+chmodSync2(launcherPath(extensionDir), 493);
 var env = defaultEnv();
 createService({
   token,
   extensionDir,
   paths: runtimePaths(version, env),
   bun: findBun(env),
-  prewarm: true
+  home: env.home,
+  prewarm: true,
+  autoActivate: true
 }).listen(port, "127.0.0.1");

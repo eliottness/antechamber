@@ -57,6 +57,14 @@
       #runtime[data-state="failed"] { color: var(--bad); }
       #runtime[data-state="installing"] { color: var(--run); }
       #runtime .row { justify-content: flex-start; }
+      #notice { display: grid; gap: 6px; justify-items: start; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 12px;
+        background: color-mix(in srgb, var(--notice) 12%, var(--surface)); border-left: 3px solid var(--notice); --notice: var(--run); }
+      #notice[hidden] { display: none; }
+      #notice[data-tone="warn"] { --notice: var(--warn); }
+      #notice[data-tone="bad"] { --notice: var(--bad); }
+      #notice > span { justify-self: stretch; min-width: 0; overflow-wrap: anywhere; }
+      #notice code { font: 11px var(--mono); word-break: break-all; user-select: all; -webkit-user-select: all; }
+      #notice button { padding: 5px 12px; border-radius: 6px; border: 1px solid transparent; background: var(--accent); color: var(--oc-primary-fg, #001); font-weight: 600; cursor: pointer; }
 
       #viewport { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none;
         background-image: radial-gradient(color-mix(in srgb, var(--muted) 22%, transparent) 1px, transparent 1px);
@@ -162,6 +170,7 @@
           </button>
         </div>
       </header>
+      <div id="notice" role="status" hidden></div>
       <form id="settings" hidden>
         <section id="runtime" aria-live="polite"><strong>Runtime</strong><span id="runtime-state">Checking…</span></section>
         <label>OmO agent directory <input name="agentDir" placeholder="~/.omo/agent (default, then ~/.pi/agent)" autocomplete="off" spellcheck="false" /></label>

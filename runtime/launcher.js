@@ -1,14 +1,30 @@
 // extensions/antechamber/src/runtime/launcher.ts
 import { readFileSync as readFileSync2 } from "node:fs";
-import { dirname, join as join2, resolve as resolve2 } from "node:path";
+import { dirname as dirname3, join as join3, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// extensions/antechamber/src/runtime/activate.ts
+import { basename, dirname, join } from "node:path";
+function launcherPath(extensionDir2) {
+  return join(extensionDir2, "bin", "opencode-antechamber");
+}
 
 // extensions/antechamber/src/runtime/runtime.ts
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname as dirname2, isAbsolute, join as join2, resolve } from "node:path";
 var STALE_LOCK_MS = 15 * 6e4;
 var INSTALL_TIMEOUT_MS = 10 * 6e4;
 var READY = ".ready.json";
@@ -18,25 +34,25 @@ function defaultEnv() {
 }
 function runtimeRoot({ env, home }) {
   const configured = env.ANTECHAMBER_RUNTIME_DIR?.trim();
-  return configured ? resolve(configured) : join(home, ".antechamber", "runtime");
+  return configured ? resolve(configured) : join2(home, ".antechamber", "runtime");
 }
 function runtimePaths(version, runtime) {
   const root = runtimeRoot(runtime);
   const override = runtime.env.ANTECHAMBER_RUNTIME_SPEC?.trim();
-  if (!override) return { root, spec: version, key: version, dir: join(root, version) };
+  if (!override) return { root, spec: version, key: version, dir: join2(root, version) };
   const spec = isAbsolute(override) ? override : resolve(override);
   const stamp = existsSync(spec) ? `${statSync(spec).mtimeMs}:${statSync(spec).size}` : "";
   const key = `local-${createHash("sha256").update(`${spec}
 ${stamp}`).digest("hex").slice(0, 12)}`;
-  return { root, spec: `file:${spec}`, key, dir: join(root, key) };
+  return { root, spec: `file:${spec}`, key, dir: join2(root, key) };
 }
 function findBun({ env, home }, exists = existsSync) {
   for (const dir of (env.PATH ?? "").split(delimiter)) {
-    if (dir && exists(join(dir, "bun"))) return join(dir, "bun");
+    if (dir && exists(join2(dir, "bun"))) return join2(dir, "bun");
   }
   for (const candidate of [
-    join(env.BUN_INSTALL ?? join(home, ".bun"), "bin", "bun"),
-    join(home, ".bun", "bin", "bun")
+    join2(env.BUN_INSTALL ?? join2(home, ".bun"), "bin", "bun"),
+    join2(home, ".bun", "bin", "bun")
   ]) {
     if (exists(candidate)) return candidate;
   }
@@ -51,12 +67,20 @@ function readJson(path) {
   }
 }
 function installed(dir) {
-  if (!existsSync(join(dir, READY))) return void 0;
-  const cli = join(dir, "node_modules", "antechamber", "dist", "cli.js");
-  const antechamber = readJson(join(dir, "node_modules", "antechamber", "package.json"))?.version;
+  if (!existsSync(join2(dir, READY))) return void 0;
+  const cli = join2(dir, "node_modules", "antechamber", "dist", "cli.js");
+  const antechamber = readJson(join2(dir, "node_modules", "antechamber", "package.json"))?.version;
   if (!existsSync(cli) || typeof antechamber !== "string") return void 0;
-  const omo = readJson(join(dir, "node_modules", "omo-ai", "package.json"))?.version;
+  const omo = readJson(join2(dir, "node_modules", "omo-ai", "package.json"))?.version;
   return { dir, cli, antechamber, omo: typeof omo === "string" ? omo : void 0 };
+}
+function launchStampPath(home, launcher) {
+  const key = createHash("sha256").update(existsSync(launcher) ? realpathSync(launcher) : launcher).digest("hex").slice(0, 16);
+  return join2(home, ".antechamber", "launches", key);
+}
+function writeStamp(stamp, now = Date.now()) {
+  mkdirSync(dirname2(stamp), { recursive: true });
+  writeFileSync(stamp, String(now));
 }
 function lockHeld(lock, deps) {
   let mtime;
@@ -65,7 +89,7 @@ function lockHeld(lock, deps) {
   } catch {
     return false;
   }
-  const pid = Number.parseInt(readFileSync(join(lock, "pid"), { encoding: "utf8", flag: "a+" }), 10);
+  const pid = Number.parseInt(readFileSync(join2(lock, "pid"), { encoding: "utf8", flag: "a+" }), 10);
   if (deps.now() - mtime > STALE_LOCK_MS) return false;
   return !Number.isInteger(pid) || deps.pidAlive(pid);
 }
@@ -78,11 +102,11 @@ function tryLock(lock, deps) {
     rmSync(lock, { recursive: true, force: true });
     return tryLock(lock, deps);
   }
-  writeFileSync(join(lock, "pid"), String(process.pid));
+  writeFileSync(join2(lock, "pid"), String(process.pid));
   return true;
 }
 function prune(paths) {
-  const others = readdirSync(paths.root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name !== paths.key && !/\.(lock|tmp-.*)$/.test(entry.name)).map((entry) => join(paths.root, entry.name)).filter((dir) => existsSync(join(dir, READY)) && !existsSync(`${dir}.lock`)).map((dir) => ({ dir, at: Number(readJson(join(dir, READY))?.installedAt ?? 0) })).sort((a, b) => b.at - a.at);
+  const others = readdirSync(paths.root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name !== paths.key && !/\.(lock|tmp-.*)$/.test(entry.name)).map((entry) => join2(paths.root, entry.name)).filter((dir) => existsSync(join2(dir, READY)) && !existsSync(`${dir}.lock`)).map((dir) => ({ dir, at: Number(readJson(join2(dir, READY))?.installedAt ?? 0) })).sort((a, b) => b.at - a.at);
   for (const { dir } of others.slice(1)) rmSync(dir, { recursive: true, force: true });
 }
 async function installOnce(paths, bun, deps) {
@@ -96,10 +120,10 @@ async function installOnce(paths, bun, deps) {
       // omo-ai's postinstall prepares its engine; Bun skips dependency scripts unless trusted.
       trustedDependencies: ["omo-ai"]
     };
-    writeFileSync(join(staging, "package.json"), `${JSON.stringify(manifest, null, 2)}
+    writeFileSync(join2(staging, "package.json"), `${JSON.stringify(manifest, null, 2)}
 `);
     await deps.install(bun, staging);
-    writeFileSync(join(staging, READY), `${JSON.stringify({ spec: paths.spec, installedAt: deps.now() })}
+    writeFileSync(join2(staging, READY), `${JSON.stringify({ spec: paths.spec, installedAt: deps.now() })}
 `);
     if (!installed(staging)) throw new Error(`bun install did not produce node_modules/antechamber/dist/cli.js`);
     rmSync(paths.dir, { recursive: true, force: true });
@@ -181,15 +205,23 @@ function defaultDeps() {
 }
 
 // extensions/antechamber/src/runtime/launcher.ts
-var extensionDir = resolve2(dirname(fileURLToPath(import.meta.url)), "..");
+var extensionDir = resolve2(dirname3(fileURLToPath(import.meta.url)), "..");
 var command = process.argv[2];
 if (command === "version") {
   console.log(`opencode v${"2.999.0"}`);
 } else if (command === "resolve") {
-  const { version } = JSON.parse(readFileSync2(join2(extensionDir, "package.json"), "utf8"));
+  const { version } = JSON.parse(readFileSync2(join3(extensionDir, "package.json"), "utf8"));
   const env = defaultEnv();
   try {
-    const runtime = await ensureRuntime(runtimePaths(version, env), findBun(env) ?? process.execPath);
+    const paths = runtimePaths(version, env);
+    const runtime = await ensureRuntime(paths, findBun(env) ?? process.execPath);
+    try {
+      writeStamp(launchStampPath(env.home, launcherPath(extensionDir)));
+    } catch (error) {
+      console.error(
+        `opencode-antechamber: could not record the launch: ${error instanceof Error ? error.message : error}`
+      );
+    }
     console.log(runtime.cli);
   } catch (error) {
     console.error(`opencode-antechamber: ${error instanceof Error ? error.message : String(error)}`);
