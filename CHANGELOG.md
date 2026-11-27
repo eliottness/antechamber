@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.18] - 2026-11-27
+
 ### Changed
 
 - Installing the OpenChamber extension now sets antechamber up with no clicks in its panel: on OpenChamber 2.7+ the
