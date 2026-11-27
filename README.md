@@ -22,8 +22,14 @@ You need **OpenChamber 2.3.2+** (web or desktop) and **[Bun](https://bun.sh) 1.4
    ```
 
 2. Approve the two permissions it asks for: **sessions** and a **local service** (it runs `bun`).
-3. Open the **OmO** rail panel's settings (the sliders icon). When the **Runtime** block says antechamber is
-   installed, click **Use as OpenCode CLI**, then **Reload OpenCode**.
+3. Click the **OmO** icon on OpenChamber's right-hand rail to open the OmO Graph panel, then the **Settings** button
+   (sliders icon), the last one in the panel's toolbar. The **Runtime** block at the top of the form shows where
+   the install is:
+   - *Installing…*: wait; the first start takes a minute.
+   - A **Use as OpenCode CLI** button: click it, then click **Reload OpenCode** in OpenChamber's **Settings →
+     OpenCode**.
+   - *Settings → OpenCode CLI is set to this launcher*: nothing to do, you are already on antechamber.
+   - A launcher path instead of a button (folder installs): paste it into **Settings → OpenCode CLI**.
 
 That's it: new sessions run on OmO. The first start downloads the antechamber release matching the extension's version,
 and the OmO it pins, into `~/.antechamber/runtime/<version>`. To update both, update the extension in **Settings →

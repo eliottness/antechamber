@@ -29,9 +29,12 @@ It replaces the separate OmO Graph, OmO Work and OmO Compatibility extensions of
    installs the same extension from a branch holding only its files.
 2. Approve what it asks for: **sessions**, to follow the open session and open sub-agent sessions, and **a local
    service that runs `bun`**, which installs the runtime and reads the OmO task store and antechamber's run records.
-3. Open the **OmO** rail panel's settings (the sliders icon). The **Runtime** block shows the install; the service
-   starts it as soon as a panel or the Work section opens.
-4. Click **Use as OpenCode CLI**, then **Reload OpenCode**. The service sets `opencodeBinary` in OpenChamber's
+3. Click the **OmO** icon on OpenChamber's right-hand rail to open the OmO Graph panel, then the **Settings** button
+   (sliders icon), the last one in its toolbar. The **Runtime** block at the top of the form shows the install;
+   the service starts it as soon as a panel or the Work section opens.
+4. Click **Use as OpenCode CLI**, then **Reload OpenCode** in OpenChamber's **Settings → OpenCode**. When
+   OpenChamber already runs the launcher, the block says *Settings → OpenCode CLI is set to this launcher* and shows
+   no button: there is nothing to do. The service sets `opencodeBinary` in OpenChamber's
    `settings.json` to the launcher (keeping a `settings.json.bak-antechamber-<stamp>` copy); OpenChamber reads it each
    time it starts OpenCode. A folder install has no OpenChamber data dir around it, so the block shows the launcher
    path to paste into **Settings → OpenCode CLI** instead.
