@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.19] - 2026-11-28
+
 ### Fixed
 
 - Folder-installed extensions now recognize when OpenChamber's default settings already select their launcher, so
