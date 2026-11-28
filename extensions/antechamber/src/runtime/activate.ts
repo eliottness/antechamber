@@ -3,15 +3,18 @@ import { basename, dirname, join } from "node:path";
 
 /**
  * OpenChamber's settings.json for an extension it copied into `<data dir>/extensions/<id>` (Git and ZIP installs;
- * a repository-URL install nests this folder one level deeper). Folder installs have no such parent and get none.
+ * a repository-URL install nests this folder one level deeper). A home directory adds a read-only fallback for
+ * folder installs, which cannot identify the OpenChamber instance that loaded them.
  */
-export function openchamberSettingsPath(extensionDir: string): string | undefined {
+export function openchamberSettingsPath(extensionDir: string, home?: string): string | undefined {
   for (let dir = extensionDir; dirname(dir) !== dir; dir = dirname(dir)) {
     if (basename(dirname(dir)) !== "extensions") continue;
     const settings = join(dirname(dirname(dir)), "settings.json");
     if (existsSync(settings)) return settings;
   }
-  return undefined;
+  if (home === undefined) return undefined;
+  const settings = join(home, ".config", "openchamber", "settings.json");
+  return existsSync(settings) ? settings : undefined;
 }
 
 export function launcherPath(extensionDir: string): string {

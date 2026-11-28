@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Folder-installed extensions now recognize when OpenChamber's default settings already select their launcher, so
+  OmO Graph and OmO Work no longer claim that sessions are not running on OmO while Antechamber is active.
+
 ## [2.0.18] - 2026-11-27
 
 ### Changed
