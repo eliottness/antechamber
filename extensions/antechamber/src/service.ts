@@ -50,9 +50,9 @@ export interface RuntimeStatus {
   readonly omo?: string;
   readonly dir?: string;
   readonly error?: string;
-  /** OpenChamber's settings.json, when the install location reveals it; `null` for folder installs. */
+  /** OpenChamber's settings.json when this extension can change it; `null` for folder installs. */
   readonly settings: string | null;
-  /** Settings -> OpenCode CLI as it stands; `null` when unset or when `settings` is unknown. */
+  /** Settings -> OpenCode CLI, including a read-only default profile; `null` when unset or unknown. */
   readonly configured: string | null;
   /** Why `settings` could not be read (invalid JSON, say); the CLI is then left alone. */
   readonly settingsError?: string;
@@ -78,7 +78,7 @@ export function createService(options: ServiceOptions): http.Server {
   // When this launcher was made the OpenCode CLI. On disk, so the restart prompt survives a service restart and the
   // unasked switch happens once: a CLI the user picks afterwards stays theirs.
   const switchStamp = `${launchStamp}.switched`;
-  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
+  const findWritableSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
   const readSettings = (settingsPath: string): { configured?: string; error?: string } => {
     try {
       const configured = configuredBinary(settingsPath);
@@ -93,7 +93,7 @@ export function createService(options: ServiceOptions): http.Server {
     return activated;
   };
   const activateUnasked = () => {
-    const settingsPath = findSettings();
+    const settingsPath = findWritableSettings();
     if (settingsPath === undefined || runtimeState(options.paths, deps).state !== "ready") return;
     if (readStamp(switchStamp) !== undefined) return;
     try {
@@ -115,9 +115,11 @@ export function createService(options: ServiceOptions): http.Server {
     return installing;
   };
   const status = (): RuntimeStatus => {
-    const settingsPath = findSettings();
+    const writableSettings = findWritableSettings();
+    const settingsPath = writableSettings ?? openchamberSettingsPath(options.extensionDir, options.home);
     const current = runtimeState(options.paths, deps);
-    const { configured, error: settingsError } = settingsPath === undefined ? {} : readSettings(settingsPath);
+    const { configured, error } = settingsPath === undefined ? {} : readSettings(settingsPath);
+    const settingsError = writableSettings === undefined ? undefined : error;
     const active = configured === launcher;
     const switchedAt = readStamp(switchStamp);
     const base = {
@@ -125,7 +127,7 @@ export function createService(options: ServiceOptions): http.Server {
       spec: options.paths.spec,
       launcher,
       bun: options.bun ?? null,
-      settings: settingsPath ?? null,
+      settings: writableSettings ?? null,
       configured: configured?.trim() ? configured : null,
       active,
       ...(settingsError ? { settingsError } : {}),
@@ -166,7 +168,7 @@ export function createService(options: ServiceOptions): http.Server {
     }
     if (pathname === "/runtime/activate" && req.method === "POST") {
       req.resume();
-      const settingsPath = findSettings();
+      const settingsPath = findWritableSettings();
       if (settingsPath === undefined)
         return send(res, 409, {
           error: "settings-not-found",

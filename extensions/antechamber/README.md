@@ -40,9 +40,10 @@ the npm `--auto-update` launcher); a CLI you picked yourself, then or later, sta
 as OpenCode CLI**. OpenChamber reads the setting each time it starts OpenCode, so the OmO panel and the Work section
 ask for **Restart OpenCode** until the launcher has started once since the switch; the launcher records its starts,
 and the service its switch, under `~/.antechamber/launches/`. They show nothing once antechamber runs. A folder
-install has no OpenChamber data dir around it, so they show the launcher path to paste into **Settings → General →
-OpenCode CLI** instead. The panel's settings (the sliders icon) list the installed versions, and the launcher path
-while it is not the OpenCode CLI.
+install reads OpenChamber's default `~/.config/openchamber/settings.json` to recognize an already selected launcher.
+It cannot switch that file automatically because the folder might belong to another OpenChamber data directory;
+set the launcher in **Settings → General → OpenCode CLI** if it is not selected. The panel's settings (the sliders
+icon) list the installed versions and the launcher path while it is not the OpenCode CLI.
 
 Other ways to add it: a **Folder** (`extensions/antechamber` of an npm install or a built checkout; `antechamber
 setup` prints it), or the release **ZIP**

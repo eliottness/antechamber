@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { runtimeNotice } from "../src/runtime/notice.ts";
 import { type InstallDeps, launchStampPath, runtimePaths, writeStamp } from "../src/runtime/runtime.ts";
 import { createService, type RuntimeStatus } from "../src/service.ts";
 
@@ -218,4 +219,65 @@ test("a folder install, with no OpenChamber data dir around it, is told to set t
   const refused = await call("POST", "/runtime/activate");
   assert.equal(refused.status, 409);
   assert.equal(refused.body.error, "settings-not-found");
+});
+
+test("a folder install recognizes its launcher in OpenChamber's default settings", async (t) => {
+  const { deps, finished } = installer();
+  const { call, root } = await start(t, "/bin/bun", deps, "ext", true);
+  const settings = join(root, ".config", "openchamber", "settings.json");
+  const launcher = join(root, "ext", "bin", "opencode-antechamber");
+  mkdirSync(join(root, ".config", "openchamber"), { recursive: true });
+  writeFileSync(settings, JSON.stringify({ opencodeBinary: launcher }));
+
+  await call("POST", "/runtime/install");
+  await finished;
+  const status = (await call("GET", "/runtime")).body;
+  assert.equal(status.settings, null);
+  assert.equal(status.configured, launcher);
+  assert.equal(status.active, true);
+  assert.equal(status.needsReload, false);
+  assert.equal(runtimeNotice(status as unknown as RuntimeStatus), undefined);
+});
+
+test("a folder install cannot switch a default profile it did not come from", async (t) => {
+  const { deps, finished } = installer();
+  const { call, root } = await start(t, "/bin/bun", deps, "ext", true);
+  const settings = join(root, ".config", "openchamber", "settings.json");
+  mkdirSync(join(root, ".config", "openchamber"), { recursive: true });
+  writeFileSync(settings, JSON.stringify({ themeId: "dark" }));
+
+  await call("POST", "/runtime/install");
+  await finished;
+  const status = (await call("GET", "/runtime")).body;
+  assert.equal(status.active, false);
+  assert.equal(status.needsReload, false);
+  assert.equal(status.settings, null);
+  const notice = runtimeNotice(status as unknown as RuntimeStatus);
+  assert.equal(notice?.action, undefined);
+  assert.equal(notice?.code, join(root, "ext", "bin", "opencode-antechamber"));
+  assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")), { themeId: "dark" });
+
+  const refused = await call("POST", "/runtime/activate");
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, "settings-not-found");
+  assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")), { themeId: "dark" });
+});
+
+test("a folder install ignores an unreadable default profile and shows manual setup", async (t) => {
+  const { deps, finished } = installer();
+  const { call, root } = await start(t, "/bin/bun", deps, "ext", true);
+  const settings = join(root, ".config", "openchamber", "settings.json");
+  mkdirSync(join(root, ".config", "openchamber"), { recursive: true });
+  writeFileSync(settings, "{ not json");
+
+  await call("POST", "/runtime/install");
+  await finished;
+  const status = (await call("GET", "/runtime")).body as unknown as RuntimeStatus;
+  const notice = runtimeNotice(status);
+  assert.equal(status.active, false);
+  assert.equal(status.settings, null);
+  assert.equal(status.settingsError, undefined);
+  assert.equal(notice?.action, undefined);
+  assert.equal(notice?.code, join(root, "ext", "bin", "opencode-antechamber"));
+  assert.equal(readFileSync(settings, "utf8"), "{ not json");
 });
