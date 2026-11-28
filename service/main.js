@@ -6,13 +6,15 @@ import { fileURLToPath } from "node:url";
 // extensions/antechamber/src/runtime/activate.ts
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-function openchamberSettingsPath(extensionDir2) {
+function openchamberSettingsPath(extensionDir2, home) {
   for (let dir = extensionDir2; dirname(dir) !== dir; dir = dirname(dir)) {
     if (basename(dirname(dir)) !== "extensions") continue;
-    const settings = join(dirname(dirname(dir)), "settings.json");
-    if (existsSync(settings)) return settings;
+    const settings2 = join(dirname(dirname(dir)), "settings.json");
+    if (existsSync(settings2)) return settings2;
   }
-  return void 0;
+  if (home === void 0) return void 0;
+  const settings = join(home, ".config", "openchamber", "settings.json");
+  return existsSync(settings) ? settings : void 0;
 }
 function launcherPath(extensionDir2) {
   return join(extensionDir2, "bin", "opencode-antechamber");
@@ -875,7 +877,7 @@ function createService(options) {
   const launcher = launcherPath(options.extensionDir);
   const launchStamp = launchStampPath(options.home, launcher);
   const switchStamp = `${launchStamp}.switched`;
-  const findSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
+  const findWritableSettings = () => options.settingsPath ?? openchamberSettingsPath(options.extensionDir);
   const readSettings = (settingsPath) => {
     try {
       const configured = configuredBinary(settingsPath);
@@ -890,7 +892,7 @@ function createService(options) {
     return activated;
   };
   const activateUnasked = () => {
-    const settingsPath = findSettings();
+    const settingsPath = findWritableSettings();
     if (settingsPath === void 0 || runtimeState(options.paths, deps).state !== "ready") return;
     if (readStamp(switchStamp) !== void 0) return;
     try {
@@ -909,9 +911,11 @@ function createService(options) {
     return installing;
   };
   const status = () => {
-    const settingsPath = findSettings();
+    const writableSettings = findWritableSettings();
+    const settingsPath = writableSettings ?? openchamberSettingsPath(options.extensionDir, options.home);
     const current = runtimeState(options.paths, deps);
-    const { configured, error: settingsError } = settingsPath === void 0 ? {} : readSettings(settingsPath);
+    const { configured, error } = settingsPath === void 0 ? {} : readSettings(settingsPath);
+    const settingsError = writableSettings === void 0 ? void 0 : error;
     const active = configured === launcher;
     const switchedAt = readStamp(switchStamp);
     const base = {
@@ -919,7 +923,7 @@ function createService(options) {
       spec: options.paths.spec,
       launcher,
       bun: options.bun ?? null,
-      settings: settingsPath ?? null,
+      settings: writableSettings ?? null,
       configured: configured?.trim() ? configured : null,
       active,
       ...settingsError ? { settingsError } : {},
@@ -959,7 +963,7 @@ function createService(options) {
     }
     if (pathname === "/runtime/activate" && req.method === "POST") {
       req.resume();
-      const settingsPath = findSettings();
+      const settingsPath = findWritableSettings();
       if (settingsPath === void 0)
         return send(res, 409, {
           error: "settings-not-found",
